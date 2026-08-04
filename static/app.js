@@ -990,27 +990,75 @@ async function renderSinteza(inhga) {
 
   if (an?.climatologie?.length) {
     const clim = an.climatologie;
+    const pcts = clim.map((c) => c.azi?.pct).filter((p) => p != null).sort((a, b) => a - b);
+    const medP = pcts[Math.floor(pcts.length / 2)];
     const sub10 = clim.filter((c) => c.azi?.pct != null && c.azi.pct < 10);
+    const peste90 = clim.filter((c) => c.azi?.pct != null && c.azi.pct > 90);
     const baz = clim.find((c) => c.id === "bazias");
     const worstSev = clim.some((c) => c.severitate === "extrem") ? "extrem"
       : clim.some((c) => c.severitate === "sever") ? "sever" : "atentie";
-    chips.push(`<span class="sev sev-${worstSev}">secetă hidrologică: ${SEV_LABEL[worstSev]}</span>`);
-    parts.push(`Dunărea trece printr-o secetă la nivel de <b>record al ultimilor ~30 de ani</b>:
-      <b>${sub10.length} din ${clim.length} secțiuni</b> monitorizate (Germania → deltă) sunt sub percentila 10${
-      baz ? `, la Baziaș a <b>${baz.streak_sub_p10}-a zi consecutivă</b>` : ""}${inhga?.debit_bazias_m3s
-        ? ` — debit oficial <b>${fmtN.format(inhga.debit_bazias_m3s)} m³/s</b>, adică
-          ${inhga.media_multianuala_m3s ? Math.round(100 * inhga.debit_bazias_m3s / inhga.media_multianuala_m3s) + "%" : ""}
-          din media multianuală a lunii` : ""}.`);
+    const nExtrem = clim.filter((c) => c.severitate === "extrem").length;
+    const debitTxt = inhga?.debit_bazias_m3s
+      ? ` Debit oficial la Baziaș: <b>${fmtN.format(inhga.debit_bazias_m3s)} m³/s</b>${
+          inhga.media_multianuala_m3s
+            ? ` (${Math.round(100 * inhga.debit_bazias_m3s / inhga.media_multianuala_m3s)}% din media multianuală a lunii)` : ""}.`
+      : "";
+
+    // regimul se alege din date — aceeași sinteză trebuie să fie corectă și
+    // la secetă, și la normal, și la ape mari
+    if (sub10.length >= Math.ceil(pcts.length * 0.6)) {
+      chips.push(`<span class="sev sev-${worstSev}">secetă hidrologică: ${SEV_LABEL[worstSev]}</span>`);
+      parts.push(`Dunărea trece printr-o secetă ${nExtrem >= pcts.length / 2
+          ? "la nivel de <b>record al ultimilor ~30 de ani</b>" : "<b>severă</b>"}:
+        <b>${sub10.length} din ${clim.length} secțiuni</b> monitorizate (Germania → deltă) sunt sub percentila 10${
+        baz && baz.streak_sub_p10 >= 3 ? `, la Baziaș a <b>${baz.streak_sub_p10}-a zi consecutivă</b>` : ""}.${debitTxt}`);
+    } else if (peste90.length >= Math.ceil(pcts.length * 0.6)) {
+      chips.push(`<span class="sev sev-${worstSev}">ape mari: ${SEV_LABEL[worstSev]}</span>`);
+      parts.push(`Dunărea e la <b>ape mari</b> față de istoricul acestor zile:
+        <b>${peste90.length} din ${clim.length} secțiuni</b> peste percentila 90.${debitTxt}
+        Pentru avertizări oficiale de inundații: INHGA / Apele Române.`);
+    } else if (medP < 25) {
+      chips.push(`<span class="sev sev-atentie">sub normalul sezonului</span>`);
+      parts.push(`Dunărea curge <b>sub normalul sezonului</b> (mediana percentilelor: P${fmt1.format(medP)};
+        ${sub10.length} din ${clim.length} secțiuni sub percentila 10).${debitTxt}`);
+    } else if (medP <= 75) {
+      chips.push(`<span class="sev sev-normal">debit în marja normală</span>`);
+      parts.push(`Dunărea curge <b>în marja normală</b> a acestor zile din an
+        (mediana percentilelor pe cele ${clim.length} secțiuni: P${fmt1.format(medP)}).${debitTxt}`);
+    } else {
+      chips.push(`<span class="sev sev-atentie">peste normalul sezonului</span>`);
+      parts.push(`Dunărea curge <b>peste normalul sezonului</b> (mediana percentilelor:
+        P${fmt1.format(medP)}; ${peste90.length} secțiuni peste percentila 90).${debitTxt}`);
+    }
   }
 
   if (bi?.bazias) {
-    const pct = Math.round(100 * bi.bazias.lipsa_km3 / bi.bazias.normal_km3);
-    const dP = bi.bazin_superior ? fmt1.format(bi.bazin_superior.ploaie_normal_km3 - bi.bazin_superior.ploaie_km3) : null;
-    parts.push(`Cauza se vede în cifre, nu în teorii: de la 1 ianuarie, prin Baziaș au trecut
-      <b>${fmt1.format(bi.bazias.volum_km3)} km³</b> față de ${fmt1.format(bi.bazias.normal_km3)} normal —
-      <b>lipsesc ${fmt1.format(bi.bazias.lipsa_km3)} km³ (${pct}%)</b>${dP
-        ? `, iar în bazinul superior n-au căzut din cer <b>${dP} km³ de ploaie</b>: bilanțul se închide fără rest` : ""}.
-      ${bi.grace ? `Rezerva totală a bazinului (măsurată gravimetric din satelit) e aproape de minimul din 2002 încoace.` : ""}`);
+    const lipsa = bi.bazias.lipsa_km3;
+    const pct = Math.round(100 * lipsa / bi.bazias.normal_km3);
+    const dP = bi.bazin_superior ? bi.bazin_superior.ploaie_normal_km3 - bi.bazin_superior.ploaie_km3 : null;
+    const volTxt = `de la 1 ianuarie, prin Baziaș au trecut <b>${fmt1.format(bi.bazias.volum_km3)} km³</b>
+      față de ${fmt1.format(bi.bazias.normal_km3)} — mediana aceluiași interval`;
+    let bilTxt;
+    if (pct >= 5) {
+      bilTxt = `Cauza se vede în cifre, nu în teorii: ${volTxt} —
+        <b>lipsesc ${fmt1.format(lipsa)} km³ (${pct}%)</b>${dP > 0
+          ? `, iar în bazinul superior n-au căzut din cer <b>${fmt1.format(dP)} km³ de ploaie</b>: bilanțul se închide fără rest` : ""}.`;
+    } else if (pct <= -5) {
+      bilTxt = `Volumele: ${volTxt} — <b>un plus de ${fmt1.format(-lipsa)} km³ (${-pct}%)</b>${dP < 0
+          ? `, susținut de precipitații peste medie în bazinul superior (+${fmt1.format(-dP)} km³)` : ""}.`;
+    } else {
+      bilTxt = `Volumele: ${volTxt} — abatere de doar ${pct}%, în marja normală.`;
+    }
+    let graceTxt = "";
+    if (bi.grace && bi.grace.ani_comparati > 3) {
+      const g = bi.grace;
+      graceTxt = g.ani_mai_seci <= 2
+        ? ` Rezerva totală a bazinului (gravimetrie satelitară) e <b>aproape de minimul măsurătorilor din 2002 încoace</b> (mai secetoși doar ${g.ani_mai_seci}/${g.ani_comparati} ani).`
+        : g.ani_mai_seci <= g.ani_comparati / 2
+          ? ` Rezerva totală a bazinului (gravimetrie satelitară) rămâne sub media istorică (${g.ani_mai_seci}/${g.ani_comparati} ani mai secetoși).`
+          : ` Rezerva totală a bazinului (gravimetrie satelitară) e peste media istorică — în refacere.`;
+    }
+    parts.push(bilTxt + graceTxt);
   }
 
   if (an) {
