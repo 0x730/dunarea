@@ -354,9 +354,14 @@ class Handler(BaseHTTPRequestHandler):
         # fișiere statice — doar tipurile cunoscute, doar din static/
         if path == "/":
             path = "/index.html"
-        fpath = os.path.realpath(os.path.join(STATIC_DIR, path.lstrip("/")))
-        ext = os.path.splitext(fpath)[1]
-        inside = os.path.commonpath([fpath, STATIC_DIR]) == STATIC_DIR
+        try:
+            fpath = os.path.realpath(os.path.join(STATIC_DIR, path.lstrip("/")))
+            ext = os.path.splitext(fpath)[1]
+            inside = os.path.commonpath([fpath, STATIC_DIR]) == STATIC_DIR
+        except ValueError:
+            # ex. octet NUL în cale — cerere invalidă, nu eroare de server
+            self._send(404, {"error": "not found"}, head_only=head_only)
+            return
         if not inside or ext not in MIME or not os.path.isfile(fpath):
             self._send(404, {"error": "not found"}, head_only=head_only)
             return

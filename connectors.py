@@ -23,7 +23,9 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) DanubeMonitor/1.0 (uz personal, da
 _db_lock = threading.Lock()
 # single-flight: o singură reîmprospătare per cheie, oricâte cereri simultane
 _inflight_lock = threading.Lock()
-_inflight = {}
+_inflight = {}          # cheie -> [lacăt, nr. așteptători] (se golește singur)
+_last_fail = {}         # cheie -> moment ultimului eșec (evită N reîncercări)
+FAIL_BACKOFF_S = 60
 
 # ---------------------------------------------------------------- cache ----
 
@@ -120,12 +122,41 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
         return {"data": hit["data"], "cache_age_s": int(hit["age"]), "stale": False}
 
     with _inflight_lock:
-        lock = _inflight.setdefault(key, threading.Lock())
-    with lock:
-        hit = cache_get(key)   # altcineva a adus datele cât am așteptat
-        if hit:
-            return {"data": hit["data"], "cache_age_s": int(hit["age"]), "stale": False}
-        return _fetch_and_store(key, ttl, fetch_fn, stale_ok)
+        entry = _inflight.get(key)
+        if entry is None:
+            entry = _inflight[key] = [threading.Lock(), 0]
+        entry[1] += 1
+    try:
+        with entry[0]:
+            hit = cache_get(key)   # altcineva a adus datele cât am așteptat
+            if hit:
+                return {"data": hit["data"], "cache_age_s": int(hit["age"]),
+                        "stale": False}
+            # dacă tocmai a eșuat, nu punem toți așteptătorii să reîncerce
+            failed_at = _last_fail.get(key)
+            if failed_at and time.time() - failed_at < FAIL_BACKOFF_S:
+                old = cache_get(key, max_age=10 ** 9) if stale_ok else None
+                if old:
+                    return {"data": old["data"], "cache_age_s": int(old["age"]),
+                            "stale": True, "error": "sursa nu a răspuns recent"}
+                raise RuntimeError("sursa nu a răspuns recent (backoff)")
+            try:
+                res = _fetch_and_store(key, ttl, fetch_fn, stale_ok)
+                _last_fail.pop(key, None)
+                return res
+            except Exception:
+                _last_fail[key] = time.time()
+                raise
+    finally:
+        with _inflight_lock:
+            entry[1] -= 1
+            if entry[1] <= 0:
+                _inflight.pop(key, None)
+            # marcajele de eșec expiră singure — nu lăsăm dicționarul să crească
+            if len(_last_fail) > 256:
+                prag = time.time() - FAIL_BACKOFF_S
+                for k in [k for k, t in _last_fail.items() if t < prag]:
+                    _last_fail.pop(k, None)
 
 
 def _fetch_and_store(key, ttl, fetch_fn, stale_ok):

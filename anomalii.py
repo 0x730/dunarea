@@ -304,10 +304,13 @@ def precip_stats():
                 if sn is not None:
                     wsnow[y] = wsnow.get(y, 0.0) + sn
 
-        cur = ytd.get(cy)
-        hist = [ytd[y] for y in range(PRECIP_START, cy) if y in ytd]
-        wcur = winter.get(cy)
-        whist = [winter[y] for y in range(PRECIP_START + 1, cy) if y in winter]
+        # 1–3 ianuarie: ERA5 (întârziat ~3 zile) e încă în anul trecut, deci
+        # anul „curent" n-are date — raportăm anul precedent, complet
+        an = cy if cy in ytd or cy in winter else cy - 1
+        cur = ytd.get(an)
+        hist = [ytd[y] for y in range(PRECIP_START, an) if y in ytd]
+        wcur = winter.get(an)
+        whist = [winter[y] for y in range(PRECIP_START + 1, an) if y in winter]
 
         vals = [v for _, v, _ in pairs]
         cum90 = sum(vals[-90:])
