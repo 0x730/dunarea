@@ -241,10 +241,12 @@ footer {
 }
 footer code { font-family: var(--mono); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
 footer .brand {
-  margin-top: 26px; font-family: var(--mono); font-size: 13px;
-  letter-spacing: 0.22em; color: var(--ink-2); user-select: all;
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 26px; color: var(--ink-2); text-decoration: none;
 }
-footer .brand span { color: var(--blue); padding: 0 2px; }
+footer .brand svg { height: 19px; width: auto; display: block; }
+footer .brand:hover { color: var(--ink); text-decoration: none; }
+footer .brand:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 3px; }
 
 a { color: var(--blue-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
