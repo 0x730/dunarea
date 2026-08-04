@@ -402,6 +402,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertEqual(web["mode"], "web_cu_citari")
         self.assertTrue(web["url"].endswith("/responses"))
         self.assertEqual(web["body"]["tools"][0]["type"], "web_search")
+        self.assertEqual(web["body"]["tool_choice"], "required")
+        self.assertGreaterEqual(web["body"]["max_output_tokens"], 3000)
         self.assertEqual(web["body"]["model"], "web-model")
 
     def test_responses_parser_marks_deduplicated_clickable_sources(self):

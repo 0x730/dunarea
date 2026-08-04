@@ -26,7 +26,7 @@ import connectors as C
 
 MAX_VARSTA_S = 7 * 86400
 MIN_INTERVAL_S = 1800
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 _lock_ai = threading.Lock()
 
@@ -218,7 +218,8 @@ def _request_spec(date_intrare):
                 "instructions": PROMPT_SISTEM,
                 "input": user_text,
                 "tools": [{"type": "web_search", "search_context_size": "medium"}],
-                "max_output_tokens": 1400,
+                "tool_choice": "required",
+                "max_output_tokens": 3000,
             },
         }
     return {
