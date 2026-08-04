@@ -7,10 +7,29 @@ const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });
 
+// Securitate: TOT ce vine din backend conține text din surse externe
+// (buletine, avize, nume de stații). Escapăm orice string la graniță, o
+// singură dată, aici — astfel niciun sink innerHTML nu poate executa HTML
+// străin, indiferent cine îl adaugă mai târziu.
+const esc = (s) => s
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+function sanitize(x) {
+  if (typeof x === "string") return esc(x);
+  if (Array.isArray(x)) return x.map(sanitize);
+  if (x && typeof x === "object") {
+    const o = {};
+    for (const k of Object.keys(x)) o[esc(k)] = sanitize(x[k]);
+    return o;
+  }
+  return x;
+}
+const fmtV = (v, f = fmtN) => (v == null || Number.isNaN(v) ? "–" : f.format(v));
+
 async function jget(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
-  return r.json();
+  return sanitize(await r.json());
 }
 
 /* ------------------------------------------------------- status pills -- */
@@ -81,9 +100,11 @@ function renderHero(b) {
       ${b.tendinta ? ` · în ${b.tendinta}` : ""}</div>
     <div class="asof">buletin INHGA · ${b.data_buletin}${b.prognoza_debit_m3s
       ? ` · prognoză 7 zile: ${fmtN.format(b.prognoza_debit_m3s)} m³/s` : ""}</div>`;
+  const urlOk = typeof b.url === "string" && b.url.startsWith("https://www.hidro.ro/")
+    ? b.url : "https://www.hidro.ro/";
   $("hero-text").innerHTML =
     (b.text_oficial || []).map((t) => `<p>${t}</p>`).join("") +
-    `<p class="src">Text oficial integral: <a href="${b.url}" target="_blank" rel="noopener">INHGA — diagnoza și prognoza pentru Dunăre</a></p>`;
+    `<p class="src">Text oficial integral: <a href="${urlOk}" target="_blank" rel="noopener">INHGA — diagnoza și prognoza pentru Dunăre</a></p>`;
 }
 
 /* ------------------------------------------------- profil longitudinal -- */
@@ -129,7 +150,7 @@ function renderProfile(ov, afdj, hidmet, portal) {
     measured.push({ km: 1071, q: ov.inhga.debit_bazias_m3s, name: "Baziaș", src: "INHGA (buletin zilnic)", extra: "intrarea în România" });
 
   (ov.glofas || []).forEach((p) => {
-    if (p.id.startsWith("brat_")) return; // modelul nu rezolvă brațele deltei
+    if (!p.id || p.id.startsWith("brat_")) return; // fără brațele deltei (model nefiabil acolo)
     if (p.discharge_m3s != null && p.discharge_m3s > 1)
       model.push({ km: p.km, q: p.discharge_m3s, name: p.name, src: "GloFAS / Copernicus (model)" });
   });
@@ -275,7 +296,7 @@ async function renderAvize() {
       <tr><td class="name">${a.tara} · ${a.motiv}${a.limitari?.length
           ? ` <span class="prov prov-calculat">${a.limitari.map((l) => `${l.cod} ${l.valoare}${l.unitate || ""}`).join(", ")}</span>` : ""}</td>
         <td class="num">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
-        <td style="font-size:12.5px; color:var(--ink-2)">${a.text.slice(0, 150)}${a.text.length > 150 ? "…" : ""}</td>
+        <td style="font-size:12.5px; color:var(--ink-2)">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
         <td class="num">${a.din || ""}</td></tr>`).join("");
     $("tabel-avize").innerHTML = `<div style="overflow-x:auto"><table class="data">
       <thead><tr><th>Aviz</th><th class="num">sector</th><th>conținut</th><th class="num">din</th></tr></thead>
@@ -458,11 +479,11 @@ function renderPFFacts(ov, afdj, hidmet) {
   if (inh?.debit_bazias_m3s)
     rows.push(li("intrare · Baziaș", `<b>${fmtN.format(inh.debit_bazias_m3s)} m³/s</b> <span class="prov prov-masurat">măsurat</span> INHGA`));
   const gol = rs["Golubac"], bp = rs["Banatska Palanka"];
-  if (gol) rows.push(li("lac · Golubac", `nivel <b>${fmtN.format(gol.nivel_cm)} cm</b> (${arrow(gol.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
-  if (bp) rows.push(li("lac · Banatska P.", `nivel <b>${fmtN.format(bp.nivel_cm)} cm</b> (${arrow(bp.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
+  if (gol) rows.push(li("lac · Golubac", `nivel <b>${fmtV(gol.nivel_cm)} cm</b> (${arrow(gol.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
+  if (bp) rows.push(li("lac · Banatska P.", `nivel <b>${fmtV(bp.nivel_cm)} cm</b> (${arrow(bp.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
   const gruia = ro["Gruia"], prahovo = rs["Prahovo"];
-  if (gruia) rows.push(li("ieșire · Gruia", `cotă <b>${fmtN.format(gruia.cota_cm)} cm</b> (${arrow(gruia.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> AFDJ`));
-  if (prahovo) rows.push(li("ieșire · Prahovo", `nivel <b>${fmtN.format(prahovo.nivel_cm)} cm</b> (${arrow(prahovo.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
+  if (gruia) rows.push(li("ieșire · Gruia", `cotă <b>${fmtV(gruia.cota_cm)} cm</b> (${arrow(gruia.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> AFDJ`));
+  if (prahovo) rows.push(li("ieșire · Prahovo", `nivel <b>${fmtV(prahovo.nivel_cm)} cm</b> (${arrow(prahovo.variatie_cm)}) <span class="prov prov-masurat">măsurat</span> RHMZ`));
   if (gGruia?.discharge_m3s) rows.push(li("ieșire · debit", `≈ <b>${fmtN.format(gGruia.discharge_m3s)} m³/s</b> <span class="prov prov-model">model</span> GloFAS la Gruia`));
   rows.push(li("debit orar baraj", `<span class="prov prov-lipsa">nepublicat</span> — doar la Hidroelectrica / EPS`));
   $("pf-bilant").innerHTML = rows.join("");
@@ -521,8 +542,8 @@ async function renderDelta(afdj) {
   const want = ["Isaccea", "Tulcea", "Sulina", "Galati", "Galați"];
   const rows2 = (afdj?.statii || [])
     .filter((s) => want.includes(s.statie))
-    .map((s) => li(s.statie + ` · km ${fmtN.format(s.km)}`,
-      `cotă <b>${fmtN.format(s.cota_cm)} cm</b> (${arrow(s.variatie_cm)})${s.temp_apa_c != null ? ` · apă ${fmt1.format(s.temp_apa_c)}°C` : ""}`));
+    .map((s) => li(s.statie + ` · km ${fmtV(s.km)}`,
+      `cotă <b>${fmtV(s.cota_cm)} cm</b> (${arrow(s.variatie_cm)})${s.temp_apa_c != null ? ` · apă ${fmt1.format(s.temp_apa_c)}°C` : ""}`));
   $("delta-cote").innerHTML = rows2.join("") ||
     li("stare", "AFDJ indisponibil momentan");
 }
@@ -530,6 +551,7 @@ async function renderDelta(afdj) {
 /* ------------------------------------------------------------- anomalii -- */
 function divergingColor(p) {
   // P0 (secetă) roșu → P50 gri neutru → P100 (ape mari) albastru
+  p = Math.max(0, Math.min(100, p));
   const lerp = (a, b, t) => Math.round(a + (b - a) * t);
   const hex = (r, g, b) => `rgb(${r},${g},${b})`;
   const R = [230, 103, 103], G = [56, 56, 53], B = [57, 135, 229];
@@ -553,7 +575,7 @@ async function renderAnomalii() {
   $("anom-strip").innerHTML = (d.climatologie || []).map((c) => {
     const a = c.azi || {};
     const p = a.pct;
-    return `<div class="anom-cell"${c.nota ? ` title="${c.nota.replace(/"/g, "&quot;")}"` : ""}>
+    return `<div class="anom-cell"${c.nota ? ` title="${c.nota}"` : ""}>
       <div class="bar" style="background:${p != null ? divergingColor(p) : "var(--grid)"}"></div>
       <div class="n">${c.name}</div>
       <div class="p">P${p != null ? fmt1.format(p) : "?"} <small>· ${a.value != null ? fmtN.format(a.value) + " m³/s" : ""}</small></div>
@@ -571,7 +593,7 @@ async function renderAnomalii() {
     const p = c.azi?.pct; return p != null && (w == null || p < w.p) ? { p, c } : w;
   }, null);
   if (worst) {
-    const maxStreak = Math.max(...d.climatologie.map((c) => c.streak_sub_p10));
+    const maxStreak = Math.max(0, ...d.climatologie.map((c) => c.streak_sub_p10 || 0));
     const subP10 = d.climatologie.filter((c) => c.azi?.pct != null && c.azi.pct < 10);
     const amonte = d.climatologie.filter((c) => (c.km || 0) > 1100 && c.azi?.pct != null);
     const amonteLow = amonte.filter((c) => c.azi.pct < 10);
@@ -748,7 +770,7 @@ async function renderStatistici() {
       <th class="num">normala zilei</th><th class="num">abatere</th>
       <th class="num">percentilă</th><th class="num">zile&lt;P10</th>
       <th class="num">ani mai mici</th></tr></thead>
-    <tbody>${d.debit.map((r) => `
+    <tbody>${(d.debit || []).map((r) => `
       <tr><td class="name">${r.name}</td>
         <td class="num">${fmtN.format(r.km)}</td>
         <td class="num">${r.azi_m3s != null ? fmtN.format(r.azi_m3s) : "–"}</td>
@@ -766,7 +788,7 @@ async function renderStatistici() {
       <th class="num">iarnă mm</th><th class="num">mediană</th><th class="num">abatere</th>
       <th class="num">zăpadă iarnă</th>
       <th class="num">ult. 90 zile</th></tr></thead>
-    <tbody>${d.precipitatii.map((r) => `
+    <tbody>${(d.precipitatii || []).map((r) => `
       <tr><td class="name">${r.zona}</td>
         <td class="num">${b(r.ian_azi).cumul_mm != null ? fmtN.format(r.ian_azi.cumul_mm) : "–"}</td>
         <td class="num">${b(r.ian_azi).mediana_mm != null ? fmtN.format(r.ian_azi.mediana_mm) : "–"}</td>
@@ -788,6 +810,10 @@ async function renderBilantApa() {
   try { d = await jget("/api/bilant-apa"); }
   catch (e) {
     $("bilant-card").innerHTML = `<div class="err-box">Bilanțul nu a putut fi calculat acum.</div>`;
+    return;
+  }
+  if (!d?.bazin_superior || !d?.bazias || !d?.pana_la || !d.bazias.normal_km3) {
+    $("bilant-card").innerHTML = `<div class="err-box">Bilanțul are date incomplete momentan — revine la următoarea reîmprospătare.</div>`;
     return;
   }
   const b = d.bazin_superior, bz = d.bazias;
@@ -853,7 +879,8 @@ async function renderContraProbe(afdj, portal) {
     const afdjMap = {};
     (afdj?.statii || []).forEach((s) => (afdjMap[deacc(s.statie)] = s));
     const compar = d.mire
-      .filter((m) => m.tara === "RO" && afdjMap[deacc(m.statie)])
+      .filter((m) => m.tara === "RO" && m.cota_cm != null
+                     && afdjMap[deacc(m.statie)]?.cota_cm != null)
       .map((m) => ({ m, a: afdjMap[deacc(m.statie)], d: m.cota_cm - afdjMap[deacc(m.statie)].cota_cm }))
       .sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
     const maxAbat = compar.length ? Math.round(Math.max(...compar.map((c) => Math.abs(c.d)))) : null;
@@ -863,7 +890,7 @@ async function renderContraProbe(afdj, portal) {
       .slice(0, 6)
       .map((m) => `<tr><td class="name">${m.statie} <span style="color:var(--muted)">${m.tara}</span></td>
         <td class="num">${m.km != null ? fmtN.format(m.km) : ""}</td>
-        <td class="num">${fmtN.format(m.cota_cm)}</td>
+        <td class="num">${fmtV(m.cota_cm)}</td>
         <td class="num">${(m.masurat_utc || "").slice(11, 16)} UTC</td></tr>`).join("");
     $("cp-danubeportal").innerHTML = `<table class="data">
       <thead><tr><th>Miră</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">ora</th></tr></thead>
@@ -884,10 +911,10 @@ async function renderContraProbe(afdj, portal) {
     const nuclNote = s.nuclear_mw != null && s.nuclear_mw < 1000
       ? ` — <b>≈ o singură unitate în funcțiune</b> (plină putere ar fi ~1.300 MW; cauza — planificată sau nu — nu e în aceste date)` : "";
     $("cp-sen").innerHTML = [
-      li("hidro (toată țara)", `<b>${fmtN.format(s.hidro_mw)} MW</b> din ${fmtN.format(s.productie_mw)} MW producție · consum ${fmtN.format(s.consum_mw)} MW`),
-      li("nuclear · CNE", `<b>${fmtN.format(s.nuclear_mw)} MW</b>${nuclNote}`),
-      li("linia Djerdap (PF)", `${fmtN.format(s.linia_djerdap_mw)} MW schimb RO↔RS pe linia Porților de Fier`),
-      li("sold import/export", `${fmtN.format(s.sold_mw)} MW ${s.sold_mw > 0 ? "(import)" : "(export)"}`),
+      li("hidro (toată țara)", `<b>${fmtV(s.hidro_mw)} MW</b> din ${fmtV(s.productie_mw)} MW producție · consum ${fmtV(s.consum_mw)} MW`),
+      li("nuclear · CNE", `<b>${fmtV(s.nuclear_mw)} MW</b>${nuclNote}`),
+      li("linia Djerdap (PF)", `${fmtV(s.linia_djerdap_mw)} MW schimb RO↔RS pe linia Porților de Fier`),
+      li("sold import/export", `${fmtV(s.sold_mw)} MW ${s.sold_mw >= 0 ? "(import)" : "(export)"}`),
       li("actualizat", `${s.actualizat || "–"} <span class="prov prov-masurat">măsurat</span>`),
     ].join("");
     pill("SEN", s.stale ? "stale" : "ok");
@@ -1042,8 +1069,13 @@ async function renderSinteza(inhga) {
       : "";
 
     // regimul se alege din date — aceeași sinteză trebuie să fie corectă și
-    // la secetă, și la normal, și la ape mari
-    if (sub10.length >= Math.ceil(pcts.length * 0.6)) {
+    // la secetă, și la normal, și la ape mari; iar FĂRĂ percentile nu se
+    // declară niciun regim (altfel am declara „record" pe date lipsă)
+    if (!pcts.length) {
+      chips.push(`<span class="sev sev-info">percentile indisponibile</span>`);
+      parts.push(`Percentilele climatologice nu sunt disponibile momentan —
+        starea pe secțiuni, mai jos, pe măsură ce se încarcă.`);
+    } else if (sub10.length >= Math.ceil(pcts.length * 0.6)) {
       chips.push(`<span class="sev sev-${worstSev}">secetă hidrologică: ${SEV_LABEL[worstSev]}</span>`);
       parts.push(`Dunărea trece printr-o secetă ${nExtrem >= pcts.length / 2
           ? "la nivel de <b>record al ultimilor ~30 de ani</b>" : "<b>severă</b>"}:
@@ -1144,10 +1176,10 @@ async function renderAnalizaAI() {
     const d = await jget("/api/analiza-ai");
     if (!d.activ) { card.style.display = "none"; return; }
     card.style.display = "block";
+    // d.text e deja escapat global în jget(); aici doar formatăm
     const text = d.text
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-      .replace(/^(SITUAȚIA|CAUZE PROBABILE|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMBA CONCLUZIA)\s*:?\s*$/gmi,
-               '<b style="color:var(--ink)">$1</b>')
+      .replace(/^(SITUAȚIA|CAUZE PROBABILE|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMBA CONCLUZIA)\s*:?\s*/gmi,
+               '<b style="color:var(--ink)">$1</b> ')
       .replace(/\n/g, "<br>");
     card.innerHTML = `
       <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
@@ -1158,7 +1190,7 @@ async function renderAnalizaAI() {
       <div style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
       <details style="margin-top:14px">
         <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>
-        <pre style="white-space:pre-wrap; font-size:11.5px; color:var(--muted); background:var(--surface-2); padding:10px; border-radius:6px; margin-top:8px">${d.prompt_sistem.replace(/</g, "&lt;")}</pre>
+        <pre style="white-space:pre-wrap; font-size:11.5px; color:var(--muted); background:var(--surface-2); padding:10px; border-radius:6px; margin-top:8px">${d.prompt_sistem}</pre>
         <p class="sub">Datele de intrare = exact JSON-ul din <a href="/api/analiza-ai" target="_blank" rel="noopener">/api/analiza-ai</a>
           (câmpul <code>date_intrare</code>). Analizele se arhivează zilnic.</p>
       </details>`;
@@ -1188,14 +1220,17 @@ async function main() {
   setInterval(refreshData, 5 * 60 * 1000);
 }
 
+// un renderer care crapă nu are voie să blocheze restul paginii
+const safeRun = (fn) => {
+  try {
+    const p = fn();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch (e) { /* izolat */ }
+};
+
 async function refreshData() {
-  renderPFChart();
-  renderEntsoe();
-  renderAnomalii();
-  renderStatistici();
-  renderBilantApa();
-  renderMvMChart();
-  renderIstoric();
+  [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
+   renderBilantApa, renderMvMChart, renderIstoric].forEach(safeRun);
 
   const [ovR, afdjR, hidmetR, portalR] = await Promise.allSettled([
     jget("/api/overview"), jget("/api/afdj"), jget("/api/hidmet"),
@@ -1211,16 +1246,16 @@ async function refreshData() {
   pill("PEGELONLINE", ov.pegelonline ? (ov.pegelonline.stale ? "stale" : "ok") : "err");
   pill("RHMZ", hidmet ? (hidmet.stale ? "stale" : "ok") : "err");
 
-  renderHero(ov.inhga);
-  renderProfile(ov, afdj, hidmet, portal);
-  renderAfdjTable(afdj);
-  renderHidmetTable(hidmet);
-  renderAvize();
-  renderPFFacts(ov, afdj, hidmet);
-  renderDelta(afdj);
-  renderContraProbe(afdj, portal);
-  renderSinteza(ov.inhga);
-  renderAnalizaAI();
+  [() => renderHero(ov.inhga),
+   () => renderProfile(ov, afdj, hidmet, portal),
+   () => renderAfdjTable(afdj),
+   () => renderHidmetTable(hidmet),
+   renderAvize,
+   () => renderPFFacts(ov, afdj, hidmet),
+   () => renderDelta(afdj),
+   () => renderContraProbe(afdj, portal),
+   () => renderSinteza(ov.inhga),
+   renderAnalizaAI].forEach(safeRun);
 }
 
 main();
