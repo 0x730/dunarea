@@ -367,13 +367,7 @@ def api_avize(q):
 def api_analiza_ai(q):
     # Endpoint de stare, fără efecte: nici măcar ?run=1 nu poate porni un apel
     # plătit din exterior. Rularea manuală se face cu `python3 analiza_ai.py`.
-    r = analiza_ai.analiza(run=False)
-    if "data" not in r:          # inactiv (fără cheie) — mesajul explicativ
-        return r
-    payload = {**r["data"], "stale": r["stale"], "manual_only": True}
-    if r.get("error"):
-        payload["error"] = r["error"]
-    return payload
+    return analiza_ai.analiza(run=False)
 
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "

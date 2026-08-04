@@ -356,22 +356,22 @@ function renderAfdjTable(afdj) {
         <td class="num">${s.temp_apa_c != null ? fmt1.format(s.temp_apa_c) + "°" : ""}</td></tr>`).join("");
   // O cotă negativă este doar sub zero-ul convențional al mirei locale. Nu o
   // etichetăm automat drept punct critic sau pericol pentru navigație.
-  const coteJoase = afdj.statii
+  const coteNegative = afdj.statii
     .filter((s) => s.cota_cm != null && s.cota_cm < 0)
     .sort((a, b) => a.cota_cm - b.cota_cm)
     .slice(0, 5);
-  const coteJoaseHtml = coteJoase.length
-    ? `<p class="sub" style="margin:10px 0 0"><b>Cele mai mici cote din ultima citire</b>
-        (față de zero-ul propriei mire):
-        ${coteJoase.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
+  const coteNegativeHtml = coteNegative.length
+    ? `<p class="sub" style="margin:10px 0 0"><b>Cote negative în ultima citire</b>
+        (selecție, față de zero-ul propriei mire):
+        ${coteNegative.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
         Valorile negative nu înseamnă albie secată, nu sunt direct comparabile între stații
         și nu stabilesc singure un pericol pentru navigație; pentru restricții folosim avizele oficiale.
-        ${coteJoase.some((s) => s.statie === "Cernavoda")
+        ${coteNegative.some((s) => s.statie === "Cernavoda")
           ? "La Cernavodă, nivelul e influențat și de lucrările oficiale de la brațul Bala." : ""}</p>`
     : "";
   $("tabel-afdj").innerHTML = `<table class="data">
     <thead><tr><th>Stație</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">24 h</th><th class="num">apă</th></tr></thead>
-    <tbody>${rows}</tbody></table>${coteJoaseHtml}`;
+    <tbody>${rows}</tbody></table>${coteNegativeHtml}`;
 }
 
 function renderHidmetTable(h) {
@@ -1309,16 +1309,16 @@ async function renderSinteza(inhga) {
         <b>${peste90.length} din ${pcts.length} secțiuni</b> evaluate sunt peste percentila 90.${debitTxt}
         Pentru avertizări oficiale de inundații: INHGA / Apele Române.`);
     } else if (medP < 25) {
-      chips.push(`<span class="sev sev-atentie">sub normalul sezonului</span>`);
-      parts.push(`Dunărea curge <b>sub normalul sezonului</b> (mediana percentilelor: P${fmt1.format(medP)};
+      chips.push(`<span class="sev sev-atentie">model: sub normalul sezonului</span>`);
+      parts.push(`GloFAS plasează debitele <b>sub normalul sezonului</b> (mediana percentilelor: P${fmt1.format(medP)};
         ${sub10.length} din ${pcts.length} secțiuni sub percentila 10).${debitTxt}`);
     } else if (medP <= 75) {
-      chips.push(`<span class="sev sev-normal">debit în marja normală</span>`);
-      parts.push(`Dunărea curge <b>în marja normală</b> a acestor zile din an
+      chips.push(`<span class="sev sev-normal">model: marjă sezonieră normală</span>`);
+      parts.push(`GloFAS plasează debitele <b>în marja normală</b> a acestor zile din an
         (mediana percentilelor pe cele ${pcts.length} secțiuni evaluate: P${fmt1.format(medP)}).${debitTxt}`);
     } else {
-      chips.push(`<span class="sev sev-atentie">peste normalul sezonului</span>`);
-      parts.push(`Dunărea curge <b>peste normalul sezonului</b> (mediana percentilelor:
+      chips.push(`<span class="sev sev-atentie">model: peste normalul sezonului</span>`);
+      parts.push(`GloFAS plasează debitele <b>peste normalul sezonului</b> (mediana percentilelor:
         P${fmt1.format(medP)}; ${peste90.length} secțiuni peste percentila 90).${debitTxt}`);
     }
   }
