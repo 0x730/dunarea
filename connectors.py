@@ -672,7 +672,79 @@ def danubeportal_gauges():
     return cached("danubeportal", 1800, fetch)
 
 
-# ------------------------------------------------- Transelectrica SEN live --
+# ---------------------------------- avize către navigatori (NtS, oficiale) --
+# Aceeași pagină danubeportal conține și „Notices to Skippers" — avizele
+# oficiale ale administrațiilor de navigație: restricții, dragaje, niveluri
+# scăzute (DECLEV), pe sectoare cu kilometraj precis. Rezultatul practic:
+# harta oficială a punctelor critice din albie.
+
+AVIZE_MOTIVE = {
+    "DECLEV": "niveluri scăzute", "LIMITA": "restricție", "DREDGE": "dragaj",
+    "OBSTRU": "obstacol", "SHALLO": "apă mică", "WORK": "lucrări",
+    "LOCRUL": "lucrări ecluză", "CHGMAR": "semnalizare modificată",
+    "SOUND": "sondaje", "INFSER": "informare", "WERMCO": "comunicat meteo",
+}
+AVIZE_PRIORITARE = ("DECLEV", "SHALLO", "LIMITA", "OBSTRU", "DREDGE")
+
+
+def _isrs_km(code):
+    # formatul ISRS: ...țară+secțiune+obiect+HHHHH — ultimele 5 cifre sunt
+    # hectometrii kilometrajului fluvial
+    m = re.search(r"(\d{5})$", code or "")
+    return round(int(m.group(1)) / 10, 1) if m else None
+
+
+def danubeportal_avize():
+    def fetch():
+        html = http_get(DANUBEPORTAL_URL, timeout=40)
+        m = re.search(r"var nts_data = (\[.*?\]);\s*(?:var |</script>)", html, re.S)
+        if not m:
+            raise RuntimeError("nu găsesc nts_data în pagină")
+        azi = date.today().isoformat()
+        out = []
+        prag_vechi = (date.today() - timedelta(days=365)).isoformat()
+        for d in json.loads(m.group(1)):
+            ds = d.get("date_start") or ""
+            if ds > azi:
+                continue
+            de = d.get("date_end")
+            if de and de != "0000-00-00" and de < azi:
+                continue
+            # avize fără dată de sfârșit, emise acum ani — zgomot rămas în sistem
+            if (not de or de == "0000-00-00") and ds < prag_vechi:
+                continue
+            g = (d.get("geo") or [{}])[0]
+            lims = [{"cod": l.get("limitation_code"), "valoare": l.get("value"),
+                     "unitate": l.get("unit")}
+                    for gg in (d.get("geo") or [])
+                    for l in (gg.get("limitation") or [])
+                    if l.get("limitation_code")]
+            out.append({
+                "tara": d.get("country_code"),
+                "emitent": d.get("organisation"),
+                "numar": d.get("year_number"),
+                "motiv_cod": d.get("reason_code"),
+                "motiv": AVIZE_MOTIVE.get(d.get("reason_code"),
+                                          d.get("reason_code") or "?"),
+                "rau": g.get("objname"),
+                "km_de_la": _isrs_km(g.get("start")),
+                "km_pana_la": _isrs_km(g.get("end")),
+                "din": d.get("date_start"), "pana": de,
+                "text": re.sub(r"\s+", " ", (d.get("contents") or ""))[:260],
+                "limitari": [l for l in lims if l.get("valoare")],
+                "prioritar": d.get("reason_code") in AVIZE_PRIORITARE,
+            })
+        if not out:
+            raise RuntimeError("niciun aviz activ — structura s-a schimbat?")
+        from collections import Counter
+        pe_tari = dict(Counter(a["tara"] for a in out))
+        daily_snapshot("avize", {"pe_tari": pe_tari,
+                                 "prioritare": sum(1 for a in out if a["prioritar"])})
+        out.sort(key=lambda a: (a["tara"] not in ("RO", "BG"),
+                                not a["prioritar"], -(a["km_de_la"] or 0)))
+        return {"active": len(out), "pe_tari": pe_tari, "avize": out[:60]}
+
+    return cached("avize", 3 * 3600, fetch)
 # Starea Sistemului Energetic Național, JSON public, fără cont.
 
 SEN_URL = "https://www.transelectrica.ro/sen-filter"

@@ -273,6 +273,8 @@ ROUTES = {
     "/api/bilant-apa": api_bilant_apa,
     "/api/raport": api_raport,
     "/api/istoric": lambda q: C.history_status(),
+    "/api/avize": lambda q: {**C.danubeportal_avize()["data"],
+                             "stale": C.danubeportal_avize()["stale"]},
     "/api/analiza-ai": lambda q: api_analiza_ai(q),
 }
 

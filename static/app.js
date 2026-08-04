@@ -266,6 +266,29 @@ function renderHidmetTable(h) {
     <p class="sub" style="margin:8px 0 0">„·" = debitul nu se publică pentru stația respectivă.</p>`;
 }
 
+/* ---------------------------------------------------------------- avize -- */
+async function renderAvize() {
+  try {
+    const d = await jget("/api/avize");
+    const prio = d.avize.filter((a) => a.prioritar && ["RO", "BG"].includes(a.tara)).slice(0, 10);
+    const rows = prio.map((a) => `
+      <tr><td class="name">${a.tara} · ${a.motiv}${a.limitari?.length
+          ? ` <span class="prov prov-calculat">${a.limitari.map((l) => `${l.cod} ${l.valoare}${l.unitate || ""}`).join(", ")}</span>` : ""}</td>
+        <td class="num">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
+        <td style="font-size:12.5px; color:var(--ink-2)">${a.text.slice(0, 150)}${a.text.length > 150 ? "…" : ""}</td>
+        <td class="num">${a.din || ""}</td></tr>`).join("");
+    $("tabel-avize").innerHTML = `<div style="overflow-x:auto"><table class="data">
+      <thead><tr><th>Aviz</th><th class="num">sector</th><th>conținut</th><th class="num">din</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="4" class="name">niciun aviz prioritar activ pe sectorul RO/BG</td></tr>`}</tbody></table>
+      <p class="sub" style="margin:8px 0 0">${d.active} avize active pe tot fluviul ·
+        ${Object.entries(d.pe_tari).map(([t, n]) => `${t}:${n}`).join(" ")} ·
+        afișate: cele prioritare (niveluri scăzute, restricții, dragaje, obstacole) de pe sectorul RO/BG ·
+        sursă: rețeaua DanubeSTREAM, standard „Notices to Skippers"</p></div>`;
+  } catch (e) {
+    $("tabel-avize").innerHTML = `<div class="err-box">Avizele nu au putut fi încărcate.</div>`;
+  }
+}
+
 /* ------------------------------------------------ comparația pe ani ----- */
 const MMDD = (() => {
   const out = [];
@@ -1192,6 +1215,7 @@ async function refreshData() {
   renderProfile(ov, afdj, hidmet, portal);
   renderAfdjTable(afdj);
   renderHidmetTable(hidmet);
+  renderAvize();
   renderPFFacts(ov, afdj, hidmet);
   renderDelta(afdj);
   renderContraProbe(afdj, portal);
