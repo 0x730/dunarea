@@ -82,7 +82,10 @@ def climatology(point_id):
     cur_year = date.today().year
     exact, ref = _doy_reference(smap, cur_year)
 
-    days = sorted(d for d in smap if d.startswith(str(cur_year)))[-45:]
+    # ultimele 45 de zile calendaristice, indiferent de anul lor — altfel
+    # seria „zile sub P10" s-ar reseta artificial pe 1 ianuarie
+    azi = date.today().isoformat()
+    days = sorted(d for d in smap if d <= azi)[-45:]
     recent = []
     for ds in days:
         r = _rank(smap[ds], ref.get(_mmdd(ds), []))
@@ -242,9 +245,9 @@ def precip_coherence(discharge_pct):
             ref = [v for ds, v in cum90.items()
                    if _mmdd(ds) == _mmdd(end) and ds != end]
             # fereastra calendaristică ±5 zile pentru mai multe mostre
+            # fereastra ±5 zile trebuie să se învârtă peste Anul Nou
             refw = [v for ds, v in cum90.items()
-                    if abs((date.fromisoformat(ds).timetuple().tm_yday
-                            - date.fromisoformat(end).timetuple().tm_yday)) <= 5
+                    if abs(_doy_diff(_mmdd(ds), _mmdd(end))) <= 5
                     and not ds.startswith(str(today.year))]
             pct = _rank(cur, refw or ref)
             out.append({"zona": C.PRECIP_POINTS[pid]["name"], "eticheta": label,
@@ -280,16 +283,23 @@ def precip_stats():
         end = pairs[-1][0]
         cutoff = _mmdd(end)
 
+        # iarna = nov(an-1) → mar(an). Dacă iarna curentă e în desfășurare
+        # (suntem în ian–mar), o comparăm cu ACEEAȘI porțiune din iernile
+        # istorice — altfel am pune o iarnă pe jumătate lângă ierni întregi.
+        iarna_cutoff = cutoff if cutoff <= "03-31" else "03-31"
         ytd, winter, wsnow = {}, {}, {}
         for ts, v, sn in pairs:
             y, m = int(ts[:4]), int(ts[5:7])
-            if _mmdd(ts) <= cutoff and _mmdd(ts) != "02-29":
+            md = _mmdd(ts)
+            if md == "02-29":
+                continue
+            if md <= cutoff:
                 ytd[y] = ytd.get(y, 0.0) + v
             if m >= 11:
                 winter[y + 1] = winter.get(y + 1, 0.0) + v
                 if sn is not None:
                     wsnow[y + 1] = wsnow.get(y + 1, 0.0) + sn
-            elif m <= 3:
+            elif md <= iarna_cutoff:
                 winter[y] = winter.get(y, 0.0) + v
                 if sn is not None:
                     wsnow[y] = wsnow.get(y, 0.0) + sn
@@ -609,6 +619,10 @@ def water_budget():
     ani = set.intersection(*(set(a) for a in ytd_pp))
     ytd_mm = {y: sum(a[y] for a in ytd_pp) / len(ytd_pp) for y in ani}
 
+    # în primele zile ale anului, ERA5 (întârziat ~3 zile) încă e în anul
+    # trecut: bilanțul se raportează atunci la anul precedent, complet
+    if cy not in ytd_mm and (cy - 1) in ytd_mm:
+        cy = cy - 1
     p_hist = [ytd_mm[y] for y in range(PRECIP_START, cy) if y in ytd_mm]
     if cy not in ytd_mm or not p_hist:
         raise RuntimeError("serie ERA5 incompletă")

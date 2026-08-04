@@ -21,6 +21,9 @@ DB_PATH = os.path.join(BASE_DIR, "cache.db")
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) DanubeMonitor/1.0 (uz personal, date oficiale)"
 
 _db_lock = threading.Lock()
+# single-flight: o singură reîmprospătare per cheie, oricâte cereri simultane
+_inflight_lock = threading.Lock()
+_inflight = {}
 
 # ---------------------------------------------------------------- cache ----
 
@@ -55,6 +58,30 @@ def cache_put(key, data, ttl):
         )
 
 
+# chei păstrate permanent (arhiva locală care crește zi de zi)
+PERMANENT_PREFIXES = ("hist:", "inhga_day:", "grav2:", "glofas_cell:", "analiza_ai")
+
+
+def cache_gc(max_age_expirat=30 * 86400):
+    """Curăță rândurile expirate de mult și cheile orfane rămase după
+    redenumiri de prefix — altfel cache.db crește la nesfârșit."""
+    acum = time.time()
+    with _db_lock, _db() as conn:
+        rows = conn.execute("SELECT key, fetched_at, ttl FROM cache").fetchall()
+        sterse = 0
+        for key, fetched_at, ttl in rows:
+            if key.startswith(PERMANENT_PREFIXES):
+                continue
+            if acum - fetched_at > max(ttl, 0) + max_age_expirat:
+                conn.execute("DELETE FROM cache WHERE key=?", (key,))
+                sterse += 1
+        # prefixe abandonate de versiuni vechi ale codului
+        for mort in ("grav:%", "era5:%"):
+            sterse += conn.execute("DELETE FROM cache WHERE key LIKE ?",
+                                   (mort,)).rowcount
+    return sterse
+
+
 def daily_snapshot(source, payload):
     """Arhiva locală: o fotografie pe zi pentru fiecare sursă zilnică —
     aplicația își construiește singură istoricul măsurat."""
@@ -84,10 +111,24 @@ def history_status():
 
 def cached(key, ttl, fetch_fn, stale_ok=True):
     """Returnează din cache dacă e proaspăt; altfel refetch. La eroare de
-    rețea servește versiunea veche (stale) dacă există, cu marcaj."""
+    rețea servește versiunea veche (stale) dacă există, cu marcaj.
+
+    Cereri simultane pe aceeași cheie NU declanșează fetch-uri paralele:
+    prima ia lacătul cheii, restul așteaptă și consumă rezultatul ei."""
     hit = cache_get(key)
     if hit:
         return {"data": hit["data"], "cache_age_s": int(hit["age"]), "stale": False}
+
+    with _inflight_lock:
+        lock = _inflight.setdefault(key, threading.Lock())
+    with lock:
+        hit = cache_get(key)   # altcineva a adus datele cât am așteptat
+        if hit:
+            return {"data": hit["data"], "cache_age_s": int(hit["age"]), "stale": False}
+        return _fetch_and_store(key, ttl, fetch_fn, stale_ok)
+
+
+def _fetch_and_store(key, ttl, fetch_fn, stale_ok):
     try:
         data = fetch_fn()
         cache_put(key, data, ttl)
@@ -107,14 +148,34 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
 
 # ----------------------------------------------------------------- http ----
 
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Cu verificarea TLS relaxată, un redirect către alt host ar duce
+    contextul nesigur oriunde. Permitem redirect doar pe același host."""
+
+    def __init__(self, host):
+        self.host = host
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlparse(newurl).hostname != self.host:
+            raise urllib.error.HTTPError(
+                newurl, code, "redirect către alt host respins (TLS relaxat)",
+                headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def http_get(url, timeout=25, insecure=False, binary=False):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    ctx = None
     if insecure:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            _SameHostRedirect(urllib.parse.urlparse(url).hostname))
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read()
+        return raw if binary else raw.decode("utf-8", errors="replace")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read()
     if binary:
         return raw
@@ -262,7 +323,8 @@ def glofas_recent(point_id, past_days=30, forecast_days=7):
                 "discharge": d["daily"]["river_discharge"],
                 "cell": cell}
 
-    return cached(f"glofas_recent:{point_id}:{past_days}", 3 * 3600, fetch)
+    return cached(f"glofas_recent:{point_id}:{past_days}:{forecast_days}",
+                  3 * 3600, fetch)
 
 
 def glofas_archive(point_id, start_year):
@@ -395,10 +457,12 @@ def inhga_bulletin():
             m = re.search(pattern, t, re.S | re.I)
             return m.group(1) if m else None
 
-        debit = grab(r"Baziaș\)\s*a fost[^.]*?valoarea de\s*([\d.,]+)\s*m")
+        # „[^.]*?" ar bloca fraza dacă apare un număr cu punct (1.500) sau o
+        # oră (06.00) între ancoră și valoare — limităm pe lungime, nu pe punct
+        debit = grab(r"Baziaș\)\s*a fost.{0,120}?valoarea de\s*([\d.,]+)\s*m")
         trend = grab(r"Baziaș\)\s*a fost în\s*([^\s,]+(?:\s+ușoară)?)")
         medie = grab(r"media multianuală a lunii \w+\s*\(?\s*([\d.,]+)\s*m")
-        prognoza = grab(r"Baziaș\)\s*va fi[^.]*?valoarea de\s*([\d.,]+)\s*m")
+        prognoza = grab(r"Baziaș\)\s*va fi.{0,160}?valoarea de\s*([\d.,]+)\s*m")
 
         # paragrafele oficiale integrale (diagnoză + prognoză), fără titluri
         lines = [ln.strip() for ln in t.split("\n") if len(ln.strip()) > 60]
@@ -410,6 +474,10 @@ def inhga_bulletin():
                 seen.add(ln)
                 core.append(ln)
         core = core[:8]
+
+        # ține seria zilnică la zi fără să depindă de backfill/repornire
+        if _num(debit) is not None:
+            cache_put(f"inhga_day:{yyyy}-{mm}-{dd}", _num(debit), 10 ** 9)
 
         return {
             "url": url,
@@ -443,28 +511,38 @@ def inhga_bulletin_for(d):
     ds = d.strftime("%d-%m-%Y")
     key = f"inhga_day:{d.isoformat()}"
     hit = cache_get(key, max_age=10 ** 9)
-    if hit:
+    if hit and hit["data"] is not None:
         return hit["data"]
+    # un „nu există încă" pentru zilele recente se reîncearcă des (buletinul
+    # apare pe parcursul zilei); pentru zile vechi, rar
+    recent = (date.today() - d).days <= 3
+    if hit and hit["data"] is None and hit["age"] < (2 * 3600 if recent else 7 * 86400):
+        return None
     try:
         html = http_get(INHGA_DAILY.format(d=ds))
         debit = _parse_inhga_html(html)
     except Exception:
         debit = None
-    # și eșecurile se rețin (nu re-lovim zilnic arhiva pentru zile lipsă)
-    cache_put(key, debit, 10 ** 9 if debit is not None else 7 * 86400)
+    cache_put(key, debit, 10 ** 9)
     return debit
 
 
 def inhga_series(days=90):
     """Seria debitului oficial la Baziaș, din buletinele arhivate (doar din
-    cache — umplerea o face warmup-ul, ca să nu blocheze cererile)."""
+    cache — umplerea o face warmup-ul, ca să nu blocheze cererile).
+    O singură interogare SQL, nu una pe zi."""
+    prag = (date.today() - timedelta(days=days)).isoformat()
+    with _db_lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT key, payload FROM cache "
+            "WHERE key LIKE 'inhga_day:%' AND key >= ?",
+            (f"inhga_day:{prag}",)).fetchall()
     out = []
-    today = date.today()
-    for i in range(days, -1, -1):
-        d = today - timedelta(days=i)
-        hit = cache_get(f"inhga_day:{d.isoformat()}", max_age=10 ** 9)
-        if hit and hit["data"] is not None:
-            out.append({"date": d.isoformat(), "debit_m3s": hit["data"]})
+    for k, payload in rows:
+        val = json.loads(payload)
+        if val is not None:
+            out.append({"date": k.split(":", 1)[1], "debit_m3s": val})
+    out.sort(key=lambda r: r["date"])
     return out
 
 

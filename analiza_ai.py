@@ -15,6 +15,7 @@ Groq, Mistral sau un Ollama local (AI_BASE_URL=http://localhost:11434/v1).
 import hashlib
 import json
 import os
+import threading
 import urllib.request
 from datetime import date
 
@@ -24,6 +25,9 @@ import connectors as C
 # regenerare condusă de stare, nu de ceas:
 MAX_VARSTA_S = 7 * 86400   # plasă de siguranță — reîmprospătare oricum la 7 zile
 MIN_INTERVAL_S = 1800      # anti-flapping — nu mai des de o dată la 30 min
+
+# apelul e plătit: o singură generare simultană, oricâte cereri ar veni
+_lock_ai = threading.Lock()
 
 AI_BASE = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
@@ -136,6 +140,11 @@ def analiza():
                          "analiza narativă generată de AI. Sinteza deterministă "
                          "din capul paginii funcționează oricum, fără AI."}
 
+    with _lock_ai:
+        return _analiza_locked(key)
+
+
+def _analiza_locked(key):
     parti, fp = _amprenta_stare()
     veche = C.cache_get("analiza_ai", max_age=10 ** 9)
     if veche:

@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import traceback
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -37,12 +38,23 @@ def api_overview(q):
     return C.overview()
 
 
+def _int_clamp(q, name, default, lo, hi):
+    """Parametrii din URL determină chei de cache și cereri către sursele
+    oficiale — se mărginesc pe AMBELE capete, ca nimeni să nu poată umple
+    cache-ul sau bombarda sursele prin enumerare."""
+    try:
+        v = int(q.get(name, [str(default)])[0])
+    except (TypeError, ValueError):
+        v = default
+    return max(lo, min(hi, v))
+
+
 def api_glofas_recent(q):
     pid = q.get("point", ["bazias"])[0]
     if pid not in C.GLOFAS_POINTS:
         raise KeyError(f"punct necunoscut: {pid}")
-    days = int(q.get("days", ["60"])[0])
-    r = C.glofas_recent(pid, past_days=min(days, 92), forecast_days=7)
+    days = _int_clamp(q, "days", 60, 1, 92)
+    r = C.glofas_recent(pid, past_days=days, forecast_days=7)
     return {"point": C.GLOFAS_POINTS[pid] | {"id": pid}, **r["data"],
             "stale": r["stale"]}
 
@@ -51,7 +63,7 @@ def api_glofas_years(q):
     pid = q.get("point", ["bazias"])[0]
     if pid not in C.GLOFAS_POINTS:
         raise KeyError(f"punct necunoscut: {pid}")
-    start_year = max(1984, int(q.get("start", ["2015"])[0]))
+    start_year = _int_clamp(q, "start", 2015, 1984, date.today().year)
     r = C.glofas_archive(pid, start_year)
     return {"point": C.GLOFAS_POINTS[pid] | {"id": pid}, **r["data"],
             "stale": r["stale"]}
@@ -61,7 +73,7 @@ def api_precip(q):
     pid = q.get("point", ["oltenia"])[0]
     if pid not in C.PRECIP_POINTS:
         raise KeyError(f"punct necunoscut: {pid}")
-    start_year = max(1950, int(q.get("start", ["2015"])[0]))
+    start_year = _int_clamp(q, "start", 2015, 1950, date.today().year)
     r = C.era5_precip(pid, start_year)
     return {**r["data"], "stale": r["stale"]}
 
@@ -73,10 +85,11 @@ def api_pegel_stations(q):
 
 def api_pegel_series(q):
     uuid = q.get("uuid", [""])[0]
-    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                        r"[0-9a-f]{4}-[0-9a-f]{12}", uuid):
         raise KeyError("uuid invalid")
     param = q.get("param", ["W"])[0]
-    days = int(q.get("days", ["10"])[0])
+    days = _int_clamp(q, "days", 10, 1, 30)
     r = C.pegelonline_series(uuid, param, days)
     return {**r["data"], "stale": r["stale"]}
 
@@ -97,8 +110,7 @@ def api_hidmet(q):
 
 
 def api_entsoe(q):
-    return C.entsoe_irongates() if os.environ.get("ENTSOE_TOKEN") \
-        else C.entsoe_irongates()
+    return C.entsoe_irongates()
 
 
 def api_delta(q):
@@ -144,8 +156,7 @@ def api_anomalii(q):
 
 
 def api_inhga_serie(q):
-    days = min(int(q.get("days", ["90"])[0]), 365)
-    return {"serie": C.inhga_series(days)}
+    return {"serie": C.inhga_series(_int_clamp(q, "days", 90, 1, 365))}
 
 
 def _stats_cached():
@@ -286,25 +297,42 @@ def api_analiza_ai(q):
     return {**r["data"], "stale": r["stale"]}
 
 
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+       "form-action 'none'; frame-ancestors 'none'")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30  # un client lent nu blochează un fir la nesfârșit
 
     def log_message(self, fmt, *args):
         pass  # liniște în consolă
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8",
+              head_only=False):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        # a doua linie de apărare: chiar dacă un text extern ar scăpa
+        # neescapat în pagină, CSP-ul îi interzice execuția
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
+        if head_only:
+            return
         try:
             self.wfile.write(data)
         except BrokenPipeError:
             pass
 
-    def do_GET(self):
+    def do_HEAD(self):
+        self.do_GET(head_only=True)
+
+    def do_GET(self, head_only=False):
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -312,31 +340,43 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = ROUTES[path](parse_qs(parsed.query))
                 if isinstance(res, tuple):  # (text, content-type), ex. CSV
-                    self._send(200, res[0].encode("utf-8"), res[1])
+                    self._send(200, res[0].encode("utf-8"), res[1], head_only)
                 else:
-                    self._send(200, res)
-            except Exception as exc:
+                    self._send(200, res, head_only=head_only)
+            except Exception:
+                # detaliile în log, nu la client (pot conține căi interne)
                 traceback.print_exc()
-                self._send(502, {"error": str(exc)})
+                self._send(502, {"error": "sursa de date nu a răspuns; "
+                                          "reîncercați în câteva minute"},
+                           head_only=head_only)
             return
 
-        # fișiere statice
+        # fișiere statice — doar tipurile cunoscute, doar din static/
         if path == "/":
             path = "/index.html"
-        fpath = os.path.normpath(os.path.join(STATIC_DIR, path.lstrip("/")))
-        if not fpath.startswith(STATIC_DIR) or not os.path.isfile(fpath):
-            self._send(404, {"error": "not found"})
-            return
+        fpath = os.path.realpath(os.path.join(STATIC_DIR, path.lstrip("/")))
         ext = os.path.splitext(fpath)[1]
+        inside = os.path.commonpath([fpath, STATIC_DIR]) == STATIC_DIR
+        if not inside or ext not in MIME or not os.path.isfile(fpath):
+            self._send(404, {"error": "not found"}, head_only=head_only)
+            return
         with open(fpath, "rb") as fh:
-            self._send(200, fh.read(), MIME.get(ext, "application/octet-stream"))
+            self._send(200, fh.read(), MIME[ext], head_only)
 
 
 def warmup():
     """Pre-încălzește cache-ul în fundal ca prima încărcare să fie rapidă.
     Prima rulare face și "snap"-ul celulelor GloFAS (multe cereri mici),
-    de aceea rulează pe mai multe fire."""
+    de aceea rulează pe mai multe fire.
+
+    Nu se repetă la fiecare repornire: dacă a rulat în ultimele 6 ore,
+    se sare — altfel un supervisor care repornește în buclă ar bombarda
+    sursele oficiale."""
     from concurrent.futures import ThreadPoolExecutor
+
+    if C.cache_get("warmup_done", max_age=6 * 3600):
+        print("warmup sărit (rulat recent)")
+        return
 
     jobs = [C.pegelonline_stations, C.inhga_bulletin, C.hidmet_report]
     jobs += [lambda p=pid: C.glofas_recent(p, past_days=10, forecast_days=3)
@@ -356,6 +396,8 @@ def warmup():
     safe(lambda: C.inhga_backfill(days=90))
     # raportul de anomalii cere arhive lungi — îl pre-calculăm tot aici
     safe(lambda: C.cached("anomalii_report", 6 * 3600, anomalii.report))
+    safe(C.cache_gc)
+    C.cache_put("warmup_done", True, 6 * 3600)
     print("istoric INHGA + raport anomalii pregătite")
 
 
@@ -364,10 +406,15 @@ def ai_watcher():
     categorial; analiza AI se regenerează doar atunci (sau la 7 zile).
     Fără AI_API_KEY, apelul iese instant — zero cost."""
     import time as _t
+    n = 0
     while True:
         _t.sleep(1800)
+        n += 1
         try:
+            C.inhga_bulletin()      # ține seria oficială la zi fără repornire
             analiza_ai.analiza()
+            if n % 48 == 0:         # o dată pe zi: curățenie în cache
+                C.cache_gc()
         except Exception:
             pass
 

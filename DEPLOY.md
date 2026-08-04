@@ -49,13 +49,19 @@ daemonul și îi afli numele.)
 - Command: `python3 server.py`
 - Directory: `/home/forge/dunarea.exemplu.ro`
 - User: `forge`
-- **Environment** (aici stau secretele, NU în git):
+- **Environment** (aici stau secretele, NU în git — folosiți env, nu fișiere
+  în directorul de deploy):
   ```
   PORT=7300
   HYDROWEB_KEY=cheia_ta_hydroweb
+  AI_API_KEY=cheia_openai            # activează analiza narativă
+  AI_MODEL=gpt-4o-mini               # opțional
   ENTSOE_TOKEN=tokenul_tau_daca_il_ai
   DAHITI_KEY=daca_apare_vreodata
   ```
+- **Restart policy**: în Forge → daemon, lăsați `startsecs`/`startretries` la
+  valorile implicite sau creșteți-le; aplicația sare singură peste warmup dacă
+  a rulat în ultimele 6 ore, dar o buclă de repornire tot e de evitat.
 
 Supervisor îl pornește, îl ține în viață și îl repornește la crash. La prima
 pornire, warmup-ul durează 1–2 minute (snap-ul celulelor GloFAS + arhiva INHGA);
@@ -83,13 +89,31 @@ Fișierul GRDC (dacă îl obții): `scp` direct în
     }
 ```
 
+Adăugați și o limită de rată (aplicația interoghează surse oficiale — nu vrem
+ca cineva să le bombardeze prin ea). În blocul `http { }` din
+`/etc/nginx/nginx.conf`:
+
+```nginx
+limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
+```
+
+…iar în `location /` din configurația sitului:
+
+```nginx
+        limit_req zone=api burst=20 nodelay;
+```
+
 Apoi restart nginx din Forge. Aplicația își servește singură staticele —
-nginx-ul doar proxy-ază tot.
+nginx-ul doar proxy-ază tot. Aplicația trimite deja `Content-Security-Policy`,
+`X-Content-Type-Options` și `Referrer-Policy` pe fiecare răspuns.
 
 ## 4. Cloudflare
 
 - **DNS**: înregistrare `A` pentru `dunarea` → IP-ul serverului Forge,
   **Proxied** (nor portocaliu).
+- **Restricționați 80/443 la IP-urile Cloudflare** (Forge → Network, sau ufw
+  cu lista de la cloudflare.com/ips) — altfel IP-ul de origine rămâne
+  accesibil direct și ocolește orice protecție Cloudflare.
 - **SSL/TLS → Overview**: modul **Full (strict)**.
 - **Certificat pe origine** — două variante, oricare merge:
   - Forge → site → **SSL → LetsEncrypt** (funcționează și cu norul portocaliu
@@ -115,10 +139,21 @@ daemon-XXXXXX` pe server arată de ce.
 
 ## Note de exploatare
 
-- `cache.db` se creează singur pe server (nu vine din git); poate fi șters
-  oricând — se reconstruiește (prima reconstrucție GRACE durează ~10 min).
-- Arhiva locală zilnică (AFDJ/RHMZ/DanubeSTREAM/SEN/INHGA) trăiește tot în
-  `cache.db` — pentru backup, e de ajuns o copie periodică a fișierului
-  (Forge → Backups nu îl prinde; un cron simplu cu `cp` + rotație e suficient).
-- Aplicația e read-only și fără autentificare — nu expune nimic sensibil;
-  cheile stau doar în env-ul daemonului.
+- `cache.db` se creează singur pe server (nu vine din git). Poate fi șters,
+  dar **evitați**: conține arhiva locală zilnică (AFDJ/RHMZ/DanubeSTREAM/SEN/
+  INHGA/analize AI), care crește în valoare cu timpul. Ștergerea declanșează
+  și o reconstrucție costisitoare (GRACE ~10 min, snap GloFAS ~2 min).
+- **Backup corect** (nu `cp` pe o bază vie — poate ieși ruptă):
+  ```bash
+  sqlite3 /home/forge/SITE/cache.db ".backup '/home/forge/backups/cache-$(date +\%F).db'"
+  ```
+  într-un cron zilnic, cu rotație la 14 zile.
+- Cache-ul se curăță singur (rânduri expirate de peste 30 de zile, o dată pe
+  zi); cheile permanente — arhiva locală — sunt protejate explicit.
+- Aplicația e read-only, fără autentificare și fără scriere din exterior.
+  Cheile stau doar în env-ul daemonului și **nu** ajung în `cache.db`, în
+  răspunsuri sau în mesajele de eroare (verificat). Notă de transparență:
+  `/api/analiza-ai` publică intenționat promptul și datele de intrare ale
+  analizei AI — asta e prin design, nu o scurgere.
+- Dependența `h5py` (doar pentru gravimetria GRACE) e opțională: dacă
+  instalarea eșuează, cardul respectiv se dezactivează singur, restul merge.
