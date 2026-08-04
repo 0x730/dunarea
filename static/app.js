@@ -1545,9 +1545,27 @@ async function renderRomania() {
         const source = row.source?.url
           ? `<a href="${row.source.url}" target="_blank" rel="noopener">${row.source.label || "sursa oficială"}</a>`
           : `<span class="prov prov-lipsa">sursă curentă indisponibilă</span>`;
+        const flow = row.model_context || {};
+        let flowSummary = `<span class="prov prov-lipsa">debit GloFAS indisponibil în fereastră</span>`;
+        if (flow.available) {
+          if (flow.start === flow.end) {
+            flowSummary = `<b>${fmtN.format(flow.start_value_m3s)} m³/s</b>${flow.percentile != null ? ` · P${fmtV(flow.percentile, fmt1)}` : ""}${flow.days_below_p10 != null ? ` · ${flow.days_below_p10} zile sub P10` : ""}`;
+          } else {
+            const startValue = flow.start_value_m3s != null ? `${fmtN.format(flow.start_value_m3s)} m³/s la început` : "început indisponibil";
+            const minimum = flow.minimum
+              ? `<b>min. ${fmtN.format(flow.minimum.value_m3s)} m³/s</b> la ${flow.minimum.date.slice(5)}`
+              : "minim indisponibil";
+            const endValue = flow.end_value_m3s != null ? `${fmtN.format(flow.end_value_m3s)} m³/s la final` : "final indisponibil";
+            flowSummary = `${startValue} · ${minimum} · ${endValue}`;
+          }
+        }
         return `<tr${row.current ? ` class="current-year"` : ""}>
           <td class="name">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
-          <td>${row.hydrology}</td>
+          <td>${row.hydrology}
+            <div class="episode-flow"><span class="prov prov-model">GloFAS · ${flow.label || "fereastră neprecizată"}</span><br>
+              ${flowSummary}<br><span class="table-detail">${flow.basis || ""}${flow.complete === false ? ` · acoperire ${flow.days_available || 0}/${flow.days_expected || "?"} zile` : ""}<br>${flow.limit || "debit modelat, nu măsurare la priza CNE"}</span>
+            </div>
+          </td>
           <td>${roOperationChip(row.classification)}<br><span class="table-detail">${row.plant_action}</span></td>
           <td>${row.interpretation}</td>
           <td>${source}<br><span class="table-detail">${row.source_scope || "acoperire neprecizată"}</span></td>

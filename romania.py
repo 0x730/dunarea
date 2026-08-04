@@ -34,6 +34,11 @@ HISTORICAL_CNE_OPERATIONS = (
         "source": {"label": "SNN — retrospectiva publicată în 2011",
                    "url": SNN_2011_LOW_WATER_URL},
         "source_scope": "contextul și oprirea preventivă, relatate retrospectiv",
+        "model_window": {
+            "start": "2003-08-01", "end": "2003-09-30",
+            "label": "aug.–sept. 2003",
+            "basis": "fereastră de context; comunicatul SNN folosit nu publică ziua exactă a opririi",
+        },
     },
     {
         "year": 2011,
@@ -45,6 +50,11 @@ HISTORICAL_CNE_OPERATIONS = (
         "source": {"label": "SNN — comunicat 15.09.2011",
                    "url": SNN_2011_LOW_WATER_URL},
         "source_scope": "nivelul bazinului, pragurile istorice și starea unităților",
+        "model_window": {
+            "start": "2011-09-15", "end": "2011-09-30",
+            "label": "15–30 sept. 2011",
+            "basis": "de la data comunicatului până la sfârșitul lunii",
+        },
     },
     {
         "year": 2015,
@@ -56,6 +66,11 @@ HISTORICAL_CNE_OPERATIONS = (
         "source": {"label": "SNN — comunicat 22.07.2015",
                    "url": SNN_2015_LOW_WATER_URL},
         "source_scope": "nivelul scăzut și funcționarea unităților la data comunicatului",
+        "model_window": {
+            "start": "2015-07-22", "end": "2015-09-30",
+            "label": "22 iul.–30 sept. 2015",
+            "basis": "intervalul de prognoză discutat de comunicatul SNN",
+        },
     },
     {
         "year": 2022,
@@ -67,6 +82,11 @@ HISTORICAL_CNE_OPERATIONS = (
         "source": {"label": "SNN — Raport anual 2022",
                    "url": SNN_2022_ANNUAL_REPORT_URL},
         "source_scope": "acțiunea și cauza oficială; contextul hidrologic este GloFAS din monitor",
+        "model_window": {
+            "start": "2022-08-26", "end": "2022-08-31",
+            "label": "26–31 aug. 2022",
+            "basis": "intervalul opririi consemnat în raportul anual SNN",
+        },
     },
 )
 
@@ -175,14 +195,47 @@ def _claim(key, label, status, conclusion, evidence, limit):
             "conclusion": conclusion, "evidence": evidence, "limit": limit}
 
 
-def _operational_history(as_of, snn_status, snn_stale, cern, cern_gauge,
-                         measured, monthly_mean):
+def _model_window_context(archive, window):
+    """Rezumat GloFAS într-o fereastră explicită, fără a inventa valori lipsă."""
+    values = _series_map(archive)
+    start, end = window["start"], window["end"]
+    items = sorted((stamp, value) for stamp, value in values.items()
+                   if start <= stamp <= end)
+    expected_days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+    if not items:
+        return {
+            **window,
+            "available": False,
+            "days_available": 0,
+            "days_expected": expected_days,
+            "complete": False,
+            "method": "GloFAS/Copernicus · aceeași celulă Cernavodă",
+        }
+    minimum_stamp, minimum_value = min(items, key=lambda item: item[1])
+    return {
+        **window,
+        "available": True,
+        "start_value_m3s": (round(values[start], 1) if start in values else None),
+        "end_value_m3s": (round(values[end], 1) if end in values else None),
+        "minimum": {"date": minimum_stamp, "value_m3s": round(minimum_value, 1)},
+        "days_available": len(items),
+        "days_expected": expected_days,
+        "complete": len(items) == expected_days,
+        "method": "GloFAS/Copernicus · aceeași celulă Cernavodă",
+        "limit": "debit modelat al fluviului; nu este debit măsurat la priza CNE",
+    }
+
+
+def _operational_history(as_of, archive, snn_status, snn_stale, cern,
+                         cern_gauge, measured, monthly_mean):
     """Leagă anii hidrologici de acțiunea publicată de operator.
 
     Intrările istorice sunt constatări datate, nu stări curente. Ultimul rând
     este construit exclusiv din raportul SNN curent acceptat de conector.
     """
     rows = [dict(row) for row in HISTORICAL_CNE_OPERATIONS]
+    for row in rows:
+        row["model_context"] = _model_window_context(archive, row["model_window"])
     report = snn_status.get("latest_report") or {}
     source = ({"label": report.get("title") or "SNN — raport operațional curent",
                "url": report.get("url")} if report.get("url") else None)
@@ -211,8 +264,6 @@ def _operational_history(as_of, snn_status, snn_stale, cern, cern_gauge,
         interpretation = "nu se păstrează ca fapt o stare veche sau un raport nou încă nerevizuit"
 
     current_hydrology = []
-    if _number(cern.get("percentila")) is not None:
-        current_hydrology.append(f"GloFAS Cernavodă P{cern['percentila']}")
     if _number((cern_gauge or {}).get("cota_cm")) is not None:
         current_hydrology.append(f"miră AFDJ {cern_gauge['cota_cm']} cm")
     if measured is not None:
@@ -220,6 +271,24 @@ def _operational_history(as_of, snn_status, snn_stale, cern, cern_gauge,
         if monthly_mean:
             bazias += f" ({100 * measured / monthly_mean:.1f}% din media lunii)"
         current_hydrology.append(bazias)
+
+    current_model = _model_window_context(archive, {
+        "start": as_of.isoformat(), "end": as_of.isoformat(),
+        "label": as_of.strftime("%d.%m.%Y"),
+        "basis": "ziua curentă a analizei",
+    })
+    current_model["percentile"] = _number(cern.get("percentila"))
+    current_model["days_below_p10"] = cern.get("zile_sub_p10")
+    if not current_model["available"] and _number(cern.get("azi_m3s")) is not None:
+        current_model.update({
+            "available": True,
+            "start_value_m3s": round(cern["azi_m3s"], 1),
+            "end_value_m3s": round(cern["azi_m3s"], 1),
+            "minimum": {"date": as_of.isoformat(),
+                        "value_m3s": round(cern["azi_m3s"], 1)},
+            "days_available": 1,
+            "complete": True,
+        })
 
     rows.append({
         "year": as_of.year,
@@ -232,6 +301,8 @@ def _operational_history(as_of, snn_status, snn_stale, cern, cern_gauge,
         "interpretation": interpretation,
         "source": source,
         "source_scope": "starea CNE; contextul hidrologic vine din fluxurile curente ale monitorului",
+        "model_window": {"start": as_of.isoformat(), "end": as_of.isoformat()},
+        "model_context": current_model,
     })
     return rows
 
@@ -511,7 +582,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
         headline = "Datele curente nu permit validarea simultană a fenomenului, impactului CNE și criticității naționale."
 
     operational_history = _operational_history(
-        as_of, snn_status, snn_stale, cern, cern_gauge, measured, monthly_mean)
+        as_of, archive, snn_status, snn_stale, cern, cern_gauge, measured, monthly_mean)
     parameter_transparency = _parameter_transparency(
         cern, cern_gauge, measured, monthly_mean, nuclear, snn_status)
     current_intake_level = _number(snn_status.get("intake_basin_level_mdmb"))

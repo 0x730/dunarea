@@ -153,12 +153,17 @@ section > h2 {
 .claim-limit b { color: var(--ink-2); }
 .ro-history tr.current-year td,
 .ro-operational-table tr.current-year td { color: var(--ink); background: rgba(57, 135, 229, .08); }
-.ro-operational-table { min-width: 980px; }
+.ro-operational-table { min-width: 1080px; }
 .ro-operational-table th:nth-child(1) { width: 80px; }
-.ro-operational-table th:nth-child(2) { width: 22%; }
+.ro-operational-table th:nth-child(2) { width: 28%; }
 .ro-operational-table th:nth-child(3) { width: 25%; }
-.ro-operational-table th:nth-child(4) { width: 27%; }
+.ro-operational-table th:nth-child(4) { width: 22%; }
 .table-detail { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.episode-flow {
+  margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--grid);
+  color: var(--ink-2); font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+}
+.episode-flow b { color: var(--ink); }
 .threshold-warning, .parameter-verdict {
   margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--warning);
   background: rgba(250,178,25,.06); color: var(--ink-2); font-size: 12.5px;

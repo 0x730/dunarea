@@ -12,6 +12,9 @@ celulă GloFAS și aceeași zi/fereastră calendaristică; nu o prezintă drept
 istoric al bazinului de aspirație al centralei. Separat, o matrice operațională
 leagă episoadele 2003, 2011, 2015 și 2022 de acțiunea publicată de SNN, iar
 starea anului curent este acceptată numai din raportul proaspăt verificat.
+Pentru fiecare episod, monitorul calculează separat debitul GloFAS la începutul
+ferestrei și minimul din intervalul documentat; ferestrele diferite sunt context
+operațional, nu un clasament direct și nu măsurători la priza CNE.
 Pragurile în mdMB publicate de SNN în 2011 sunt marcate exclusiv drept reper
 istoric; monitorul arată explicit că debitul Baziaș, mira AFDJ, GloFAS și
 producția SEN nu reproduc nivelul și limitele curente ale bazinului de aspirație.

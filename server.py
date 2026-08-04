@@ -243,7 +243,7 @@ def api_romania(q):
         })
         return romania.build_report(stats, archive, afdj, inhga, sen, snn)
 
-    result = C.cached("romania_proportionality:v5", 5 * 60, build)
+    result = C.cached("romania_proportionality:v6", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
 

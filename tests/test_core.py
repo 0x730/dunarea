@@ -93,10 +93,17 @@ class RomaniaProportionalityTests(unittest.TestCase):
     @staticmethod
     def archive():
         pairs = [
+            ("2003-08-01", 3302.7),
             ("2003-08-04", 3442.5), ("2003-08-25", 2354.1),
+            ("2003-09-05", 2274.1), ("2003-09-30", 2740.6),
             ("2011-08-04", 4500.0), ("2011-08-31", 4264.8),
+            ("2011-09-15", 3418.8), ("2011-09-24", 3075.1),
+            ("2011-09-30", 3980.1),
+            ("2015-07-22", 4225.7),
             ("2015-08-04", 3588.2), ("2015-08-21", 3068.0),
+            ("2015-09-30", 3836.1),
             ("2022-08-04", 2617.2), ("2022-08-05", 2611.2),
+            ("2022-08-26", 3434.6), ("2022-08-31", 3853.8),
             ("2025-07-13", 2605.2), ("2025-08-04", 3300.0),
             ("2026-07-20", 2800.0), ("2026-08-04", 2665.9),
         ]
@@ -180,8 +187,18 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(operational[1]["reference_date"], "2011-09-15")
         self.assertIn("contextul hidrologic este GloFAS",
                       operational[3]["source_scope"])
+        self.assertEqual(operational[0]["model_context"]["minimum"],
+                         {"date": "2003-09-05", "value_m3s": 2274.1})
+        self.assertEqual(operational[1]["model_context"]["start_value_m3s"], 3418.8)
+        self.assertEqual(operational[2]["model_context"]["minimum"],
+                         {"date": "2015-08-21", "value_m3s": 3068.0})
+        self.assertEqual(operational[3]["model_context"]["minimum"],
+                         {"date": "2022-08-26", "value_m3s": 3434.6})
+        self.assertEqual(operational[3]["model_context"]["end_value_m3s"], 3853.8)
         self.assertEqual(operational[-1]["classification"], "current_water_shutdown")
         self.assertIn("Baziaș 1450", operational[-1]["hydrology"])
+        self.assertEqual(operational[-1]["model_context"]["start_value_m3s"], 2665.9)
+        self.assertEqual(operational[-1]["model_context"]["percentile"], 0.5)
 
         transparency = out["cernavoda"]["parameter_transparency"]
         self.assertFalse(transparency["decision_reproducible"])
@@ -209,6 +226,16 @@ class RomaniaProportionalityTests(unittest.TestCase):
                       if signal["key"] == "bazias")
         self.assertEqual(bazias["value"], 3800)
         self.assertEqual(bazias["context"], "97.4% din media lunii")
+
+    def test_missing_event_window_is_explicit_and_not_filled_from_another_date(self):
+        context = romania._model_window_context(
+            {"time": ["2011-09-14"], "discharge": [3100]},
+            {"start": "2011-09-15", "end": "2011-09-30",
+             "label": "test", "basis": "test"})
+
+        self.assertFalse(context["available"])
+        self.assertEqual(context["days_available"], 0)
+        self.assertIsNone(context.get("start_value_m3s"))
 
     def test_current_operational_row_reacts_to_reconnection(self):
         afdj, inhga, sen = self.inputs()
