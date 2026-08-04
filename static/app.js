@@ -1115,7 +1115,9 @@ async function renderAnalizaAI() {
     card.innerHTML = `
       <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
       <p class="sub">strat interpretativ, separat de sinteza deterministă de mai sus — poate greși;
-        promptul și datele de intrare sunt publice mai jos · generat ${d.generat}, se reînnoiește la 12 h</p>
+        promptul și datele de intrare sunt publice mai jos · generat ${d.generat} ·
+        declanșator: <b>${d.declansator || "–"}</b> · se regenerează doar la schimbări reale de stare
+        (severități, verificări, bilanț, GRACE) sau după 7 zile</p>
       <div style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
       <details style="margin-top:14px">
         <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>

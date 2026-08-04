@@ -357,8 +357,22 @@ def warmup():
     print("istoric INHGA + raport anomalii pregătite")
 
 
+def ai_watcher():
+    """Evaluează la fiecare 30 min dacă starea fluviului s-a schimbat
+    categorial; analiza AI se regenerează doar atunci (sau la 7 zile).
+    Fără AI_API_KEY, apelul iese instant — zero cost."""
+    import time as _t
+    while True:
+        _t.sleep(1800)
+        try:
+            analiza_ai.analiza()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     threading.Thread(target=warmup, daemon=True).start()
+    threading.Thread(target=ai_watcher, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Monitor Dunărea → http://localhost:{PORT}")
     try:
