@@ -14,6 +14,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import analiza_ai
 import anomalii
 import connectors as C
 
@@ -272,7 +273,15 @@ ROUTES = {
     "/api/bilant-apa": api_bilant_apa,
     "/api/raport": api_raport,
     "/api/istoric": lambda q: C.history_status(),
+    "/api/analiza-ai": lambda q: api_analiza_ai(q),
 }
+
+
+def api_analiza_ai(q):
+    r = analiza_ai.analiza()
+    if "data" not in r:          # inactiv (fără cheie) — mesajul explicativ
+        return r
+    return {**r["data"], "stale": r["stale"]}
 
 
 class Handler(BaseHTTPRequestHandler):

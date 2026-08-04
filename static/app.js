@@ -1052,6 +1052,32 @@ async function renderSinteza(inhga) {
       se reîmprospătează la 5 minute · nimic din acest text nu e scris de mână</div>`;
 }
 
+/* ------------------------------------------------------------ analiza AI -- */
+async function renderAnalizaAI() {
+  const card = $("ai-card");
+  try {
+    const d = await jget("/api/analiza-ai");
+    if (!d.activ) { card.style.display = "none"; return; }
+    card.style.display = "block";
+    const text = d.text
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/^(SITUAȚIA|CAUZE PROBABILE|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMBA CONCLUZIA)\s*:?\s*$/gmi,
+               '<b style="color:var(--ink)">$1</b>')
+      .replace(/\n/g, "<br>");
+    card.innerHTML = `
+      <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
+      <p class="sub">strat interpretativ, separat de sinteza deterministă de mai sus — poate greși;
+        promptul și datele de intrare sunt publice mai jos · generat ${d.generat}, se reînnoiește la 12 h</p>
+      <div style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>
+        <pre style="white-space:pre-wrap; font-size:11.5px; color:var(--muted); background:var(--surface-2); padding:10px; border-radius:6px; margin-top:8px">${d.prompt_sistem.replace(/</g, "&lt;")}</pre>
+        <p class="sub">Datele de intrare = exact JSON-ul din <a href="/api/analiza-ai" target="_blank" rel="noopener">/api/analiza-ai</a>
+          (câmpul <code>date_intrare</code>). Analizele se arhivează zilnic.</p>
+      </details>`;
+  } catch (e) { card.style.display = "none"; }
+}
+
 /* ---------------------------------------------------------------- main -- */
 async function main() {
   // selectoarele pentru comparația multianuală
@@ -1106,6 +1132,7 @@ async function refreshData() {
   renderDelta(afdj);
   renderContraProbe(afdj, portal);
   renderSinteza(ov.inhga);
+  renderAnalizaAI();
 }
 
 main();
