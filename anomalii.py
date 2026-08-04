@@ -16,8 +16,8 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
-REPORT_CACHE_KEY = "anomalii_report:v4"
-STATS_CACHE_KEY = "statistici:v2"
+REPORT_CACHE_KEY = "anomalii_report:v6"
+STATS_CACHE_KEY = "statistici:v3"
 BUDGET_CACHE_KEY = "bilant_apa:v2"
 
 
@@ -121,13 +121,20 @@ def climatology(point_id):
         ani_mai_mici = sum(1 for v in exact_vals if v < smap[last["date"]])
 
     p = C.GLOFAS_POINTS[point_id]
-    return {
+    result = {
         "id": point_id, "name": p["name"], "km": p["km"],
+        "tip_proba": "model_hidrologic",
+        "sursa": "GloFAS v4 via Open-Meteo Flood API",
+        "rezolutie_spatiala_aprox_km": 5,
         "azi": last, "streak_sub_p10": streak,
         "ani_mai_mici": ani_mai_mici, "ani_referinta": n_ani,
         "mediana_zilei": mediana_zilei, "abatere_pct": abatere_pct,
         "recent": recent,
     }
+    cell = arch.get("cell")
+    if cell:
+        result["celula_model"] = {k: cell.get(k) for k in ("lat", "lon")}
+    return result
 
 
 # ------------------------------------- 2. bilanțul Baziaș→Gruia (cu lag) ---
@@ -227,6 +234,11 @@ def measured_vs_model():
         "n": len(ratios), "n_etalon": len(baseline),
         "raport_mediu": round(mu, 3), "sd": round(sd, 3),
         "raport_ultimele7": round(last7, 3), "z": round(z, 2),
+        "ultima_pereche_aceeasi_data": ratios[-1],
+        "evaluare": ("relatie_in_limitele_biasului_istoric"
+                     if abs(z) <= 1.5 else "relatie_recent_schimbata"),
+        "regula_interpretare": ("diferența absolută măsurat–model nu este anomalie; "
+                                "semnalul este ruptura recentă a raportului"),
         "serie": ratios[-30:],
     }
 
@@ -237,11 +249,25 @@ PRECIP_VS = [("bazin_superior", "amonte: Germania/Austria"),
              ("bazin_mijlociu", "amonte: Ungaria")]
 
 
+def _rolling90_percentile(dates, vals, end, exclude_year, window=5):
+    """Același estimator pentru toate suprafețele: cumul de 90 zile și
+    referință din ferestrele calendaristice ±window ale anilor anteriori."""
+    cum90 = {}
+    for i in range(89, len(dates)):
+        cum90[dates[i]] = sum(vals[i - 89:i + 1])
+    cur = cum90.get(end)
+    if cur is None:
+        return None, None, 0
+    ref = [v for ds, v in cum90.items()
+           if abs(_doy_diff(_mmdd(ds), _mmdd(end))) <= window
+           and not ds.startswith(str(exclude_year))]
+    return cur, _rank(cur, ref), len(ref)
+
+
 def precip_coherence(discharge_pct):
     """Percentila cumulului de precipitații pe 90 de zile vs. istoric
     (aceeași fereastră calendaristică din anii anteriori)."""
     out = []
-    today = date.today()
     all_points = C.era5_precip_all(2000)["data"]
     for pid, label in PRECIP_VS:
         try:
@@ -249,24 +275,16 @@ def precip_coherence(discharge_pct):
             smap = {t: v for t, v in zip(d["time"], d["precip"]) if v is not None}
             dates = sorted(smap)
             end = dates[-1]
-            cum90 = {}
             vals = [smap[ds] for ds in dates]
-            for i in range(90, len(dates)):
-                cum90[dates[i]] = sum(vals[i - 89:i + 1])
-            cur = cum90.get(end)
+            cur, pct, n_ref = _rolling90_percentile(
+                dates, vals, end, int(end[:4]), window=5)
             if cur is None:
                 continue
-            ref = [v for ds, v in cum90.items()
-                   if _mmdd(ds) == _mmdd(end) and ds != end]
-            # fereastra calendaristică ±5 zile pentru mai multe mostre
-            # fereastra ±5 zile trebuie să se învârtă peste Anul Nou
-            refw = [v for ds, v in cum90.items()
-                    if abs(_doy_diff(_mmdd(ds), _mmdd(end))) <= 5
-                    and not ds.startswith(str(today.year))]
-            pct = _rank(cur, refw or ref)
             out.append({"zona": C.PRECIP_POINTS[pid]["name"], "eticheta": label,
                         "cum90_mm": round(cur, 1), "pct": pct,
-                        "pana_la": end})
+                        "pana_la": end,
+                        "fereastra_referinta": "aceeași dată calendaristică ±5 zile",
+                        "mostre_referinta": n_ref})
         except Exception:
             continue
     return {"debit_pct": discharge_pct, "zone": out}
@@ -325,15 +343,9 @@ def precip_stats():
         whist = [winter[y] for y in range(PRECIP_START + 1, an) if y in winter]
 
         vals = [v for _, v, _ in pairs]
-        cum90 = sum(vals[-90:])
-        ref90 = []
         dates = [t for t, _, _ in pairs]
-        idx = {t: i for i, t in enumerate(dates)}
-        for y in range(PRECIP_START, cy):
-            key = f"{y}-{cutoff}"
-            i = idx.get(key)
-            if i is not None and i >= 90:
-                ref90.append(sum(vals[i - 89:i + 1]))
+        cum90, pct90, n_ref90 = _rolling90_percentile(
+            dates, vals, end, int(end[:4]), window=5)
 
         def block(c, h):
             if c is None or not h:
@@ -353,8 +365,10 @@ def precip_stats():
             "zapada_iarna": block(wsnow.get(an),
                                   [wsnow[y] for y in range(PRECIP_START + 1, an)
                                    if y in wsnow]),
-            "ultimele90": {"cumul_mm": round(cum90, 1),
-                           "pct": _rank(cum90, ref90)},
+            "ultimele90": {"cumul_mm": round(cum90, 1) if cum90 is not None else None,
+                           "pct": pct90,
+                           "fereastra_referinta": "aceeași dată calendaristică ±5 zile",
+                           "mostre_referinta": n_ref90},
         })
     return out
 

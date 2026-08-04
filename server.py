@@ -102,7 +102,8 @@ def api_afdj(q):
 
 def api_inhga(q):
     r = C.inhga_bulletin()
-    return {**r["data"], "stale": r["stale"]}
+    return {**r["data"], "stale": r["stale"],
+            "cache_age_s": r.get("cache_age_s")}
 
 
 def api_hidmet(q):

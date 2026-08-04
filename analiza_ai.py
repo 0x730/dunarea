@@ -26,7 +26,7 @@ import connectors as C
 
 MAX_VARSTA_S = 7 * 86400
 MIN_INTERVAL_S = 1800
-PROMPT_VERSION = 4
+PROMPT_VERSION = 9
 
 _lock_ai = threading.Lock()
 
@@ -57,10 +57,12 @@ Reguli stricte:
 6. Nu transforma o corelație, un reziduu sau o nepotrivire măsurat/model în cauzalitate. O contradicție indică mai întâi probleme posibile de timp, poziție, unitate, parsare, bias ori prospețime.
 7. Dacă testele sunt în limite, spune doar că nu apare o incompatibilitate în testele disponibile; nu susține că un fenomen nemăsurat a fost exclus.
 8. Bilanțul P−Q folosește șase puncte-proxy și debit modelat, nu este închidere hidrologică de bazin. Nu poate izola stocarea, evapotranspirația, captările, transferurile sau eroarea de model.
-9. Dacă mod_verificare_externa.activ este true, folosește căutarea web numai pentru context oficial/instituțional actual și pentru contradicții. Preferă surse primare, indică data și păstrează citările produse de instrument. Separă clar ce vine din web de datele monitorului. Dacă modul este false sau instrumentul nu a rulat, scrie exact că verificarea externă nu a fost efectuată; nu prezenta memoria modelului ca verificare externă.
-10. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
+9. Dacă mod_verificare_externa.activ este true, folosește căutarea web numai pentru context oficial/instituțional actual și contradicții. Încearcă să consulți cel puțin două familii instituționale primare independente, când există. Etichetează separat „validarea sursei deja ingerate” și „contraproba externă independentă”. Redeschiderea pe web a aceleiași pagini sau a aceleiași măsurători din JSON validează livrarea, dar nu adaugă independență; dacă nu găsești o a doua familie, spune explicit asta. Indică data, păstrează citările instrumentului și nu înlocui cifrele monitorului cu valori web. Dacă modul este false sau instrumentul nu a rulat, scrie exact că verificarea externă nu a fost efectuată; nu prezenta memoria modelului ca verificare externă.
+10. Nu numi toate datele „de azi” dacă observațiile au date diferite. În SITUAȚIA precizează intervalul datelor disponibile și atașează data fiecărei comparații materiale, mai ales model versus măsurătoare.
+11. La Baziaș, reconciliere_bazias.valoare_oficiala_curenta este cifra canonică a monitorului pentru starea curentă. reper_modelat_climatologic este debitul simulat într-o celulă GloFAS de aproximativ 5 km, nu o a doua măsurătoare și nu trebuie să egaleze valoarea INHGA. Folosește GloFAS față de propria climatologie. O diferență absolută compatibilă cu biasul istoric nu este „contradicție”; numește ruptură numai schimbarea relației pe perechi cu aceeași dată, susținută de test.
+12. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
 
-Răspunsul trebuie să aibă exact aceste șase titluri, în română, maximum 500 de cuvinte:
+Răspunsul trebuie să aibă exact aceste șase titluri, în română. Țintește 500–550 de cuvinte și nu depăși 600; rezervă spațiu pentru toate secțiunile înainte de a detalia:
 SITUAȚIA
 CAUZE PROBABILE
 ANOMALII DE DATE ȘI CONTRADICȚII
@@ -110,9 +112,41 @@ def _digest():
     stats = C.cached(anomalii.STATS_CACHE_KEY, 6 * 3600, anomalii.full_stats)
     budget = C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)
     r, st, bi = raport["data"], stats["data"], budget["data"]
+    inhga = _inhga()
 
     def fara(value, *keys):
         return {k: v for k, v in (value or {}).items() if k not in keys}
+
+    bazias_model = next((c for c in r.get("climatologie", [])
+                         if c.get("id") == "bazias"), {})
+    relatie = r.get("masurat_vs_model") or {}
+    reconciliere_bazias = {
+        "valoare_oficiala_curenta": {
+            "tip_proba": "valoare_oficiala_in_situ",
+            "sursa": "INHGA, buletinul zilnic",
+            "data": inhga.get("data_buletin"),
+            "debit_m3s": inhga.get("debit_bazias_m3s"),
+            "rol": "cifra canonică a monitorului pentru starea curentă la Baziaș",
+        },
+        "reper_modelat_climatologic": {
+            "tip_proba": "model_hidrologic",
+            "sursa": bazias_model.get("sursa", "GloFAS v4 via Open-Meteo Flood API"),
+            "data": (bazias_model.get("azi") or {}).get("date"),
+            "debit_m3s": (bazias_model.get("azi") or {}).get("value"),
+            "rezolutie_spatiala_aprox_km": bazias_model.get(
+                "rezolutie_spatiala_aprox_km", 5),
+            "celula_model": bazias_model.get("celula_model"),
+            "rol": "percentile și comparații numai față de climatologia aceluiași model",
+        },
+        "date_curente_aliniate": (
+            bool(inhga.get("data_buletin"))
+            and inhga.get("data_buletin") == (bazias_model.get("azi") or {}).get("date")
+        ),
+        "ultima_pereche_aceeasi_data": relatie.get("ultima_pereche_aceeasi_data"),
+        "test_relatie_masurat_model": fara(relatie, "serie"),
+        "regula": ("INHGA descrie starea curentă; GloFAS este reper modelat de grilă. "
+                   "Biasul stabil nu este contradicție sau anomalie a fluviului."),
+    }
 
     return {
         "data": date.today().isoformat(),
@@ -131,6 +165,7 @@ def _digest():
         "metode_statistici": st.get("metoda"),
         "bilant_portile_de_fier": r.get("bilant"),
         "inhga_vs_model": fara(r.get("masurat_vs_model"), "serie"),
+        "reconciliere_bazias": reconciliere_bazias,
         "mire_incrucisate": r.get("mire_crosscheck"),
         "precipitatii_vs_debit": r.get("precipitatii"),
         "satelit_altimetrie": r.get("satelit"),
@@ -140,7 +175,7 @@ def _digest():
         "austria_test_retentie": fara(r.get("austria"), "statii"),
         "bilant_apa_bazin_superior": bi,
         "statistici_precipitatii_zone": st.get("precipitatii"),
-        "buletin_inhga": fara(_inhga(), "text_oficial"),
+        "buletin_inhga": fara(inhga, "text_oficial"),
         "registru_provenienta": C.evidence_source_registry(),
         "context_seceta_copernicus_edo": _safe_context(C.edo_status),
         "context_suprafata_apa_opera": _safe_context(C.opera_surface_status),
@@ -207,7 +242,8 @@ def _official_openai_base():
 
 def _request_spec(date_intrare):
     """Construiește cererea fără a o trimite; util și pentru audit/teste."""
-    user_text = "Datele de azi:\n" + json.dumps(date_intrare, ensure_ascii=False)
+    user_text = "Datele monitorului (cu date proprii fiecărei probe):\n" + json.dumps(
+        date_intrare, ensure_ascii=False)
     if AI_WEB_SEARCH:
         return {
             "mode": "web_cu_citari",
@@ -217,6 +253,7 @@ def _request_spec(date_intrare):
                 "model": AI_WEB_MODEL,
                 "instructions": PROMPT_SISTEM,
                 "input": user_text,
+                "text": {"verbosity": "low"},
                 "tools": [{"type": "web_search", "search_context_size": "medium"}],
                 "tool_choice": "required",
                 "max_output_tokens": 3000,
@@ -263,11 +300,12 @@ def _parse_responses_output(out):
                 raw_citations.append({
                     "url": url,
                     "title": ann.get("title") or url,
+                    "start": offset + min(max(int(ann.get("start_index", 0)), 0), len(part)),
                     "end": offset + min(max(int(ann.get("end_index", len(part))), 0), len(part)),
                 })
 
     text = "".join(text_parts) or (out.get("output_text") or "")
-    citations, ids_by_url, insertions = [], {}, {}
+    citations, ids_by_url, replacements = [], {}, {}
     for citation in raw_citations:
         if citation["url"] not in ids_by_url:
             cid = len(citations) + 1
@@ -275,10 +313,13 @@ def _parse_responses_output(out):
             citations.append({"id": cid, "url": citation["url"],
                               "title": citation["title"]})
         cid = ids_by_url[citation["url"]]
-        insertions.setdefault(citation["end"], set()).add(cid)
-    for end in sorted(insertions, reverse=True):
-        markers = "".join(f"⟦WEB:{cid}⟧" for cid in sorted(insertions[end]))
-        text = text[:end] + markers + text[end:]
+        start, end = sorted((citation["start"], citation["end"]))
+        replacements.setdefault((start, end), set()).add(cid)
+    # Anotația acoperă citarea deja produsă de API (de regulă un link
+    # Markdown). O înlocuim cu markerul nostru, nu o dublăm după același text.
+    for (start, end), ids in sorted(replacements.items(), reverse=True):
+        markers = "".join(f"⟦WEB:{cid}⟧" for cid in sorted(ids))
+        text = text[:start] + markers + text[end:]
     return text.strip(), citations, list(dict.fromkeys(queries))
 
 

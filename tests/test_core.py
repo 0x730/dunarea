@@ -40,6 +40,18 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertNotIn("sub 10% din arabil", section)
         self.assertNotIn("198 km", section)
 
+    def test_inhga_ui_exposes_bulletin_date_freshness_and_stale_state(self):
+        app = Path(__file__).parents[1].joinpath("static/app.js").read_text()
+
+        self.assertIn("b.data_buletin", app)
+        self.assertIn("b.cache_age_s", app)
+        self.assertIn("cache vechi · sursa nu a răspuns", app)
+        self.assertIn("setInterval(refreshData, 5 * 60 * 1000)", app)
+        self.assertIn("Valoarea curentă folosită: INHGA", app)
+        self.assertIn("Nu este o a doua măsurătoare", app)
+        self.assertIn("reper prognozat", app)
+        self.assertNotIn("prognoză 7 zile", app)
+
 
 class CacheTests(unittest.TestCase):
     def setUp(self):
@@ -167,6 +179,58 @@ class ConnectorTests(unittest.TestCase):
         page = ("<p>Baziaș) a fost în scădere la ora 06.00, situându-se sub "
                 "media lunii, în jurul valorii de 1.234 m3/s.</p>")
         self.assertEqual(C._parse_inhga_html(page), 1234.0)
+
+    def test_inhga_bulletin_refresh_window_is_thirty_minutes(self):
+        cached = {"data": {}, "stale": False, "cache_age_s": 0}
+        with mock.patch.object(C, "cached", return_value=cached) as cache:
+            out = C.inhga_bulletin()
+
+        self.assertEqual(out, cached)
+        self.assertEqual(cache.call_args.args[0], "inhga_bulletin:v2")
+        self.assertEqual(cache.call_args.args[1], 30 * 60)
+
+    def test_inhga_bulletin_replaces_all_fields_and_official_text_on_new_issue(self):
+        def listing(ds):
+            return (f'<a href="https://www.hidro.ro/bulletin/diagnoza-si-prognoza-'
+                    f'hidrologica-pentru-dunare-la-intrarea-in-tara-si-pe-sectorul-'
+                    f'romanesc-{ds}/">buletin</a>')
+
+        page_04 = (
+            "<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost în scădere "
+            "la valoarea de 1.450 m³/s, sub media multianuală a lunii august "
+            "(3.900 m³/s).</p><p>Debitul la intrarea în țară (secțiunea Baziaș) "
+            "va fi în scădere ușoară în prima zi până la valoarea de 1.400 m³/s, "
+            "apoi staționar până la sfârșitul intervalului.</p>")
+        page_05 = (
+            "<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost în creștere "
+            "la valoarea de 1.525 m³/s, sub media multianuală a lunii august "
+            "(3.950 m³/s).</p><p>Debitul la intrarea în țară (secțiunea Baziaș) "
+            "va fi în creștere ușoară în prima zi până la valoarea de 1.575 m³/s, "
+            "apoi staționar până la sfârșitul intervalului.</p>")
+
+        responses = iter([listing("04-08-2026"), page_04,
+                          listing("05-08-2026"), page_05])
+
+        def uncached(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False, "cache_age_s": 0}
+
+        with mock.patch.object(C, "http_get", side_effect=lambda *a, **k: next(responses)), \
+                mock.patch.object(C, "cached", side_effect=uncached), \
+                mock.patch.object(C, "cache_put"):
+            old = C.inhga_bulletin()["data"]
+            new = C.inhga_bulletin()["data"]
+
+        self.assertEqual(old["data_buletin"], "2026-08-04")
+        self.assertEqual(old["debit_bazias_m3s"], 1450.0)
+        self.assertEqual(old["prognoza_debit_m3s"], 1400.0)
+        self.assertEqual(new["data_buletin"], "2026-08-05")
+        self.assertEqual(new["debit_bazias_m3s"], 1525.0)
+        self.assertEqual(new["media_multianuala_m3s"], 3950.0)
+        self.assertEqual(new["tendinta"], "creștere")
+        self.assertEqual(new["prognoza_debit_m3s"], 1575.0)
+        self.assertNotEqual(old["text_oficial"], new["text_oficial"])
+        self.assertIn("1.525", new["text_oficial"][0])
+        self.assertTrue(new["url"].endswith("05-08-2026/"))
 
     def test_danubehis_parser_extracts_public_current_value(self):
         page = """
@@ -341,13 +405,39 @@ class AnomalySourceTests(unittest.TestCase):
         self.assertEqual(out["mediana_pct"], 12.5)
         self.assertEqual(out["statii_excluse"], 1)
 
+    def test_precipitation_surfaces_use_the_same_rolling_90_day_reference(self):
+        start, end = date(2000, 1, 1), date(2026, 7, 29)
+        days = (end - start).days + 1
+        dates = [(start + timedelta(days=i)).isoformat() for i in range(days)]
+        values = [0.5 if ds.startswith("2026-") else 1.0 for ds in dates]
+        series = {"time": dates, "precip": values, "snow": [0.0] * days}
+        all_points = {pid: series for pid in C.PRECIP_POINTS}
+
+        with mock.patch.object(C, "era5_precip_all",
+                               return_value={"data": all_points}):
+            coherence = anomalii.precip_coherence(0)
+            stats = anomalii.precip_stats()
+
+        by_id = {row["id"]: row for row in stats}
+        for row, (pid, _) in zip(coherence["zone"], anomalii.PRECIP_VS):
+            self.assertEqual(row["cum90_mm"], by_id[pid]["ultimele90"]["cumul_mm"])
+            self.assertEqual(row["pct"], by_id[pid]["ultimele90"]["pct"])
+            self.assertEqual(row["mostre_referinta"],
+                             by_id[pid]["ultimele90"]["mostre_referinta"])
+
 
 class AiAnalysisAuditTests(unittest.TestCase):
     def test_digest_carries_errors_lineage_hungary_freshness_and_context(self):
         report = {
-            "climatologie": [{"id": "bazias", "recent": [1, 2], "azi": {"value": 900}}],
+            "climatologie": [{"id": "bazias", "recent": [1, 2],
+                               "azi": {"date": "2026-08-03", "value": 1200},
+                               "sursa": "GloFAS test", "rezolutie_spatiala_aprox_km": 5,
+                               "celula_model": {"lat": 44.775, "lon": 21.375}}],
             "bilant": {"z": 0.2},
-            "masurat_vs_model": {"serie": [1], "z": 0.1},
+            "masurat_vs_model": {"serie": [1], "z": 0.1,
+                                  "ultima_pereche_aceeasi_data": {
+                                      "date": "2026-08-03", "oficial": 900,
+                                      "model": 1200, "raport": 0.75}},
             "mire_crosscheck": {"statii_comune": 2},
             "precipitatii": {"coerent": True},
             "satelit": {"status": "shadow_coerent"},
@@ -371,7 +461,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
 
         fresh_context = {"data": {"activ": True}, "stale": False, "cache_age_s": 5}
         with mock.patch.object(C, "cached", side_effect=fake_cached), \
-                mock.patch.object(analiza_ai, "_inhga", return_value={"debit_bazias_m3s": 900}), \
+                mock.patch.object(analiza_ai, "_inhga", return_value={
+                    "data_buletin": "2026-08-04", "debit_bazias_m3s": 900}), \
                 mock.patch.object(C, "edo_status", return_value=fresh_context), \
                 mock.patch.object(C, "opera_surface_status", return_value=fresh_context), \
                 mock.patch.object(C, "copernicus_land_context", return_value=fresh_context), \
@@ -387,6 +478,11 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("dependencies", digest["registru_provenienta"])
         self.assertEqual(digest["context_seceta_copernicus_edo"]["livrare"]["cache_age_s"], 5)
         self.assertIn("catalog_misiuni_satelitare_nasa", digest)
+        bazias = digest["reconciliere_bazias"]
+        self.assertEqual(bazias["valoare_oficiala_curenta"]["debit_m3s"], 900)
+        self.assertEqual(bazias["reper_modelat_climatologic"]["debit_m3s"], 1200)
+        self.assertFalse(bazias["date_curente_aliniate"])
+        self.assertEqual(bazias["ultima_pereche_aceeasi_data"]["raport"], 0.75)
 
     def test_request_spec_keeps_compatible_mode_and_adds_opt_in_web_tool(self):
         with mock.patch.object(analiza_ai, "AI_WEB_SEARCH", False), \
@@ -401,24 +497,30 @@ class AiAnalysisAuditTests(unittest.TestCase):
             web = analiza_ai._request_spec({"x": 1})
         self.assertEqual(web["mode"], "web_cu_citari")
         self.assertTrue(web["url"].endswith("/responses"))
+        self.assertEqual(web["body"]["text"]["verbosity"], "low")
         self.assertEqual(web["body"]["tools"][0]["type"], "web_search")
         self.assertEqual(web["body"]["tool_choice"], "required")
         self.assertGreaterEqual(web["body"]["max_output_tokens"], 3000)
         self.assertEqual(web["body"]["model"], "web-model")
 
     def test_responses_parser_marks_deduplicated_clickable_sources(self):
-        text = "Nivel scăzut conform sursei. Context suplimentar."
+        citation = "([hidro.ro](https://example.org/report))"
+        text = f"Nivel scăzut. {citation} Context suplimentar."
+        start, end = text.index(citation), text.index(citation) + len(citation)
         out = {"output": [
             {"type": "web_search_call", "action": {"queries": ["Danube official flow"]}},
             {"type": "message", "content": [{
                 "type": "output_text", "text": text,
                 "annotations": [
                     {"type": "url_citation", "url": "https://example.org/report",
-                     "title": "Official report", "end_index": 27},
+                     "title": "Official report", "start_index": start,
+                     "end_index": end},
                     {"type": "url_citation", "url": "https://example.org/report",
-                     "title": "Official report", "end_index": len(text)},
+                     "title": "Official report", "start_index": start,
+                     "end_index": end},
                     {"type": "url_citation", "url": "javascript:alert(1)",
-                     "title": "unsafe", "end_index": len(text)},
+                     "title": "unsafe", "start_index": start,
+                     "end_index": end},
                 ],
             }]},
         ]}
@@ -427,7 +529,9 @@ class AiAnalysisAuditTests(unittest.TestCase):
 
         self.assertEqual(len(citations), 1)
         self.assertEqual(citations[0]["url"], "https://example.org/report")
-        self.assertEqual(parsed.count("⟦WEB:1⟧"), 2)
+        self.assertEqual(parsed.count("⟦WEB:1⟧"), 1)
+        self.assertNotIn("[hidro.ro]", parsed)
+        self.assertNotIn("https://example.org/report", parsed)
         self.assertEqual(queries, ["Danube official flow"])
 
     def test_prompt_requires_integrity_checks_and_external_separation(self):
@@ -438,6 +542,11 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("două căi de livrare", prompt)
         self.assertIn("catalog_only", prompt)
         self.assertIn("nu a fost efectuată", prompt)
+        self.assertIn("validarea sursei deja ingerate", prompt)
+        self.assertIn("nu adaugă independență", prompt)
+        self.assertIn("intervalul datelor disponibile", prompt)
+        self.assertIn("cifra canonică a monitorului", prompt)
+        self.assertIn("nu este „contradicție”", prompt)
 
     def test_response_heading_normalization_is_narrow_and_auditable(self):
         text = "## SITUAȚIA\nFapt.\n\n**CE AR SCHIMBĂ CONCLUZIA:**\nAlt fapt."

@@ -559,6 +559,8 @@ def pegelonline_series(uuid, param="W", days=10):
 # hidro.ro (WordPress). Extragem cifrele-cheie + textul oficial integral.
 
 INHGA_LIST = "https://www.hidro.ro/bulletin_type/diagnoza-si-prognoza-pentru-dunare/"
+INHGA_CACHE_KEY = "inhga_bulletin:v2"
+INHGA_CACHE_TTL_S = 30 * 60
 
 
 def _strip_tags(html):
@@ -627,7 +629,9 @@ def inhga_bulletin():
             "text_oficial": core,
         }
 
-    return cached("inhga_bulletin", 3 * 3600, fetch)
+    # Verificăm de două ori pe oră: suficient de rar pentru sursa oficială,
+    # dar fără întârzierea de până la 3 ore a unui buletin nou sau corectat.
+    return cached(INHGA_CACHE_KEY, INHGA_CACHE_TTL_S, fetch)
 
 
 INHGA_DAILY = ("https://www.hidro.ro/bulletin/diagnoza-si-prognoza-hidrologica-"
@@ -2218,6 +2222,9 @@ def overview():
                 "country": p["country"],
                 "date": latest[0] if latest else None,
                 "discharge_m3s": latest[1] if latest else None,
+                "tip_proba": "model_hidrologic",
+                "rezolutie_spatiala_aprox_km": 5,
+                "celula_model": r["data"].get("cell"),
                 "stale": r["stale"],
             })
         except Exception as exc:
@@ -2225,8 +2232,11 @@ def overview():
 
     try:
         b = inhga_bulletin()
-        result["inhga"] = b["data"]
-        result["inhga"]["stale"] = b["stale"]
+        result["inhga"] = {
+            **b["data"],
+            "stale": b["stale"],
+            "cache_age_s": b.get("cache_age_s"),
+        }
     except Exception as exc:
         result["errors"]["inhga"] = str(exc)
 

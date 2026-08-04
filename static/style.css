@@ -143,6 +143,11 @@ section > h2 {
 .hero-num .delta { margin-top: 6px; font-size: 14px; }
 .hero-num .delta b { color: var(--serious); font-weight: 600; }
 .hero-num .asof { margin-top: 14px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.hero-num .bazias-rule {
+  margin-top: 16px; padding: 10px 12px; border-left: 2px solid var(--blue);
+  background: var(--surface-2); color: var(--muted); font-size: 12.5px; line-height: 1.5;
+}
+.hero-num .bazias-rule b { color: var(--ink-2); }
 .hero-text {
   border-left: 2px solid var(--axis); padding-left: 22px;
   font-size: 14.5px; max-width: 72ch;

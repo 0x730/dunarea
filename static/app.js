@@ -155,7 +155,7 @@ function mkChart(el) {
 window.addEventListener("resize", () => CHARTS.forEach((c) => c.resize()));
 
 /* --------------------------------------------------------------- hero -- */
-function renderHero(b) {
+function renderHero(b, glofasBazias = null) {
   if (!b || !b.debit_bazias_m3s) {
     $("hero-num").innerHTML = `<div class="err-box">Buletinul INHGA nu a putut fi citit acum.
       <a href="https://www.hidro.ro/bulletin_type/diagnoza-si-prognoza-pentru-dunare/" target="_blank" rel="noopener">Deschide-l direct</a>.</div>`;
@@ -163,14 +163,24 @@ function renderHero(b) {
   }
   const pct = b.media_multianuala_m3s
     ? Math.round((b.debit_bazias_m3s / b.media_multianuala_m3s) * 100) : null;
+  const modelNote = glofasBazias?.discharge_m3s
+    ? `<div class="bazias-rule"><b>Valoarea curentă folosită: INHGA.</b><br>
+        Separat, GloFAS estimează ≈${fmtN.format(glofasBazias.discharge_m3s)} m³/s
+        pentru ${glofasBazias.date || "o dată nespecificată"}, într-o celulă de model de ≈${
+          glofasBazias.rezolutie_spatiala_aprox_km || 5} km. Nu este o a doua măsurătoare
+        Baziaș; o comparăm numai cu istoricul aceluiași model.</div>`
+    : "";
   $("hero-num").innerHTML = `
-    <div class="label">Debit la intrarea în țară · Baziaș <span class="prov prov-masurat">măsurat</span></div>
+    <div class="label">Debit la intrarea în țară · Baziaș <span class="prov prov-masurat">oficial INHGA</span></div>
     <div class="value">${fmtN.format(b.debit_bazias_m3s)}<small> m³/s</small></div>
     <div class="delta">${pct !== null
       ? `<b>${pct}%</b> din media multianuală a lunii (${fmtN.format(b.media_multianuala_m3s)} m³/s)` : ""}
       ${b.tendinta ? ` · în ${b.tendinta}` : ""}</div>
     <div class="asof">buletin INHGA · ${b.data_buletin}${b.prognoza_debit_m3s
-      ? ` · prognoză 7 zile: ${fmtN.format(b.prognoza_debit_m3s)} m³/s` : ""}</div>`;
+      ? ` · reper prognozat: ${fmtN.format(b.prognoza_debit_m3s)} m³/s` : ""}
+      ${b.cache_age_s != null ? ` · verificat acum ${Math.max(0, Math.floor(b.cache_age_s / 60))} min` : ""}
+      ${b.stale ? ` · <span class="prov prov-lipsa">cache vechi · sursa nu a răspuns</span>` : ""}</div>
+    ${modelNote}`;
   const urlOk = typeof b.url === "string" && b.url.startsWith("https://www.hidro.ro/")
     ? b.url : "https://www.hidro.ro/";
   $("hero-text").innerHTML =
@@ -239,7 +249,8 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   (ov.glofas || []).forEach((p) => {
     if (!p.id || p.id.startsWith("brat_")) return; // fără brațele deltei (model nefiabil acolo)
     if (p.discharge_m3s != null && p.discharge_m3s > 1)
-      model.push({ km: p.km, q: p.discharge_m3s, name: p.name, src: "GloFAS / Copernicus (model)" });
+      model.push({ km: p.km, q: p.discharge_m3s, name: p.name, date: p.date,
+        src: "GloFAS / Copernicus (celulă de model ≈5 km)" });
   });
 
   (afdj?.statii || []).forEach((s) => {
@@ -307,7 +318,9 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   const lookup = (key) => {
     const kind = key[0], idx = +key.slice(1);
     if (kind === "M") { const p = measured[idx]; return { n: p.name, rows: [`Q = ${fmtN.format(p.q)} m³/s`, p.extra].filter(Boolean), src: p.src + " · măsurat", km: p.km }; }
-    if (kind === "m") { const p = model[idx]; return { n: p.name, rows: [`Q ≈ ${fmtN.format(p.q)} m³/s`], src: p.src, km: p.km }; }
+    if (kind === "m") { const p = model[idx]; return { n: p.name,
+      rows: [`Q ≈ ${fmtN.format(p.q)} m³/s`, p.date ? `data modelului: ${p.date}` : ""].filter(Boolean),
+      src: p.src, km: p.km }; }
     const t = ticks[idx]; return { n: t.name, rows: [t.info], src: t.src + " · măsurat", km: t.km };
   };
   const box = $("profil-holder").parentElement;
@@ -544,12 +557,12 @@ async function renderPFChart() {
     opt.xAxis.data = idx.map((t) => t.slice(5));
     opt.yAxis.name = "m³/s"; opt.yAxis.nameTextStyle = { color: MUTED, fontFamily: MONO };
     opt.series = [
-      { name: "Baziaș (intrare)", type: "line", data: idx.map((t, i) => ba.discharge[i]), symbol: "none",
+      { name: "Baziaș (model GloFAS)", type: "line", data: idx.map((t, i) => ba.discharge[i]), symbol: "none",
         lineStyle: { width: 2, color: BLUE }, itemStyle: { color: BLUE },
-        endLabel: { show: true, color: BLUE, fontSize: 11, formatter: "Baziaș" } },
-      { name: "Gruia (ieșire)", type: "line", data: idx.map((t) => gmap[t]), symbol: "none",
+        endLabel: { show: true, color: BLUE, fontSize: 11, formatter: "Baziaș · model" } },
+      { name: "Gruia (model GloFAS)", type: "line", data: idx.map((t) => gmap[t]), symbol: "none",
         lineStyle: { width: 2, color: ORANGE }, itemStyle: { color: ORANGE },
-        endLabel: { show: true, color: ORANGE, fontSize: 11, formatter: "Gruia" } },
+        endLabel: { show: true, color: ORANGE, fontSize: 11, formatter: "Gruia · model" } },
     ];
     chartPF ||= mkChart($("chart-pf"));
     chartPF.setOption(opt, { notMerge: true });
@@ -1383,6 +1396,9 @@ async function renderAnalizaAI() {
     const citations = new Map((d.citari_web || []).map((source) =>
       [String(source.id), source]));
     const text = d.text
+      // Cache-urile generate înainte de parserul v5 pot conține și linkul
+      // Markdown al API-ului, și markerul nostru. Păstrăm markerul clicabil.
+      .replace(/\s*\(\[[^\]\n]+\]\(https:\/\/[^)\n]+\)\)\s*(?=⟦WEB:\d+⟧)/g, " ")
       .replace(/^(SITUAȚIA|CAUZE PROBABILE|ANOMALII DE DATE ȘI CONTRADICȚII|VERIFICARE EXTERNĂ|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMB[ĂA] CONCLUZIA)\s*:?\s*/gmi,
                '<b style="color:var(--ink)">$1</b> ')
       .replace(/⟦WEB:(\d+)⟧/g, (_, id) => {
@@ -1403,8 +1419,12 @@ async function renderAnalizaAI() {
     const mode = d.mod === "web_cu_citari"
       ? "comparație web activă · surse oficiale cu citări"
       : "doar datele monitorului · fără căutare web";
-    const formatWarning = d.sectiuni_lipsa?.length
-      ? ` · <span style="color:var(--warning)">format incomplet: lipsesc ${d.sectiuni_lipsa.join(", ")}</span>`
+    const formatIssues = [];
+    if (d.sectiuni_lipsa?.length) formatIssues.push(`lipsesc ${d.sectiuni_lipsa.join(", ")}`);
+    const wordCount = d.text.trim().split(/\s+/).filter(Boolean).length;
+    if (wordCount > 600) formatIssues.push(`${wordCount} cuvinte, peste limita de 600`);
+    const formatWarning = formatIssues.length
+      ? ` · <span style="color:var(--warning)">format: ${formatIssues.join("; ")}</span>`
       : "";
     card.innerHTML = `
       <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
@@ -1412,7 +1432,7 @@ async function renderAnalizaAI() {
         ${mode}${formatWarning} · promptul și datele de intrare sunt publice mai jos · generat ${d.generat} ·
         declanșator: <b>${d.declansator || "–"}</b> · se regenerează doar la schimbări reale de stare
         (severități, verificări, bilanț, GRACE) sau după 7 zile</p>
-      <div style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
+      <div class="ai-analysis-text" style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
       ${sourcesHtml}
       <details style="margin-top:14px">
         <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>
@@ -1506,7 +1526,7 @@ async function refreshData() {
   pill("Hydroinfo", hydroinfo ? (hydroinfo.stale ? "stale" : "ok") : "err");
   pill("DanubeHIS", danubehis ? (danubehis.stale ? "stale" : "ok") : "err");
 
-  [() => renderHero(ov.inhga),
+  [() => renderHero(ov.inhga, (ov.glofas || []).find((p) => p.id === "bazias")),
    () => renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis),
    () => renderAfdjTable(afdj),
    () => renderHidmetTable(hidmet),
