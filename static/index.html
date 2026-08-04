@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dunărea — monitor din surse oficiale</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/echarts.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <h1>DUNĂREA <span class="thin">· monitor din surse oficiale</span></h1>
+  <span class="km-run">km 2458 → km 0 · Kelheim → Sulina</span>
+  <div id="status-pills"></div>
+</header>
+
+<!-- ============================================================ sinteza -->
+<section id="sec-sinteza">
+  <div class="sinteza card" id="sinteza-card">
+    <div class="loading">se compune concluzia din datele de azi…</div>
+  </div>
+</section>
+
+<!-- ================================================== buletinul de azi -->
+<section id="sec-hero">
+  <div class="hero">
+    <div class="hero-num" id="hero-num">
+      <div class="loading">se încarcă buletinul INHGA…</div>
+    </div>
+    <div class="hero-text" id="hero-text"></div>
+  </div>
+</section>
+
+<!-- ============================================== profilul longitudinal -->
+<section id="sec-profil">
+  <p class="eyebrow">semnătura fluviului</p>
+  <h2>Profil longitudinal — debitul de la Kelheim la vărsare</h2>
+  <p class="section-note">Fiecare punct e o stație sau o secțiune de calcul, așezată la
+    kilometrul ei fluvial. Punctele pline <b>●</b> sunt măsurători oficiale
+    (PEGELONLINE&nbsp;DE/AT, RHMZ&nbsp;RS, INHGA&nbsp;RO); punctele goale <b>○</b> sunt
+    estimări de model (GloFAS/Copernicus). Trecerea cu mouse-ul arată valorile; scara
+    debitului e logaritmică.</p>
+  <div class="profil-box">
+    <div id="profil-holder"><div class="loading">se încarcă profilul…</div></div>
+    <div id="profil-tip"></div>
+    <div class="profil-legend">
+      <span><span class="sw" style="color:var(--blue)">●</span>debit măsurat (m³/s)</span>
+      <span><span class="sw" style="color:var(--blue)">○</span>debit model GloFAS (m³/s)</span>
+      <span><span class="sw" style="color:var(--muted)">▏</span>stație doar cu nivel (cotă)</span>
+      <span><span class="sw" style="color:var(--serious)">▬</span>baraj Porțile de Fier I / II</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ anomalii -->
+<section id="sec-anomalii">
+  <p class="eyebrow">detectorul</p>
+  <h2>Anomalii față de istoric — ce e anormal și ce nu se leagă</h2>
+  <p class="section-note">Patru verificări automate, cu metoda și limitele la vedere.
+    Diferența contează: un debit <b>anormal de mic</b> poate fi pe deplin explicat de ploi
+    (secetă), pe când o <b>gaură persistentă în bilanț</b> între două stații ar fi un semnal
+    real de investigat. Detectoarele produc cifre verificabile, nu concluzii.</p>
+  <div class="card">
+    <h3>Starea de azi față de ultimii ~30 de ani <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
+    <p class="sub">percentila zilei calendaristice (fereastră ±7 zile, referință 1991–anul trecut)</p>
+    <div id="anom-strip" class="anom-strip"><div class="loading">se calculează…</div></div>
+    <div class="anom-scale"><span>P0 · secetă</span><span class="g"></span><span>P100 · ape mari</span></div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="grid-3" id="anom-verdicte">
+    <div class="card verdict"><div class="loading">se calculează…</div></div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>Măsurat vs. model, zi de zi — Baziaș, ultimele 90 de zile</h3>
+    <p class="sub">linia plină: debitul oficial INHGA (reconstruit automat din arhiva buletinelor)
+      <span class="prov prov-masurat">măsurat</span> · linia punctată: GloFAS
+      <span class="prov prov-model">model</span> — bias-ul stabil dintre ele e normal;
+      o ruptură bruscă ar fi semnalul</p>
+    <div id="chart-mvm" class="chart-sm"></div>
+  </div>
+</section>
+
+<!-- ======================================================== unde e apa -->
+<section id="sec-bilant">
+  <p class="eyebrow">contabilitatea</p>
+  <h2>Unde e apa — bilanțul, rând cu rând</h2>
+  <p class="section-note">Apa nu dispare: se mută pe alt rând din bilanț. Panoul calculează
+    automat, pentru bazinul superior (deasupra Passau, ~77.000 km²), cât a plouat de la
+    1 ianuarie, cât a curs prin râu și cât au luat atmosfera și solul — față de un an
+    normal. Rândul cel mai mare din bilanț, evaporarea, e și singurul care nu se vede
+    cu ochiul liber.</p>
+  <div class="card" id="bilant-card"><div class="loading">se calculează…</div></div>
+</section>
+
+<!-- ================================================= sectorul românesc -->
+<section id="sec-tabele">
+  <p class="eyebrow">azi, pe stații</p>
+  <h2>Cotele și debitele de azi</h2>
+  <p class="section-note">Stânga: cotele oficiale AFDJ pe sectorul românesc
+    (cote negative = sub „zero-ul mirei", nu albie secată). Dreapta: stațiile din
+    Serbia (RHMZ) — ultimele înainte de Porțile de Fier — și debitele măsurate acolo.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Sectorul românesc <span class="prov prov-masurat">măsurat</span></h3>
+      <p class="sub">AFDJ Galați — <a href="https://www.afdj.ro/ro/cotele-dunarii" target="_blank" rel="noopener">cotele Dunării</a>, actualizare zilnică</p>
+      <div id="tabel-afdj"><div class="loading">se încarcă…</div></div>
+    </div>
+    <div class="card">
+      <h3>Serbia, amonte de Porțile de Fier <span class="prov prov-masurat">măsurat</span></h3>
+      <p class="sub">RHMZ Serbia — <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">date hidrologice zilnice</a> (ora 10, locală)</p>
+      <div id="tabel-hidmet"><div class="loading">se încarcă…</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ comparația multianuală -->
+<section id="sec-ani">
+  <p class="eyebrow">memoria fluviului</p>
+  <h2>Comparație cu anii trecuți</h2>
+  <p class="section-note">Debit zilnic pe ani suprapuși, cu banda min–max și mediana
+    2015–2025 ca reper. Sursa este modelul GloFAS (Copernicus)
+    <span class="prov prov-model">model</span> — consecvent în timp, deci potrivit pentru
+    comparații între ani, chiar dacă cifra absolută poate diferi de măsurătoarea INHGA.
+    Precipitațiile vin din reanaliza ERA5 (Copernicus), cumulate de la 1 ianuarie.</p>
+  <div class="controls">
+    <label for="sel-punct">Secțiune debit</label>
+    <select id="sel-punct"></select>
+    <label for="sel-precip">Zonă precipitații</label>
+    <select id="sel-precip"></select>
+  </div>
+  <div class="card">
+    <h3 id="titlu-debit-ani">Debit zilnic pe ani</h3>
+    <p class="sub">m³/s · GloFAS, aceeași celulă de grilă pentru toți anii</p>
+    <div id="chart-ani" class="chart"></div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3 id="titlu-precip">Precipitații cumulate de la 1 ianuarie</h3>
+    <p class="sub">mm · reanaliza ERA5, aceeași coordonată pentru toți anii</p>
+    <div id="chart-precip" class="chart"></div>
+  </div>
+</section>
+
+<!-- ========================================================== statistici -->
+<section id="sec-statistici">
+  <p class="eyebrow">cifrele</p>
+  <h2>Statistici complete — anul curent față de istoric</h2>
+  <p class="section-note">Toate secțiunile și toate zonele, în două tabele: cât e azi,
+    cât ar fi „normal" (mediana istorică a aceleiași zile/ferestre calendaristice) și
+    unde se așază anul curent în clasamentul anilor. Se recalculează automat zilnic.
+    <a href="/api/statistici.csv" download="dunarea-statistici.csv">Descarcă CSV</a> ·
+    <a href="/api/statistici" target="_blank" rel="noopener">JSON</a></p>
+  <div class="card">
+    <h3>Debit pe transect <span class="prov prov-model">model GloFAS · referință 1991–anul trecut</span></h3>
+    <p class="sub">normala zilei = mediana ferestrei calendaristice ±7 zile din anii de referință</p>
+    <div id="tabel-stat-debit"><div class="loading">se calculează…</div></div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>Precipitații pe zone <span class="prov prov-model">reanaliza ERA5 · referință 2000–anul trecut</span></h3>
+    <p class="sub">ian→azi = cumul de la 1 ianuarie până la ultima zi disponibilă; iarna = noiembrie–martie
+      (zăpada din bazinul superior ține debitul verii)</p>
+    <div id="tabel-stat-precip"><div class="loading">se calculează…</div></div>
+  </div>
+</section>
+
+<!-- ========================================================= contra-probe -->
+<section id="sec-contraprobe">
+  <p class="eyebrow">contra-probe</p>
+  <h2>Verificare independentă — surse care nu cer încredere</h2>
+  <p class="section-note">Aceeași apă, măsurată de alte sisteme: rețeaua de navigație a
+    tuturor statelor riverane (cvasi-orar), dispecerul energetic național (timp real),
+    satelitul (altimetrie) și arhiva mondială de debite măsurate. Dacă cifrele oficiale
+    românești ar fi „aranjate", aici s-ar vedea rupturile.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>DanubeSTREAM — mirele tuturor țărilor <span class="prov prov-masurat">măsurat · cvasi-orar</span></h3>
+      <p class="sub"><a href="https://www.danubeportal.com" target="_blank" rel="noopener">danubeportal.com</a> —
+        administrațiile de navigație riverane (FAIRway Danube)</p>
+      <div id="cp-danubeportal"><div class="loading">se încarcă…</div></div>
+    </div>
+    <div class="card">
+      <h3>Dispecerul energetic — SEN live <span class="prov prov-masurat">măsurat · timp real</span></h3>
+      <p class="sub"><a href="https://www.transelectrica.ro/sen-grafic" target="_blank" rel="noopener">Transelectrica</a> —
+        harta SEN, actualizare la minut</p>
+      <ul class="facts" id="cp-sen"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Satelit — altimetrie <span class="prov prov-masurat">măsurat din orbită</span></h3>
+      <p class="sub"><a href="https://hydroweb.next.theia-land.fr" target="_blank" rel="noopener">hydroweb.next</a> (CNES/Theia)
+        + <a href="https://dahiti.dgfi.tum.de" target="_blank" rel="noopener">DAHITI</a> ca rezervă —
+        niveluri din Sentinel-3/6, SWOT și Jason, independent de orice institut național</p>
+      <ul class="facts" id="cp-dahiti"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Gravimetrie GRACE — toată apa din bazin <span class="prov prov-masurat">măsurat din orbită</span></h3>
+      <p class="sub">SAGSA/Theia din GRACE &amp; GRACE-FO — anomalia apei totale (suprafață + sol + subteran),
+        km³ pe caseta bazinului Dunării · decalaj de publicare ~1 an</p>
+      <ul class="facts" id="cp-grav"><li><span class="loading">se încarcă (prima rulare descarcă ~48 de luni)…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Arhiva seculară — GRDC <span class="prov prov-masurat">măsurat · din sec. XIX</span></h3>
+      <p class="sub"><a href="https://portal.grdc.bafg.de" target="_blank" rel="noopener">Global Runoff Data Centre</a>,
+        Koblenz — debite măsurate, serii de peste 100 de ani</p>
+      <ul class="facts" id="cp-grdc"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+  </div>
+  <p class="section-note" style="margin-top:16px">Alte contra-probe, direct în browser:
+    <a href="https://drought.emergency.copernicus.eu" target="_blank" rel="noopener">European Drought Observatory</a> (indicatorii UE de secetă) ·
+    <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (date validate, toate țările, cont gratuit) ·
+    <a href="https://ehyd.gv.at" target="_blank" rel="noopener">eHYD Austria</a> (serii lungi CSV) ·
+    <a href="https://browser.dataspace.copernicus.eu" target="_blank" rel="noopener">Copernicus Browser</a> (imagini Sentinel-2 la 10 m — lacuri, brațe, Bâstroe).</p>
+</section>
+
+<!-- ==================================================== Porțile de Fier -->
+<section id="sec-pf">
+  <p class="eyebrow">nodul energetic</p>
+  <h2>Porțile de Fier I &amp; II</h2>
+  <p class="section-note">Ce se vede din date publice — și ce nu se publică nicăieri.
+    Intrarea în lac se măsoară la Baziaș, ieșirea din sistem se citește la Gruia și
+    Prahovo. Telemetria barajelor (debit pe turbine, deversoare, ecluzări, pe ore)
+    <b>nu este un flux public</b> la niciun operator — nici în România, nici în Serbia.</p>
+  <div class="grid-3">
+    <div class="card">
+      <h3>Bilanțul public al nodului</h3>
+      <p class="sub">intrare → lac → ieșire</p>
+      <ul class="facts" id="pf-bilant"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Volumele oficiale ale lacurilor</h3>
+      <p class="sub">Planul de Management al Riscului la Inundații (PMRI) — atenție la definiții</p>
+      <ul class="facts">
+        <li><span class="k">PF I — text PMRI</span><span class="v"><b>≈ 2 400</b> mil. m³ (volum brut citat)</span></li>
+        <li><span class="k">PF I — anexă, la NNR</span><span class="v"><b>1 840,1</b> mil. m³ · la NME: 1 909</span></li>
+        <li><span class="k">PF II + Gogoșu, NNR</span><span class="v"><b>773,3</b> mil. m³ · la NME: 884,8</span></li>
+        <li><span class="k">volum util orar</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — necesită curba cotă–volum V=f(H) a operatorului</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Turbine, deversoare, ecluze</h3>
+      <p class="sub">ce există și ce lipsește</p>
+      <ul class="facts" id="pf-entsoe"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>Baziaș vs. Gruia — apa care intră vs. apa care iese <span class="prov prov-model">model</span></h3>
+    <p class="sub">ultimele 90 de zile, GloFAS · diferențele de scurtă durată țin de umplerea/golirea
+      lacului și de timpul de propagare (~1–2 zile); o divergență persistentă ar fi anomalia de urmărit</p>
+    <div id="chart-pf" class="chart-sm"></div>
+  </div>
+</section>
+
+<!-- ============================================================= delta -->
+<section id="sec-delta">
+  <p class="eyebrow">despletirea</p>
+  <h2>Delta — Ceatal Izmail, Chilia, Sulina, Sf. Gheorghe, Bâstroe</h2>
+  <p class="section-note">Aici se termină datele publice în timp real. Distribuția exactă a
+    debitului pe brațe se măsoară doar prin campanii hidrometrice (profile ADCP) făcute de
+    INHGA/AFDJ și de partea ucraineană — nu există un flux public orar. Modelul GloFAS nu
+    rezolvă bifurcațiile (rutează aproape tot debitul pe un singur braț), așa că aplicația
+    <b>refuză să afișeze o împărțire calculată din model</b> — ar fi un număr fals.</p>
+  <div class="grid-3">
+    <div class="card">
+      <h3>Intrarea în deltă</h3>
+      <p class="sub">secțiunea Ceatal Izmail</p>
+      <ul class="facts" id="delta-intrare"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Cotele oficiale pe brațe <span class="prov prov-masurat">măsurat</span></h3>
+      <p class="sub">AFDJ, azi — cote, nu debite</p>
+      <ul class="facts" id="delta-cote"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Bâstroe / brațul Chilia</h3>
+      <p class="sub">starea datelor</p>
+      <ul class="facts">
+        <li><span class="k">canal Bâstroe</span><span class="v">derivație din brațul Chilia, pe teritoriul Ucrainei; adâncit în 2004 și re-dragat din 2022 pentru coridorul de export</span></li>
+        <li><span class="k">debit Bâstroe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — fără măsurători ucrainene publice; se poate doar estima din bilanțul brațelor</span></li>
+        <li><span class="k">distribuția pe brațe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> ca flux; există în rapoartele campaniilor INHGA/AFDJ și ale Comisiei Dunării</span></li>
+        <li><span class="k">verificabil azi</span><span class="v">cotele AFDJ pe Tulcea/Sulina și nivelurile totale — orice deviere majoră de debit s-ar vedea în ele</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= metodologie -->
+<section id="sec-metodologie">
+  <p class="eyebrow">auditabil</p>
+  <h2>Metodologie — fiecare verificare, cu sursele și limitele ei</h2>
+  <p class="section-note">Tot ce afirmă aplicația, redus la rețetă: ce surse intră în fiecare
+    verificare, cum se calculează și unde se poate înșela. Snapshot-ul complet al tuturor
+    verdictelor și intrărilor, cu marcaj de timp, se poate descărca oricând:
+    <a href="/api/raport" download="dunarea-raport.json">raport complet (JSON)</a> ·
+    <a href="/api/statistici.csv" download="dunarea-statistici.csv">statistici (CSV)</a>.
+    <span id="istoric-local"></span></p>
+  <div class="card">
+    <table class="trans">
+      <thead><tr><th>Verificarea</th><th>Surse folosite</th><th>Metodă și referință</th><th>Limite cunoscute</th></tr></thead>
+      <tbody>
+        <tr><td class="what">Secetă hidrologică (14 secțiuni)</td>
+          <td>GloFAS/Copernicus</td>
+          <td>percentila empirică a zilei calendaristice, fereastră ±7 zile, referință 1991–anul trecut; serii „zile&lt;P10"</td>
+          <td>model, nu măsurătoare; bias absolut față de mire (~0,5–1,0×), dar consecvent în timp</td></tr>
+        <tr><td class="what">Bilanț Baziaș → Gruia</td>
+          <td>GloFAS (2 secțiuni)</td>
+          <td>decalaj din corelația variațiilor zilnice; reziduu relativ pe 14 zile vs. distribuția lunii, 2015+; z-score</td>
+          <td>nu separă umplerea lacului de captări; modelul nu vede manevrele barajului</td></tr>
+        <tr><td class="what">INHGA ↔ model</td>
+          <td>INHGA (arhiva buletinelor) + GloFAS</td>
+          <td>raportul oficial/model pe 90 de zile; alarmă la ruptura raportului (z pe ultimele 7 zile)</td>
+          <td>bias stabil ~0,7–0,8 e normal; detectează schimbări, nu adevărul absolut</td></tr>
+        <tr><td class="what">Mire încrucișate RO</td>
+          <td>AFDJ (XML) + DanubeSTREAM (6 țări)</td>
+          <td>aceeași miră în două sisteme; mediană și maximum de abatere, 23 stații</td>
+          <td>ore de citire diferite; la Călărași cele două sisteme par să citească mire fizice diferite</td></tr>
+        <tr><td class="what">Precipitații ↔ debit</td>
+          <td>ERA5 + GloFAS</td>
+          <td>percentila cumulului pe 90 de zile (aceeași fereastră calendaristică, 2000+) vs. percentila debitului</td>
+          <td>euristic; puncte-proxy, nu medie de bazin; nu e bilanț hidrologic</td></tr>
+        <tr><td class="what">Satelit ↔ râu</td>
+          <td>hydroweb.next/CNES (Sentinel-3/6)</td>
+          <td>percentila lunară a fiecărei stații virtuale în propria serie (9–19 ani); mediană pe 11–12 stații</td>
+          <td>reper geoid (nu se compară absolut cu mirele); revizită 10–27 zile</td></tr>
+        <tr><td class="what">Germania: miră ↔ model</td>
+          <td>PEGELONLINE/WSV + GloFAS</td>
+          <td>debit orar măsurat la Hofkirchen vs. model în aceeași secțiune; bandă de plauzibilitate 0,4–2,5</td>
+          <td>o singură stație; bandă largă tocmai ca să nu alarmeze pe bias normal</td></tr>
+        <tr><td class="what">Serbia: miră ↔ model</td>
+          <td>RHMZ + GloFAS</td>
+          <td>debit zilnic măsurat la Novi Sad vs. model; aceeași bandă</td>
+          <td>RHMZ publică o dată pe zi (ora 10); TLS-ul sitului cere verificare relaxată</td></tr>
+        <tr><td class="what">Austria: test de retenție</td>
+          <td>PEGELONLINE (10 mire VIA DONAU, orar)</td>
+          <td>trendul nivelului pe 30 de zile la toate mirele austriece vs. debitul de intrare (Hofkirchen); retenția = niveluri în creștere pe intrare în scădere</td>
+          <td>vede doar lacurile de fir de pe Dunăre (oricum singurele relevante fizic); nu vede bazinele alpine de pompaj (~1,5 zile de debit, total)</td></tr>
+        <tr><td class="what">Unde e apa (bilanț P–Q)</td>
+          <td>ERA5 (6 puncte) + GloFAS + GRACE</td>
+          <td>media a 6 puncte-proxy (câmpie+alpin) × aria bazinului la Achleiten (76.650 km²); ferestre calendaristice identice, fără 29 feb</td>
+          <td>proxy ≠ medie de bazin adevărată (±câteva %); rezidualul cumulează erorile ambelor rânduri</td></tr>
+        <tr><td class="what">Rezerva bazinului</td>
+          <td>GRACE/GRACE-FO (SAGSA/CNES)</td>
+          <td>anomalia lunară a apei totale, suma celulelor 1° pe caseta bazinului, serie 2002+</td>
+          <td>rezoluție ~300 km (caseta prinde și vecinătăți); decalaj de publicare ~1 an</td></tr>
+        <tr><td class="what">Context energetic</td>
+          <td>Transelectrica SEN (live) · ENTSO-E (cu token)</td>
+          <td>producție pe surse, linia Djerdap, sold; la PF pe unități via ENTSO-E</td>
+          <td>SEN e agregat național, nu per centrală; ENTSO-E doar unități ≥100 MW, cu întârziere</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ====================================================== transparența -->
+<section id="sec-trans">
+  <p class="eyebrow">cine publică ce</p>
+  <h2>Transparența surselor — cerință cu cerință</h2>
+  <p class="section-note">Lista ta de cerințe, verificată sursă cu sursă. „Nepublicat" nu
+    înseamnă conspirație — înseamnă că datele există la operator și pot fi cerute oficial
+    (Legea 544/2001 în România, respectiv regulile de acces la informații de mediu).</p>
+  <div class="card">
+    <table class="trans">
+      <thead><tr><th>Cerința</th><th>Stare</th><th>Sursa publică și limita ei</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="what">Debite orare Germania → Baziaș</td>
+          <td><span class="prov prov-masurat">public</span></td>
+          <td>PEGELONLINE (DE/AT, orar, <a href="https://www.pegelonline.wsv.de" target="_blank" rel="noopener">API oficial</a>, date brute neverificate) · Ungaria: <a href="https://www.hydroinfo.hu" target="_blank" rel="noopener">hydroinfo.hu</a> · Serbia: <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">RHMZ</a> (zilnic) · România: <a href="https://www.hidro.ro" target="_blank" rel="noopener">INHGA</a> + <a href="https://www.afdj.ro/ro/cotele-dunarii" target="_blank" rel="noopener">AFDJ</a> (zilnic) · bazin întreg: <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (cont gratuit)</td>
+        </tr>
+        <tr>
+          <td class="what">Niveluri și volume utile ale marilor acumulări</td>
+          <td><span class="prov prov-calculat">parțial</span></td>
+          <td>Niveluri la mire în lac: RHMZ (Golubac, Banatska Palanka). Volumele nominale: documente PMRI/ANAR. Volumul efectiv reținut pe zi cere curba cotă–volum a operatorului — <b>nepublicată</b>.</td>
+        </tr>
+        <tr>
+          <td class="what">Intrare/ieșire orară la Porțile de Fier I și II</td>
+          <td><span class="prov prov-calculat">aproximabil</span></td>
+          <td>Aproximabil din Baziaș (INHGA), Gruia (AFDJ), Prahovo (RHMZ) cu corecția timpului de propagare. Telemetria exactă a barajelor: doar la Hidroelectrica / EPS — <b>nepublicată</b>.</td>
+        </tr>
+        <tr>
+          <td class="what">Debite pe turbine, deversoare, ecluze</td>
+          <td><span class="prov prov-calculat">parțial</span></td>
+          <td>Turbinarea se poate estima din producția pe unități (<a href="https://transparency.entsoe.eu" target="_blank" rel="noopener">ENTSO-E</a>, unități ≥100 MW, cu întârziere) prin Q≈P/(ρ·g·H·η). Deversările și jurnalele de ecluzare: <b>nepublicate</b>.</td>
+        </tr>
+        <tr>
+          <td class="what">Captări agricole, industriale, energetice</td>
+          <td><span class="prov prov-lipsa">doar agregat</span></td>
+          <td>Volume anuale pe sectoare: <a href="https://www.eea.europa.eu/en/analysis/indicators/water-abstraction-by-source-and" target="_blank" rel="noopener">EEA</a> + rapoartele ANAR. Autorizațiile de gospodărire a apelor sunt publice (debite autorizate ≠ consum real). Contorizarea reală orară: <b>nepublicată</b>.</td>
+        </tr>
+        <tr>
+          <td class="what">Distribuția la ceatale, Chilia, Sulina, Bâstroe</td>
+          <td><span class="prov prov-lipsa">campanii</span></td>
+          <td>Cote zilnice pe brațe: AFDJ. Debite pe brațe: doar campanii ADCP (INHGA/AFDJ, Comisia Dunării). Partea ucraineană (Chilia/Bâstroe): fără flux public.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <p>Aplicație locală, fără cont și fără servicii terțe de analytics. Serverul interoghează
+  direct sursele oficiale și ține un cache local (<code>cache.db</code>) ca să nu le
+  suprasolicite. PEGELONLINE marchează datele drept <em>brute, neverificate</em>; GloFAS și
+  ERA5 sunt produse Copernicus (model/reanaliză, nu măsurători). Pentru producția pe unități
+  la Porțile de Fier: cont gratuit pe transparency.entsoe.eu, apoi porniți serverul cu
+  <code>ENTSOE_TOKEN=…&nbsp;python3 server.py</code>.</p>
+</footer>
+
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
