@@ -1,15 +1,16 @@
 """Stratul opțional de interpretare AI — narativ, nu verdict.
 
-Sinteza din capul paginii rămâne deterministă. Acest modul adaugă separat o
-analiză LLM auditabilă: publică promptul, digestul exact și modelul folosit.
+Sinteza din capul paginii rămâne deterministă. Acest modul poate produce, numai
+la cerere explicită, o analiză LLM auditabilă cu promptul, digestul exact și
+modelul folosit. Configurarea cheii nu pornește singură niciun apel AI.
 
 Activare de bază (orice API OpenAI-compatibil):
-    AI_API_KEY=... [AI_MODEL=...] [AI_BASE_URL=...] python3 server.py
+    AI_API_KEY=... [AI_MODEL=...] [AI_BASE_URL=...] python3 analiza_ai.py
 
 Comparația cu surse web este deliberat opt-in și disponibilă numai prin API-ul
 OpenAI oficial, deoarece are cost/latency suplimentare și trebuie să întoarcă
-citări verificabile:
-    AI_WEB_SEARCH=1 [AI_WEB_MODEL=gpt-5.6-terra] python3 server.py
+citări verificabile. Și în acest mod analiza rulează numai la cerere:
+    AI_WEB_SEARCH=1 [AI_WEB_MODEL=gpt-5.6-terra] python3 analiza_ai.py
 """
 
 import hashlib
@@ -24,8 +25,6 @@ from datetime import date
 import anomalii
 import connectors as C
 
-MAX_VARSTA_S = 7 * 86400
-MIN_INTERVAL_S = 1800
 PROMPT_VERSION = 9
 
 _lock_ai = threading.Lock()
@@ -186,7 +185,7 @@ def _digest():
 
 
 def _amprenta_stare():
-    """Starea categorială; zecimalele mici nu declanșează apeluri plătite."""
+    """Rezumat categorial păstrat în rezultat pentru comparații între rulări."""
     r = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)["data"]
     bi = C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)["data"]
 
@@ -344,7 +343,21 @@ def _normalize_response(text):
     return normalized.strip(), missing
 
 
-def analiza():
+def analiza(run=False):
+    """Rulează analiza numai când apelantul cere explicit ``run=True``.
+
+    Răspunsul implicit este intenționat doar un status: nu citește analiza
+    precedentă și, mai important, nu poate declanșa accidental un apel plătit.
+    """
+    if not run:
+        return {
+            "activ": False,
+            "manual_only": True,
+            "motiv": "Analiza AI este ascunsă din interfață și rulează numai la "
+                     "cerere explicită (python3 analiza_ai.py). Sinteza vizibilă "
+                     "rămâne deterministă.",
+        }
+
     key = _ai_key()
     if not key:
         return {
@@ -365,21 +378,7 @@ def analiza():
 def _analiza_locked(key):
     parti, fp = _amprenta_stare()
     veche = C.cache_get("analiza_ai", max_age=10 ** 9)
-    if veche:
-        vd, varsta = veche["data"], veche["age"]
-        compatibila = vd.get("prompt_version") == PROMPT_VERSION
-        neschimbat = vd.get("amprenta") == fp
-        configuratie_veche = (vd.get("amprenta_parti") or {}).get("configuratie_ai")
-        aceeasi_configuratie = configuratie_veche == parti["configuratie_ai"]
-        if compatibila and aceeasi_configuratie and (
-                (neschimbat and varsta < MAX_VARSTA_S) or varsta < MIN_INTERVAL_S):
-            return {"data": vd, "stale": False}
-        schimbate = [k for k in parti
-                     if parti.get(k) != (vd.get("amprenta_parti") or {}).get(k)]
-        declansator = (f"schimbare de stare: {', '.join(schimbate)}"
-                       if not neschimbat else "reîmprospătare periodică (7 zile)")
-    else:
-        declansator = "prima analiză"
+    declansator = "rulare manuală"
 
     def fetch():
         date_intrare = _digest()
@@ -429,3 +428,9 @@ def _analiza_locked(key):
         if veche:
             return {"data": veche["data"], "stale": True, "error": str(exc)}
         raise
+
+
+if __name__ == "__main__":
+    # Singurul punct de pornire intenționat al apelului AI. Interfața și
+    # serverul HTTP nu apelează analiza cu run=True.
+    print(json.dumps(analiza(run=True), ensure_ascii=False, indent=2))

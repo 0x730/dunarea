@@ -25,24 +25,28 @@ depind de ea. Modul implicit trimite digestul auditabil unui endpoint
 OpenAI-compatibil, fără acces web:
 
 ```bash
-AI_API_KEY=... python3 server.py
+AI_API_KEY=... python3 analiza_ai.py
 # opțional: AI_MODEL=... AI_BASE_URL=...
 ```
 
 Pentru a compara separat concluziile și cu surse instituționale actuale,
 activați căutarea web. Acest mod folosește [Responses API cu web search](https://developers.openai.com/api/docs/guides/tools-web-search),
-este disponibil numai cu API-ul OpenAI oficial și afișează linkurile citate de
-model; poate adăuga timp și cost apelului:
+este disponibil numai cu API-ul OpenAI oficial și păstrează linkurile citate de
+model; poate adăuga timp și cost apelului. Analiza AI nu este afișată în
+interfață, nu rulează la refresh și nu are watcher de fundal. Se pornește numai
+prin comanda explicită:
 
 ```bash
-AI_API_KEY=... AI_WEB_SEARCH=1 python3 server.py
+AI_API_KEY=... AI_WEB_SEARCH=1 python3 analiza_ai.py
 # opțional: AI_WEB_MODEL=gpt-5.6-terra
 ```
 
 Promptul verifică explicit erorile și prospețimea cache-ului, separă
 măsurătorile de modele/reanalize/cataloguri și nu numără drept confirmări
-independente surse care retransmit aceleași date. Promptul, digestul exact,
-modul, modelul și citările sunt expuse în `/api/analiza-ai`.
+independente surse care retransmit aceleași date. Rularea manuală afișează
+promptul, digestul exact, modul, modelul și citările în terminal și arhivează
+rezultatul local. `/api/analiza-ai` publică doar faptul că modul este manual;
+nici `?run=1` nu poate declanșa un apel extern.
 
 Verificare locală:
 

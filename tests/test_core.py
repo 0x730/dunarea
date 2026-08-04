@@ -1,3 +1,4 @@
+import inspect
 import os
 import sqlite3
 import struct
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import analiza_ai
 import anomalii
 import connectors as C
+import server
 
 
 class StaticOptionsPageTests(unittest.TestCase):
@@ -51,6 +53,23 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn("Nu este o a doua măsurătoare", app)
         self.assertIn("reper prognozat", app)
         self.assertNotIn("prognoză 7 zile", app)
+
+    def test_stateful_copy_is_neutral_and_ai_is_not_rendered(self):
+        root = Path(__file__).parents[1]
+        page = root.joinpath("static/index.html").read_text()
+        app = root.joinpath("static/app.js").read_text()
+
+        self.assertNotIn("ai-card", page)
+        self.assertNotIn("renderAnalizaAI", app)
+        self.assertNotIn("/api/analiza-ai", app)
+        self.assertIn("Starea bazinului", page)
+        self.assertIn("Cele mai recente cote și debite disponibile", page)
+        self.assertNotIn("Seceta din bazin", page)
+        self.assertNotIn("Punctele critice azi", app)
+        self.assertNotIn("Modelul supraestimează sistematic", app)
+        self.assertNotIn("record al ultimilor", app)
+        self.assertIn("Number(m.raport_mediu) < 0.97", app)
+        self.assertIn("fără interpretare AI", app)
 
 
 class CacheTests(unittest.TestCase):
@@ -427,6 +446,40 @@ class AnomalySourceTests(unittest.TestCase):
 
 
 class AiAnalysisAuditTests(unittest.TestCase):
+    def test_ai_default_is_status_only_and_never_calls_model(self):
+        with mock.patch.object(analiza_ai, "_ai_key",
+                               side_effect=AssertionError("cheia nu trebuie citită")), \
+                mock.patch.object(analiza_ai, "_analiza_locked") as locked:
+            result = analiza_ai.analiza()
+
+        self.assertFalse(result["activ"])
+        self.assertTrue(result["manual_only"])
+        locked.assert_not_called()
+
+    def test_ai_manual_run_is_fresh_and_explicit(self):
+        expected = {"data": {"activ": True}, "stale": False}
+        with mock.patch.object(analiza_ai, "_ai_key", return_value="secret"), \
+                mock.patch.object(analiza_ai, "AI_WEB_SEARCH", False), \
+                mock.patch.object(analiza_ai, "_analiza_locked",
+                                  return_value=expected) as locked:
+            result = analiza_ai.analiza(run=True)
+
+        self.assertEqual(result, expected)
+        locked.assert_called_once_with("secret")
+
+    def test_http_endpoint_cannot_trigger_ai_even_with_run_query(self):
+        status = {"activ": False, "manual_only": True, "motiv": "manual"}
+        with mock.patch.object(server.analiza_ai, "analiza",
+                               return_value=status) as run:
+            result = server.api_analiza_ai({"run": ["1"]})
+
+        self.assertEqual(result, status)
+        run.assert_called_once_with(run=False)
+
+    def test_background_maintenance_has_no_ai_call(self):
+        source = inspect.getsource(server.maintenance_watcher)
+        self.assertNotIn("analiza_ai", source)
+
     def test_digest_carries_errors_lineage_hungary_freshness_and_context(self):
         report = {
             "climatologie": [{"id": "bazias", "recent": [1, 2],

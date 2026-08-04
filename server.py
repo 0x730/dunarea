@@ -365,10 +365,15 @@ def api_avize(q):
 
 
 def api_analiza_ai(q):
-    r = analiza_ai.analiza()
+    # Endpoint de stare, fără efecte: nici măcar ?run=1 nu poate porni un apel
+    # plătit din exterior. Rularea manuală se face cu `python3 analiza_ai.py`.
+    r = analiza_ai.analiza(run=False)
     if "data" not in r:          # inactiv (fără cheie) — mesajul explicativ
         return r
-    return {**r["data"], "stale": r["stale"]}
+    payload = {**r["data"], "stale": r["stale"], "manual_only": True}
+    if r.get("error"):
+        payload["error"] = r["error"]
+    return payload
 
 
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -486,10 +491,8 @@ def warmup():
     print("istoric INHGA + raport anomalii pregătite")
 
 
-def ai_watcher():
-    """Evaluează la fiecare 30 min dacă starea fluviului s-a schimbat
-    categorial; analiza AI se regenerează doar atunci (sau la 7 zile).
-    Fără AI_API_KEY, apelul iese instant — zero cost."""
+def maintenance_watcher():
+    """Ține sursa INHGA la zi și curăță cache-ul; nu rulează analiza AI."""
     import time as _t
     n = 0
     while True:
@@ -497,7 +500,6 @@ def ai_watcher():
         n += 1
         try:
             C.inhga_bulletin()      # ține seria oficială la zi fără repornire
-            analiza_ai.analiza()
             if n % 48 == 0:         # o dată pe zi: curățenie în cache
                 C.cache_gc()
         except Exception:
@@ -506,7 +508,7 @@ def ai_watcher():
 
 if __name__ == "__main__":
     threading.Thread(target=warmup, daemon=True).start()
-    threading.Thread(target=ai_watcher, daemon=True).start()
+    threading.Thread(target=maintenance_watcher, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Monitor Dunărea → http://localhost:{PORT}")
     try:

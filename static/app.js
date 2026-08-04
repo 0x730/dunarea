@@ -354,23 +354,24 @@ function renderAfdjTable(afdj) {
         <td class="num">${s.cota_cm != null ? fmtN.format(s.cota_cm) : "–"}</td>
         <td class="num">${arrow(s.variatie_cm)}</td>
         <td class="num">${s.temp_apa_c != null ? fmt1.format(s.temp_apa_c) + "°" : ""}</td></tr>`).join("");
-  // punctele critice: cele mai adânci cote sub zero-ul mirei — exact zonele
-  // din fotografiile cu bancuri de nisip și nave pe uscat
-  const critice = afdj.statii
+  // O cotă negativă este doar sub zero-ul convențional al mirei locale. Nu o
+  // etichetăm automat drept punct critic sau pericol pentru navigație.
+  const coteJoase = afdj.statii
     .filter((s) => s.cota_cm != null && s.cota_cm < 0)
     .sort((a, b) => a.cota_cm - b.cota_cm)
     .slice(0, 5);
-  const criticeHtml = critice.length
-    ? `<p class="sub" style="margin:10px 0 0"><b style="color:var(--serious)">Punctele critice azi</b>
-        (cele mai adânci sub zero-ul mirei — zonele din fotografiile cu albia dezvelită):
-        ${critice.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
-        Cota sub zero = apa sub nivelul convențional al apelor mici; nu albie secată,
-        dar bancurile și epavele ies la vedere. ${critice.some((s) => s.statie === "Cernavoda")
+  const coteJoaseHtml = coteJoase.length
+    ? `<p class="sub" style="margin:10px 0 0"><b>Cele mai mici cote din ultima citire</b>
+        (față de zero-ul propriei mire):
+        ${coteJoase.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
+        Valorile negative nu înseamnă albie secată, nu sunt direct comparabile între stații
+        și nu stabilesc singure un pericol pentru navigație; pentru restricții folosim avizele oficiale.
+        ${coteJoase.some((s) => s.statie === "Cernavoda")
           ? "La Cernavodă, nivelul e influențat și de lucrările oficiale de la brațul Bala." : ""}</p>`
     : "";
   $("tabel-afdj").innerHTML = `<table class="data">
     <thead><tr><th>Stație</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">24 h</th><th class="num">apă</th></tr></thead>
-    <tbody>${rows}</tbody></table>${criticeHtml}`;
+    <tbody>${rows}</tbody></table>${coteJoaseHtml}`;
 }
 
 function renderHidmetTable(h) {
@@ -770,8 +771,12 @@ async function renderAnomalii() {
         <p class="v">${msg}</p>
         <div class="evi">raport oficial/model: ${m.raport_mediu} ± ${m.sd} (${m.n_etalon || m.n} zile-etalon)<br>
           ultimele 7 zile: ${m.raport_ultimele7} · abatere: z = ${m.z}</div>
-        <p class="met">Modelul supraestimează sistematic la Baziaș (raport ~${m.raport_mediu}) —
-          bias-ul stabil e normal la modele; ruptura bruscă ar fi semnalul.</p>
+        <p class="met">În fereastra-etalon, ${Number(m.raport_mediu) < 0.97
+          ? `debitul modelat a fost în medie mai mare decât cel oficial (raport oficial/model ~${m.raport_mediu})`
+          : Number(m.raport_mediu) > 1.03
+            ? `debitul modelat a fost în medie mai mic decât cel oficial (raport oficial/model ~${m.raport_mediu})`
+            : `debitul modelat și cel oficial au fost apropiate în medie (raport oficial/model ~${m.raport_mediu})`}.
+          Un bias stabil poate fi normal la modele; schimbarea bruscă a relației este semnalul.</p>
       </div>`);
     }
   }
@@ -892,7 +897,7 @@ async function renderStatistici() {
   }
 
   $("tabel-stat-debit").innerHTML = `<div style="overflow-x:auto"><table class="data">
-    <thead><tr><th>Secțiune</th><th class="num">km</th><th class="num">azi m³/s</th>
+    <thead><tr><th>Secțiune</th><th class="num">km</th><th class="num">ultima zi m³/s</th>
       <th class="num">normala zilei</th><th class="num">abatere</th>
       <th class="num">percentilă</th><th class="num">zile&lt;P10</th>
       <th class="num">ani mai mici</th></tr></thead>
@@ -909,7 +914,7 @@ async function renderStatistici() {
 
   const b = (x) => x || {};
   $("tabel-stat-precip").innerHTML = `<div style="overflow-x:auto"><table class="data">
-    <thead><tr><th>Zonă</th><th class="num">ian→azi mm</th><th class="num">mediană</th>
+    <thead><tr><th>Zonă</th><th class="num">ian→ultima dată mm</th><th class="num">mediană</th>
       <th class="num">abatere</th><th class="num">ani mai uscați</th>
       <th class="num">iarnă mm</th><th class="num">mediană</th><th class="num">abatere</th>
       <th class="num">ninsoare cumulată</th>
@@ -1206,8 +1211,8 @@ async function renderContraProbe(afdj, portal) {
     } else {
       $("cp-grdc").innerHTML = [
         li("serie", `<b>${g.statie}</b> · ${g.din} → ${g.pana} (${fmtN.format(g.zile)} zile măsurate)`),
-        li("azi vs istoric", g.percentila_vs_masurat != null
-          ? `debitul de azi (model, ${fmtN.format(g.azi_model_m3s)} m³/s) e la <b>P${fmt1.format(g.percentila_vs_masurat)}</b> din ${fmtN.format(g.mostre_referinta)} mostre măsurate ale acestei ferestre calendaristice`
+        li("ultima valoare vs istoric", g.percentila_vs_masurat != null
+          ? `ultima valoare disponibilă (model, ${fmtN.format(g.azi_model_m3s)} m³/s) este la <b>P${fmt1.format(g.percentila_vs_masurat)}</b> din ${fmtN.format(g.mostre_referinta)} mostre măsurate ale acestei ferestre calendaristice`
           : "–"),
         g.record_minim_zi ? li("record minim al zilei", `${fmtN.format(g.record_minim_zi.m3s)} m³/s · ${g.record_minim_zi.data}`) : "",
         li("notă", g.nota || ""),
@@ -1274,9 +1279,8 @@ async function renderSinteza(inhga) {
     const sub10 = clim.filter((c) => c.azi?.pct != null && c.azi.pct < 10);
     const peste90 = clim.filter((c) => c.azi?.pct != null && c.azi.pct > 90);
     const baz = clim.find((c) => c.id === "bazias");
-    const worstSev = clim.some((c) => c.severitate === "extrem") ? "extrem"
-      : clim.some((c) => c.severitate === "sever") ? "sever" : "atentie";
-    const nExtrem = clim.filter((c) => c.severitate === "extrem").length;
+    const severityFor = (rows) => rows.some((c) => c.severitate === "extrem") ? "extrem"
+      : rows.some((c) => c.severitate === "sever") ? "sever" : "atentie";
     const debitTxt = inhga?.debit_bazias_m3s
       ? ` Debit oficial la Baziaș: <b>${fmtN.format(inhga.debit_bazias_m3s)} m³/s</b>${
           inhga.media_multianuala_m3s
@@ -1291,24 +1295,27 @@ async function renderSinteza(inhga) {
       parts.push(`Percentilele climatologice nu sunt disponibile momentan —
         starea pe secțiuni, mai jos, pe măsură ce se încarcă.`);
     } else if (sub10.length >= Math.ceil(pcts.length * 0.6)) {
-      chips.push(`<span class="sev sev-${worstSev}">secetă hidrologică: ${SEV_LABEL[worstSev]}</span>`);
-      parts.push(`Dunărea trece printr-o secetă ${nExtrem >= pcts.length / 2
-          ? "la nivel de <b>record al ultimilor ~30 de ani</b>" : "<b>severă</b>"}:
-        <b>${sub10.length} din ${clim.length} secțiuni</b> monitorizate (Germania → deltă) sunt sub percentila 10${
+      const lowSev = severityFor(sub10);
+      const nExtremLow = sub10.filter((c) => c.azi.pct < 2).length;
+      chips.push(`<span class="sev sev-${lowSev}">ape scăzute în model: ${SEV_LABEL[lowSev]}</span>`);
+      parts.push(`GloFAS indică debite modelate <b>${nExtremLow >= pcts.length / 2
+          ? "foarte aproape de extrema inferioară a climatologiei modelului" : "mult sub normalul sezonului"}</b>:
+        <b>${sub10.length} din ${pcts.length} secțiuni</b> evaluate (Germania → deltă) sunt sub percentila 10${
         baz && baz.streak_sub_p10 >= 3 ? `, la Baziaș a <b>${baz.streak_sub_p10}-a zi consecutivă</b>` : ""}.${debitTxt}`);
     } else if (peste90.length >= Math.ceil(pcts.length * 0.6)) {
-      chips.push(`<span class="sev sev-${worstSev}">ape mari: ${SEV_LABEL[worstSev]}</span>`);
-      parts.push(`Dunărea e la <b>ape mari</b> față de istoricul acestor zile:
-        <b>${peste90.length} din ${clim.length} secțiuni</b> peste percentila 90.${debitTxt}
+      const highSev = severityFor(peste90);
+      chips.push(`<span class="sev sev-${highSev}">ape ridicate în model: ${SEV_LABEL[highSev]}</span>`);
+      parts.push(`GloFAS indică debite modelate <b>mult peste normalul sezonului</b>:
+        <b>${peste90.length} din ${pcts.length} secțiuni</b> evaluate sunt peste percentila 90.${debitTxt}
         Pentru avertizări oficiale de inundații: INHGA / Apele Române.`);
     } else if (medP < 25) {
       chips.push(`<span class="sev sev-atentie">sub normalul sezonului</span>`);
       parts.push(`Dunărea curge <b>sub normalul sezonului</b> (mediana percentilelor: P${fmt1.format(medP)};
-        ${sub10.length} din ${clim.length} secțiuni sub percentila 10).${debitTxt}`);
+        ${sub10.length} din ${pcts.length} secțiuni sub percentila 10).${debitTxt}`);
     } else if (medP <= 75) {
       chips.push(`<span class="sev sev-normal">debit în marja normală</span>`);
       parts.push(`Dunărea curge <b>în marja normală</b> a acestor zile din an
-        (mediana percentilelor pe cele ${clim.length} secțiuni: P${fmt1.format(medP)}).${debitTxt}`);
+        (mediana percentilelor pe cele ${pcts.length} secțiuni evaluate: P${fmt1.format(medP)}).${debitTxt}`);
     } else {
       chips.push(`<span class="sev sev-atentie">peste normalul sezonului</span>`);
       parts.push(`Dunărea curge <b>peste normalul sezonului</b> (mediana percentilelor:
@@ -1381,66 +1388,8 @@ async function renderSinteza(inhga) {
   $("sinteza-card").innerHTML = `
     <div class="chips">${chips.join("")}</div>
     ${parts.map((p) => `<p>${p}</p>`).join("")}
-    <div class="cine">concluzie generată automat din datele de mai jos · actualizat ${acum} ·
-      se reîmprospătează la 5 minute · nimic din acest text nu e scris de mână</div>`;
-}
-
-/* ------------------------------------------------------------ analiza AI -- */
-async function renderAnalizaAI() {
-  const card = $("ai-card");
-  try {
-    const d = await jget("/api/analiza-ai");
-    if (!d.activ) { card.style.display = "none"; return; }
-    card.style.display = "block";
-    // d.text e deja escapat global în jget(); aici doar formatăm
-    const citations = new Map((d.citari_web || []).map((source) =>
-      [String(source.id), source]));
-    const text = d.text
-      // Cache-urile generate înainte de parserul v5 pot conține și linkul
-      // Markdown al API-ului, și markerul nostru. Păstrăm markerul clicabil.
-      .replace(/\s*\(\[[^\]\n]+\]\(https:\/\/[^)\n]+\)\)\s*(?=⟦WEB:\d+⟧)/g, " ")
-      .replace(/^(SITUAȚIA|CAUZE PROBABILE|ANOMALII DE DATE ȘI CONTRADICȚII|VERIFICARE EXTERNĂ|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMB[ĂA] CONCLUZIA)\s*:?\s*/gmi,
-               '<b style="color:var(--ink)">$1</b> ')
-      .replace(/⟦WEB:(\d+)⟧/g, (_, id) => {
-        const source = citations.get(id);
-        return source?.url?.startsWith("https://")
-          ? `<sup><a href="${source.url}" target="_blank" rel="noopener" title="${source.title}">[${id}]</a></sup>`
-          : "";
-      })
-      .replace(/\n/g, "<br>");
-    const sources = [...citations.values()].filter((source) =>
-      source.url?.startsWith("https://"));
-    const sourcesHtml = sources.length ? `
-      <div class="ai-web-sources">
-        <p class="sub"><b>Surse consultate de model:</b></p>
-        <ol>${sources.map((source) =>
-          `<li><a href="${source.url}" target="_blank" rel="noopener">${source.title}</a></li>`).join("")}</ol>
-      </div>` : "";
-    const mode = d.mod === "web_cu_citari"
-      ? "comparație web activă · surse oficiale cu citări"
-      : "doar datele monitorului · fără căutare web";
-    const formatIssues = [];
-    if (d.sectiuni_lipsa?.length) formatIssues.push(`lipsesc ${d.sectiuni_lipsa.join(", ")}`);
-    const wordCount = d.text.trim().split(/\s+/).filter(Boolean).length;
-    if (wordCount > 600) formatIssues.push(`${wordCount} cuvinte, peste limita de 600`);
-    const formatWarning = formatIssues.length
-      ? ` · <span style="color:var(--warning)">format: ${formatIssues.join("; ")}</span>`
-      : "";
-    card.innerHTML = `
-      <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
-      <p class="sub">strat interpretativ, separat de sinteza deterministă de mai sus — poate greși;
-        ${mode}${formatWarning} · promptul și datele de intrare sunt publice mai jos · generat ${d.generat} ·
-        declanșator: <b>${d.declansator || "–"}</b> · se regenerează doar la schimbări reale de stare
-        (severități, verificări, bilanț, GRACE) sau după 7 zile</p>
-      <div class="ai-analysis-text" style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
-      ${sourcesHtml}
-      <details style="margin-top:14px">
-        <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>
-        <pre style="white-space:pre-wrap; font-size:11.5px; color:var(--muted); background:var(--surface-2); padding:10px; border-radius:6px; margin-top:8px">${d.prompt_sistem}</pre>
-        <p class="sub">Datele de intrare = exact JSON-ul din <a href="/api/analiza-ai" target="_blank" rel="noopener">/api/analiza-ai</a>
-          (câmpul <code>date_intrare</code>). Analizele se arhivează zilnic.</p>
-      </details>`;
-  } catch (e) { card.style.display = "none"; }
+    <div class="cine">concluzie compusă automat din reguli explicite și valorile de mai jos · actualizat ${acum} ·
+      se reîmprospătează la 5 minute · fără interpretare AI</div>`;
 }
 
 /* ---------------------------------------------------- Copernicus EDO -- */
@@ -1534,8 +1483,7 @@ async function refreshData() {
    () => renderPFFacts(ov, afdj, hidmet),
    () => renderDelta(afdj),
    () => renderContraProbe(afdj, portal),
-   () => renderSinteza(ov.inhga),
-   renderAnalizaAI].forEach(safeRun);
+   () => renderSinteza(ov.inhga)].forEach(safeRun);
 }
 
 main();

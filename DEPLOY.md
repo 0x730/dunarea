@@ -152,8 +152,9 @@ daemon-XXXXXX` pe server arată de ce.
   zi); cheile permanente — arhiva locală — sunt protejate explicit.
 - Aplicația e read-only, fără autentificare și fără scriere din exterior.
   Cheile stau doar în env-ul daemonului și **nu** ajung în `cache.db`, în
-  răspunsuri sau în mesajele de eroare (verificat). Notă de transparență:
-  `/api/analiza-ai` publică intenționat promptul și datele de intrare ale
-  analizei AI — asta e prin design, nu o scurgere.
+  răspunsuri sau în mesajele de eroare (verificat). Analiza AI nu apare în UI,
+  nu rulează în fundal și nu poate fi pornită prin HTTP; se lansează local,
+  numai la cererea operatorului, cu `python3 analiza_ai.py`. Endpointul
+  `/api/analiza-ai` întoarce doar acest statut manual.
 - Dependența `h5py` (doar pentru gravimetria GRACE) e opțională: dacă
   instalarea eșuează, cardul respectiv se dezactivează singur, restul merge.

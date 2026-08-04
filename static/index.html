@@ -31,9 +31,8 @@
 <!-- ============================================================ sinteza -->
 <section id="sec-sinteza" data-view="acum">
   <div class="sinteza card" id="sinteza-card">
-    <div class="loading">se compune concluzia din datele de azi…</div>
+    <div class="loading">se compune concluzia din ultimele date disponibile…</div>
   </div>
-  <div class="card" id="ai-card" style="margin-top:14px; display:none"></div>
 </section>
 
 <!-- ================================================== buletinul de azi -->
@@ -77,8 +76,8 @@
     precipitații, iar o <b>abatere persistentă</b> între serii independente merită investigată.
     Detectoarele produc cifre verificabile, nu concluzii.</p>
   <div class="card">
-    <h3>Starea de azi față de ultimii ~30 de ani <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
-    <p class="sub">percentila zilei calendaristice (fereastră ±7 zile, referință 1991–anul trecut)</p>
+    <h3>Ultima stare disponibilă față de ultimii ~30 de ani <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
+    <p class="sub">percentila datei observației (fereastră calendaristică ±7 zile, referință 1991–anul trecut)</p>
     <div id="anom-strip" class="anom-strip"><div class="loading">se calculează…</div></div>
     <div class="anom-scale"><span>P0 · secetă</span><span class="g"></span><span>P100 · ape mari</span></div>
   </div>
@@ -100,7 +99,7 @@
 <!-- ================================================ context Copernicus EDO -->
 <section id="sec-edo" data-view="context">
   <p class="eyebrow">contextul terestru</p>
-  <h2>Seceta din bazin — două straturi Copernicus EDO</h2>
+  <h2>Starea bazinului — două straturi Copernicus EDO</h2>
   <p class="section-note">Hărți oficiale, decupate aproximativ pe coridorul bazinului
     Dunării. CDI combină precipitații, umiditatea solului și starea vegetației;
     anomalia de umiditate a solului este modelată față de propria climatologie.
@@ -150,8 +149,8 @@
 
 <!-- ================================================= sectorul românesc -->
 <section id="sec-tabele" data-view="acum">
-  <p class="eyebrow">azi, pe stații</p>
-  <h2>Cotele și debitele de azi</h2>
+  <p class="eyebrow">ultimele observații pe stații</p>
+  <h2>Cele mai recente cote și debite disponibile</h2>
   <p class="section-note">Stânga: cotele oficiale AFDJ pe sectorul românesc
     (cote negative = sub „zero-ul mirei", nu albie secată). Dreapta: stațiile din
     Serbia (RHMZ) — ultimele înainte de Porțile de Fier — și debitele măsurate acolo.</p>
@@ -169,10 +168,9 @@
   </div>
   <div style="height:22px"></div>
   <div class="card">
-    <h3>Avize oficiale către navigatori — punctele critice din albie <span class="prov prov-masurat">oficial</span></h3>
-    <p class="sub">„Notices to Skippers" active azi — restricțiile, dragajele și sectoarele cu
-      niveluri scăzute, cu kilometrajul exact: versiunea oficială a locurilor din fotografiile
-      cu albia dezvelită</p>
+    <h3>Avize oficiale către navigatori <span class="prov prov-masurat">oficial</span></h3>
+    <p class="sub">Ultimul set „Notices to Skippers” disponibil — restricții, dragaje,
+      obstacole și sectoare cu apă mică, cu perioada și kilometrajul declarate de emitent</p>
     <div id="tabel-avize"><div class="loading">se încarcă…</div></div>
   </div>
 </section>
@@ -209,7 +207,7 @@
 <section id="sec-statistici" data-view="context">
   <p class="eyebrow">cifrele</p>
   <h2>Statistici complete — anul curent față de istoric</h2>
-  <p class="section-note">Toate secțiunile și toate zonele, în două tabele: cât e azi,
+  <p class="section-note">Toate secțiunile și toate zonele, în două tabele: ultima valoare disponibilă,
     cât ar fi „normal" (mediana istorică a aceleiași zile/ferestre calendaristice) și
     unde se așază anul curent în clasamentul anilor. Se recalculează automat zilnic.
     <a href="/api/statistici.csv" download="dunarea-statistici.csv">Descarcă CSV</a> ·
@@ -222,7 +220,7 @@
   <div style="height:22px"></div>
   <div class="card">
     <h3>Precipitații pe zone <span class="prov prov-model">reanaliza ERA5 · referință 2000–anul trecut</span></h3>
-    <p class="sub">ian→azi = cumul de la 1 ianuarie până la ultima zi disponibilă; iarna = noiembrie–martie
+    <p class="sub">ian→ultima dată = cumul de la 1 ianuarie până la ultima zi disponibilă; iarna = noiembrie–martie
       · ninsoarea cumulată este un context, nu măsoară stratul rămas sau apa stocată în el</p>
     <div id="tabel-stat-precip"><div class="loading">se calculează…</div></div>
   </div>
@@ -365,7 +363,7 @@
     </div>
     <div class="card">
       <h3>Cotele oficiale pe brațe <span class="prov prov-masurat">măsurat</span></h3>
-      <p class="sub">AFDJ, azi — cote, nu debite</p>
+      <p class="sub">AFDJ, ultima citire disponibilă — cote, nu debite</p>
       <ul class="facts" id="delta-cote"><li><span class="loading">se încarcă…</span></li></ul>
     </div>
     <div class="card">
@@ -375,7 +373,7 @@
         <li><span class="k">canal Bâstroe</span><span class="v">derivație din brațul Chilia, pe teritoriul Ucrainei; adâncit în 2004 și re-dragat din 2022 pentru coridorul de export</span></li>
         <li><span class="k">debit Bâstroe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — fără măsurători ucrainene publice; se poate doar estima din bilanțul brațelor</span></li>
         <li><span class="k">distribuția pe brațe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> ca flux; există în rapoartele campaniilor INHGA/AFDJ și ale Comisiei Dunării</span></li>
-        <li><span class="k">verificabil azi</span><span class="v">cotele AFDJ pe Tulcea/Sulina oferă context de nivel; fără debite pe brațe nu pot cuantifica și nici atribui o eventuală deviere</span></li>
+        <li><span class="k">verificabil din ultima citire</span><span class="v">cotele AFDJ pe Tulcea/Sulina oferă context de nivel; fără debite pe brațe nu pot cuantifica și nici atribui o eventuală deviere</span></li>
       </ul>
     </div>
   </div>
@@ -395,10 +393,10 @@
     <table class="trans">
       <thead><tr><th>Verificarea</th><th>Surse folosite</th><th>Metodă și referință</th><th>Limite cunoscute</th></tr></thead>
       <tbody>
-        <tr><td class="what">Secetă hidrologică (14 secțiuni)</td>
+        <tr><td class="what">Regim hidrologic (14 secțiuni)</td>
           <td>GloFAS/Copernicus</td>
           <td>percentila empirică a zilei calendaristice, fereastră ±7 zile, referință 1991–anul trecut; serii „zile&lt;P10"</td>
-          <td>model, nu măsurătoare; bias absolut față de mire (~0,5–1,0×), dar consecvent în timp</td></tr>
+          <td>model, nu măsurătoare; biasul absolut față de mire diferă pe secțiuni, iar comparația validă este cu istoricul aceluiași model</td></tr>
         <tr><td class="what">Bilanț Baziaș → Gruia</td>
           <td>GloFAS (2 secțiuni)</td>
           <td>decalaj din corelația variațiilor zilnice; reziduu relativ pe 14 zile vs. distribuția lunii, 2015+; z-score</td>
@@ -406,7 +404,7 @@
         <tr><td class="what">INHGA ↔ model</td>
           <td>INHGA (arhiva buletinelor) + GloFAS</td>
           <td>raportul oficial/model pe 90 de zile; alarmă la ruptura raportului (z pe ultimele 7 zile)</td>
-          <td>bias stabil ~0,7–0,8 e normal; detectează schimbări, nu adevărul absolut</td></tr>
+          <td>un bias stabil poate fi normal; testul detectează schimbarea relației, nu stabilește adevărul absolut</td></tr>
         <tr><td class="what">Mire încrucișate RO</td>
           <td>AFDJ (XML) + DanubeSTREAM (6 țări)</td>
           <td>aceeași miră în două sisteme; mediană și maximum de abatere, 23 stații</td>
