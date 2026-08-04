@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import analiza_ai
 import anomalii
 import connectors as C
+import romania
 import server
 
 
@@ -70,6 +71,191 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertNotIn("record al ultimilor", app)
         self.assertIn("Number(m.raport_mediu) < 0.97", app)
         self.assertIn("fără interpretare AI", app)
+
+    def test_romania_page_is_dynamic_and_has_no_fixed_current_verdict(self):
+        root = Path(__file__).parents[1]
+        page = root.joinpath("static/index.html").read_text()
+        app = root.joinpath("static/app.js").read_text()
+
+        self.assertIn('href="/romania"', page)
+        self.assertIn('data-view="romania"', page)
+        self.assertIn("/api/romania", app)
+        self.assertIn("rare_not_unprecedented", app)
+        self.assertIn("nicio concluzie veche nu este păstrată", app)
+        self.assertIn('id="ro-operational-history"', page)
+        self.assertIn('id="ro-historical-thresholds"', page)
+        self.assertIn('id="ro-parameter-coverage"', page)
+        self.assertNotIn("1.450 m³/s", page.split('data-view="romania"', 1)[1])
+        self.assertNotIn("U1 oprită", page.split('data-view="romania"', 1)[1])
+
+
+class RomaniaProportionalityTests(unittest.TestCase):
+    @staticmethod
+    def archive():
+        pairs = [
+            ("2003-08-04", 3442.5), ("2003-08-25", 2354.1),
+            ("2011-08-04", 4500.0), ("2011-08-31", 4264.8),
+            ("2015-08-04", 3588.2), ("2015-08-21", 3068.0),
+            ("2022-08-04", 2617.2), ("2022-08-05", 2611.2),
+            ("2025-07-13", 2605.2), ("2025-08-04", 3300.0),
+            ("2026-07-20", 2800.0), ("2026-08-04", 2665.9),
+        ]
+        return {"time": [p[0] for p in pairs],
+                "discharge": [p[1] for p in pairs]}
+
+    @staticmethod
+    def stats(cern_pct=0.5, ro_last90=50, ro_ytd=20):
+        precip = []
+        for pid, zone in (("oltenia", "Oltenia"), ("muntenia", "Muntenia"),
+                          ("moldova_sud", "Sud-est"), ("delta", "Delta")):
+            precip.append({"id": pid, "zona": zone,
+                           "ultimele90": {"pct": ro_last90},
+                           "ian_azi": {"abatere_pct": ro_ytd}})
+        return {
+            "generat": "2026-08-04",
+            "debit": [
+                {"name": "Baziaș (intrarea în RO)", "azi_m3s": 1976,
+                 "percentila": 0, "zile_sub_p10": 43},
+                {"name": "Cernavodă (braț principal)", "azi_m3s": 2665.9,
+                 "percentila": cern_pct, "zile_sub_p10": 38},
+            ],
+            "precipitatii": precip,
+        }
+
+    @staticmethod
+    def snn(known=True):
+        if not known:
+            return {"data": {"needs_review": True, "status_available": False,
+                             "latest_report": {"title": "raport operațional nou",
+                                               "url": "https://nuclearelectrica.ro/new.pdf"}},
+                    "stale": False}
+        return {"data": {
+            "date": "2026-08-04", "status_available": True,
+            "status_fresh": True, "needs_review": False,
+            "water_related": True, "u1": "oprită controlat",
+            "u2": "capacitate nominală",
+            "latest_report": {"title": "status U2", "url": "https://nuclearelectrica.ro/status.pdf"},
+        }, "stale": False}
+
+    @staticmethod
+    def inputs():
+        afdj = {"statii": [{"statie": "Cernavoda", "cota_cm": -214,
+                            "variatie_cm": -1, "actualizat": "2026-08-04T03:00:00+03:00"}]}
+        inhga = {"debit_bazias_m3s": 1450, "media_multianuala_m3s": 3900,
+                 "data_buletin": "2026-08-04"}
+        sen = {"nuclear_mw": 680, "hidro_mw": 1370, "sold_mw": 1900,
+               "consum_mw": 6400, "actualizat": "26/8/4 23:00:00"}
+        return afdj, inhga, sen
+
+    def test_history_calls_current_rare_but_not_unprecedented(self):
+        out = romania.historical_cernavoda(self.archive(), "2026-08-04")
+
+        self.assertEqual(out["rank_low_to_high"], 2)
+        self.assertEqual(out["years_compared"], 6)
+        self.assertEqual(out["lower_years"], [{"year": 2022, "value_m3s": 2617.2}])
+        row_2003 = next(r for r in out["rows"] if r["year"] == 2003)
+        self.assertEqual(row_2003["august_min"]["value_m3s"], 2354.1)
+        self.assertFalse(row_2003["august_partial"])
+
+    def test_current_low_water_and_u1_impact_do_not_imply_national_crisis(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(self.stats(), self.archive(), afdj, inhga,
+                                   sen, self.snn(), "2026-08-04")
+        claims = {c["key"]: c for c in out["claims"]}
+
+        self.assertEqual(claims["physical"]["status"], "confirmed")
+        self.assertEqual(claims["rarity"]["status"], "rare_not_unprecedented")
+        self.assertEqual(claims["romania_scope"]["status"], "not_supported")
+        self.assertEqual(claims["cernavoda_impact"]["status"], "confirmed")
+        self.assertEqual(claims["national_energy_crisis"]["status"], "not_demonstrated")
+        self.assertIn("nu este demonstrată", out["headline"])
+        self.assertIn("snn_pdf_sha256", out["energy"])
+
+        operational = out["cernavoda"]["operational_history"]
+        self.assertEqual([row["year"] for row in operational],
+                         [2003, 2011, 2015, 2022, 2026])
+        self.assertEqual(operational[0]["classification"], "water_shutdown")
+        self.assertEqual(operational[1]["classification"], "operating")
+        self.assertEqual(operational[3]["classification"], "other_cause")
+        self.assertEqual(operational[1]["reference_date"], "2011-09-15")
+        self.assertIn("contextul hidrologic este GloFAS",
+                      operational[3]["source_scope"])
+        self.assertEqual(operational[-1]["classification"], "current_water_shutdown")
+        self.assertIn("Baziaș 1450", operational[-1]["hydrology"])
+
+        transparency = out["cernavoda"]["parameter_transparency"]
+        self.assertFalse(transparency["decision_reproducible"])
+        self.assertEqual(transparency["historical_2011"]["shutdown_levels_mdmb"][0]["value"], 2.5)
+        self.assertIn("reper istoric", transparency["historical_2011"]["validity"])
+        self.assertTrue(all(parameter["status"] == "missing"
+                            for parameter in transparency["decision_parameters"]))
+
+    def test_copy_reacts_to_normal_flow_national_dryness_and_unknown_snn_report(self):
+        afdj, inhga, sen = self.inputs()
+        inhga["debit_bazias_m3s"] = 3800
+        out = romania.build_report(
+            self.stats(cern_pct=50, ro_last90=4, ro_ytd=-30),
+            self.archive(), afdj, inhga, sen, self.snn(known=False), "2026-08-04")
+        claims = {c["key"]: c for c in out["claims"]}
+
+        self.assertEqual(claims["physical"]["status"], "not_supported")
+        self.assertEqual(claims["romania_scope"]["status"], "supported_component")
+        self.assertEqual(claims["cernavoda_impact"]["status"], "insufficient")
+        self.assertNotIn("U1 oprită", claims["cernavoda_impact"]["conclusion"])
+        self.assertEqual(out["cernavoda"]["operational_history"][-1]["classification"],
+                         "unknown")
+        bazias = next(signal for signal in
+                      out["cernavoda"]["parameter_transparency"]["public_signals"]
+                      if signal["key"] == "bazias")
+        self.assertEqual(bazias["value"], 3800)
+        self.assertEqual(bazias["context"], "97.4% din media lunii")
+
+    def test_current_operational_row_reacts_to_reconnection(self):
+        afdj, inhga, sen = self.inputs()
+        sen["nuclear_mw"] = 1350
+        snn = self.snn()
+        snn["data"].update({
+            "water_related": False,
+            "u1": "conectată la SEN",
+            "u2": "capacitate nominală",
+        })
+
+        out = romania.build_report(self.stats(), self.archive(), afdj, inhga,
+                                   sen, snn, "2026-08-04")
+        current = out["cernavoda"]["operational_history"][-1]
+
+        self.assertEqual(current["classification"], "current_official")
+        self.assertIn("U1: conectată la SEN", current["plant_action"])
+        self.assertNotIn("oprirea U1 asociată apei", current["interpretation"])
+
+    def test_new_operational_snn_pdf_is_not_silently_treated_as_audited(self):
+        page = (
+            '<a href="https://nuclearelectrica.ro/ir/wp-content/uploads/sites/3/2026/08/new.pdf">'
+            'Raport privind reconectarea Unitatii 1 CNE Cernavoda</a>'
+            '<a href="https://nuclearelectrica.ro/ir/wp-content/uploads/sites/3/2026/08/RC-Status-Update-U2-bvb.pdf">'
+            'Unitatea 2 CNE Cernavodă funcționează la capacitate nominală</a>')
+
+        parsed = C._parse_snn_cernavoda_reports(page)
+
+        self.assertEqual(parsed[0]["filename"], "new.pdf")
+        self.assertFalse(parsed[0]["audited"])
+        self.assertTrue(parsed[1]["audited"])
+
+    def test_changed_snn_pdf_invalidates_known_url_summary(self):
+        url = ("https://nuclearelectrica.ro/ir/wp-content/uploads/sites/3/2026/08/"
+               "RC-Status-Update-U2-bvb.pdf")
+        page = f'<a href="{url}">Unitatea 2 CNE Cernavodă funcționează la capacitate nominală</a>'
+
+        def no_cache(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False, "cache_age_s": 0}
+
+        with mock.patch.object(C, "cached", side_effect=no_cache), \
+                mock.patch.object(C, "http_get", side_effect=[page, b"changed-pdf"]):
+            out = C.snn_cernavoda_status()
+
+        self.assertTrue(out["data"]["needs_review"])
+        self.assertFalse(out["data"]["status_available"])
+        self.assertIn("s-a schimbat", out["data"]["reason"])
 
 
 class CacheTests(unittest.TestCase):

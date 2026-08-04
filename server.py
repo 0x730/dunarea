@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 import analiza_ai
 import anomalii
 import connectors as C
+import romania
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -220,6 +221,33 @@ def api_sen(q):
     return {**r["data"], "stale": r["stale"]}
 
 
+def api_romania(q):
+    """Testul de proporționalitate, recompus din sursele curente."""
+    def optional(fetch, fallback):
+        try:
+            return fetch()
+        except Exception:
+            return fallback
+
+    def build():
+        stats = _stats_cached()["data"]
+        archive = C.glofas_archive("cernavoda", romania.MODEL_START_YEAR)["data"]
+        afdj = optional(lambda: C.afdj_cote()["data"], {"statii": []})
+        inhga = optional(lambda: C.inhga_bulletin()["data"], {})
+        sen = optional(lambda: C.sen_live()["data"], {})
+        snn = optional(C.snn_cernavoda_status, {
+            "data": {"status_available": False, "needs_review": False,
+                     "status_fresh": False,
+                     "reason": "lista oficială SNN nu a răspuns"},
+            "stale": True,
+        })
+        return romania.build_report(stats, archive, afdj, inhga, sen, snn)
+
+    result = C.cached("romania_proportionality:v5", 5 * 60, build)
+    return {**result["data"], "stale": result["stale"],
+            "cache_age_s": result.get("cache_age_s")}
+
+
 def api_danubeportal(q):
     r = C.danubeportal_gauges()
     return {**r["data"], "stale": r["stale"]}
@@ -303,7 +331,8 @@ def api_raport(q):
                      ("copernicus_land", lambda: C.copernicus_land_context()["data"]),
                      ("catalog_sateliti", lambda: C.earthdata_satellite_catalog()["data"]),
                      ("registru_provenienta", C.evidence_source_registry),
-                     ("sen", lambda: C.sen_live()["data"])):
+                     ("sen", lambda: C.sen_live()["data"]),
+                     ("romania", lambda: api_romania({}))):
         try:
             out["sectiuni"][nume] = fn()
         except Exception as exc:
@@ -340,6 +369,7 @@ ROUTES = {
     "/api/statistici": api_statistici,
     "/api/statistici.csv": api_statistici_csv,
     "/api/sen": api_sen,
+    "/api/romania": api_romania,
     "/api/danubeportal": api_danubeportal,
     "/api/dahiti": api_dahiti,
     "/api/hydroweb": api_hydroweb,
@@ -374,7 +404,7 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
        "form-action 'none'; frame-ancestors 'none'")
 
-PAGE_PATHS = {"/", "/bazin", "/integritate", "/sectoare", "/optiuni"}
+PAGE_PATHS = {"/", "/romania", "/bazin", "/integritate", "/sectoare", "/optiuni"}
 
 
 class Handler(BaseHTTPRequestHandler):

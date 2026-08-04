@@ -6,10 +6,12 @@
 const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });
+const fmt2 = new Intl.NumberFormat("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /* ---------------------------------------- vederi și navigație internă -- */
 const VIEW_LABELS = {
   acum: "Acum",
+  romania: "România & Cernavodă",
   context: "Bazin & istoric",
   integritate: "Verificări & surse",
   sectoare: "Porțile de Fier & Delta",
@@ -17,6 +19,7 @@ const VIEW_LABELS = {
 };
 const VIEW_PATHS = {
   acum: "/",
+  romania: "/romania",
   context: "/bazin",
   integritate: "/integritate",
   sectoare: "/sectoare",
@@ -1420,6 +1423,209 @@ async function renderEdo() {
   }
 }
 
+/* -------------------------------------- test de proporționalitate România -- */
+const RO_CLAIM_STYLE = {
+  confirmed: ["normal", "confirmat"],
+  model_signal: ["atentie", "semnal de model"],
+  model_record: ["atentie", "minim în seria modelului"],
+  rare_not_unprecedented: ["atentie", "rar, nu fără precedent"],
+  not_exceptional: ["info", "nu este excepțional"],
+  not_supported: ["info", "nu este susținut"],
+  supported_component: ["atentie", "componentă susținută"],
+  mixed: ["info", "semnal mixt"],
+  not_current: ["normal", "nu apare acum"],
+  not_demonstrated: ["info", "nedemonstrat"],
+  insufficient: ["info", "date insuficiente"],
+};
+
+function roClaimChip(status) {
+  const [style, label] = RO_CLAIM_STYLE[status] || ["info", status || "necunoscut"];
+  return `<span class="sev sev-${style}">${label}</span>`;
+}
+
+const RO_OPERATION_STYLE = {
+  water_shutdown: ["sever", "da · apă"],
+  current_water_shutdown: ["sever", "da · apă, curent"],
+  operating: ["normal", "nu · funcționare normală"],
+  other_cause: ["atentie", "oprire · altă cauză oficială"],
+  current_official: ["normal", "stare curentă oficială"],
+  unknown: ["info", "stare neverificată"],
+};
+
+function roOperationChip(status) {
+  const [style, label] = RO_OPERATION_STYLE[status] || ["info", status || "necunoscut"];
+  return `<span class="sev sev-${style}">${label}</span>`;
+}
+
+async function renderRomania() {
+  const li = (k, v) => `<li><span class="k">${k}</span><span class="v">${v}</span></li>`;
+  let d;
+  try {
+    d = await jget("/api/romania");
+  } catch (e) {
+    $("ro-headline").innerHTML = `<div class="err-box">Analiza România nu a putut fi recompusă acum; nicio concluzie veche nu este păstrată ca stare curentă.</div>`;
+    ["ro-claims", "ro-cernavoda-facts", "ro-cne-facts", "ro-history-table",
+      "ro-operational-history", "ro-historical-thresholds", "ro-parameter-coverage",
+      "ro-sen-facts", "ro-energy-test", "ro-rain", "ro-missing"].forEach((id) => {
+        $(id).innerHTML = `<div class="err-box">date indisponibile</div>`;
+      });
+    pill("România", "err");
+    return;
+  }
+
+  $("ro-headline").innerHTML = `
+    <p class="proportionality-title">${d.headline}</p>
+    <div class="cine">reguli deterministe · date ${d.generated} · ${d.stale ? "cache vechi" : "recompus din sursele curente"} · fără analiză AI</div>`;
+
+  $("ro-claims").innerHTML = (d.claims || []).map((claim) => `
+    <article class="card ro-claim">
+      <div class="chips">${roClaimChip(claim.status)}</div>
+      <h3>${claim.label}</h3>
+      <p>${claim.conclusion}</p>
+      <p class="claim-limit"><b>Limită:</b> ${claim.limit}</p>
+    </article>`).join("");
+
+  const model = d.cernavoda?.model || {};
+  const gauge = d.cernavoda?.gauge;
+  const history = d.cernavoda?.history || {};
+  $("ro-cernavoda-facts").innerHTML = [
+    li("debit în celula GloFAS", model.azi_m3s != null
+      ? `<b>${fmtN.format(model.azi_m3s)} m³/s</b> · P${fmtV(model.percentila, fmt1)} · ${fmtV(model.zile_sub_p10)} zile sub P10 <span class="prov prov-model">model</span>`
+      : `<span class="prov prov-lipsa">indisponibil</span>`),
+    li("cotă miră AFDJ", gauge?.cota_cm != null
+      ? `<b>${fmtN.format(gauge.cota_cm)} cm</b> · variație ${fmtV(gauge.variatie_cm)} cm · ${gauge.actualizat || "dată lipsă"} <span class="prov prov-masurat">măsurat</span>`
+      : `<span class="prov prov-lipsa">indisponibilă</span>`),
+    li("atenție la cotă", d.cernavoda?.gauge_warning || "zero-ul mirei nu este documentat aici"),
+    li("bazin de aspirație CNE", d.cernavoda?.intake_basin?.available
+      ? `<b>disponibil</b>`
+      : `<span class="prov prov-lipsa">nepublicat în flux</span> · ${d.cernavoda?.intake_basin?.reason || "date lipsă"}`),
+  ].join("");
+
+  const en = d.energy || {};
+  const reportLink = en.snn_report_url
+    ? `<a href="${en.snn_report_url}" target="_blank" rel="noopener">${en.snn_report_title || "raport SNN"}</a>`
+    : "raport comparabil indisponibil";
+  $("ro-cne-facts").innerHTML = [
+    li("ultimul raport relevant", `${reportLink}${en.snn_report_date ? ` · ${en.snn_report_date}` : ""}`),
+    li("Unitatea 1", en.u1 ? `<b>${en.u1}</b>` : `<span class="prov prov-lipsa">stare neverificată</span>`),
+    li("Unitatea 2", en.u2 ? `<b>${en.u2}</b>` : `<span class="prov prov-lipsa">stare neverificată</span>`),
+    li("integritate PDF", en.snn_pdf_sha256
+      ? `<span class="sev sev-normal">SHA-256 verificat</span> · <span class="mono-hash">${en.snn_pdf_sha256.slice(0, 12)}…</span>`
+      : `<span class="sev sev-info">neverificată</span>`),
+    li("prospețime", en.snn_needs_review
+      ? `<span class="sev sev-atentie">raport nou de revizuit</span>`
+      : en.snn_status_fresh && !en.snn_stale_cache
+        ? `<span class="sev sev-normal">raport proaspăt și revizuit</span>`
+        : `<span class="sev sev-info">starea poate fi veche</span>`),
+  ].join("");
+
+  const rank = history.rank_low_to_high;
+  $("ro-history-summary").innerHTML = rank != null
+    ? `La ${history.as_of}, valoarea curentă este a <b>${rank}-a cea mai mică</b> din ${history.years_compared} valori disponibile pentru aceeași zi. ${history.lower_years?.length
+      ? `Mai jos: ${history.lower_years.map((row) => `${row.year} (${fmtN.format(row.value_m3s)} m³/s)`).join(", ")}.`
+      : "Niciun an disponibil nu este mai jos pe aceeași dată."} Rang în model, nu record hidrometric.`
+    : "Seria nu permite calcularea rangului pentru data curentă.";
+  $("ro-history-table").innerHTML = `
+    <table class="data ro-history">
+      <thead><tr><th>An</th><th class="num">Aceeași zi</th><th class="num">Minim 1 iun.–această dată</th><th class="num">Minim august</th></tr></thead>
+      <tbody>${(history.rows || []).map((row) => `<tr${row.year === Number((history.as_of || "").slice(0, 4)) ? ` class="current-year"` : ""}>
+        <td class="name">${row.year}</td>
+        <td class="num">${row.same_day_m3s != null ? `${fmtN.format(row.same_day_m3s)} m³/s` : "–"}</td>
+        <td class="num">${row.summer_to_date_min ? `${fmtN.format(row.summer_to_date_min.value_m3s)} · ${row.summer_to_date_min.date.slice(5)}` : "–"}</td>
+        <td class="num">${row.august_min ? `${fmtN.format(row.august_min.value_m3s)} · ${row.august_min.date.slice(5)}${row.august_partial ? " *" : ""}` : "–"}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+    <p class="sub">* anul curent: luna este incompletă. ${history.method || ""}</p>`;
+
+  const operationRows = d.cernavoda?.operational_history || [];
+  $("ro-operational-history").innerHTML = operationRows.length ? `
+    <table class="data ro-operational-table">
+      <thead><tr><th>An / data probei</th><th>Context documentat</th><th>Acțiunea CNE</th><th>Ce putem conchide</th><th>Sursă și acoperire</th></tr></thead>
+      <tbody>${operationRows.map((row) => {
+        const source = row.source?.url
+          ? `<a href="${row.source.url}" target="_blank" rel="noopener">${row.source.label || "sursa oficială"}</a>`
+          : `<span class="prov prov-lipsa">sursă curentă indisponibilă</span>`;
+        return `<tr${row.current ? ` class="current-year"` : ""}>
+          <td class="name">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
+          <td>${row.hydrology}</td>
+          <td>${roOperationChip(row.classification)}<br><span class="table-detail">${row.plant_action}</span></td>
+          <td>${row.interpretation}</td>
+          <td>${source}<br><span class="table-detail">${row.source_scope || "acoperire neprecizată"}</span></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>` : `<div class="err-box">istoricul operațional nu este disponibil</div>`;
+
+  const transparency = d.cernavoda?.parameter_transparency || {};
+  const old = transparency.historical_2011 || {};
+  const oldSource = old.source?.url
+    ? `<a href="${old.source.url}" target="_blank" rel="noopener">${old.source.label || "SNN"}</a>`
+    : "sursă indisponibilă";
+  $("ro-historical-thresholds").innerHTML = old.published ? `
+    <ul class="facts">
+      ${li("nivel la comunicat", `<b>${fmtV(old.intake_basin_level_mdmb, fmt2)} mdMB</b>`)}
+      ${li("interval uzual publicat", `<b>${fmtV(old.usual_level_mdmb?.min, fmt1)}–${fmtV(old.usual_level_mdmb?.max, fmt1)} mdMB</b>`)}
+      ${(old.shutdown_levels_mdmb || []).map((threshold) => li(threshold.scope,
+        `<b>${fmtV(threshold.value, fmt2)} mdMB</b>`)).join("")}
+      ${li("pompe speciale de răcire", `aproximativ <b>${fmtV(old.special_cooling_pumps_around_mdmb, fmt1)} mdMB</b>`)}
+      ${li("sursă", `${oldSource} · ${old.published}`)}
+    </ul>
+    <p class="threshold-warning"><b>Nu este prag curent:</b> ${old.validity}</p>`
+    : `<div class="err-box">reperul istoric nu este disponibil</div>`;
+
+  const signalValue = (signal) => signal.value != null
+    ? `<b>${fmtN.format(signal.value)} ${signal.unit || ""}</b>`
+    : `<span class="prov prov-lipsa">indisponibil</span>`;
+  const parameters = transparency.decision_parameters || [];
+  $("ro-parameter-coverage").innerHTML = `
+    <p class="parameter-verdict"><b>${transparency.verdict || "Acoperirea nu poate fi evaluată."}</b></p>
+    <h4>Ce reflectă valorile monitorului</h4>
+    <ul class="facts compact-facts">${(transparency.public_signals || []).map((signal) =>
+      li(signal.label, `${signalValue(signal)} · ${signal.context}<br><span class="table-detail">${signal.what_it_proves}</span>`)
+    ).join("")}</ul>
+    <h4>Ce lipsește din decizia tehnică</h4>
+    <ul class="parameter-list">${parameters.map((parameter) => `<li>
+      <span class="sev sev-${parameter.status === "available" ? "normal" : "info"}">${parameter.status === "available" ? "public" : "nepublicat"}</span>
+      <b>${parameter.name}</b><br><span>${parameter.basis}</span><br><small>${parameter.kind}</small>
+    </li>`).join("")}</ul>`;
+
+  $("ro-sen-facts").innerHTML = [
+    li("nuclear", `<b>${fmtV(en.nuclear_mw)} MW</b> · ${en.nuclear_unit_equivalent || "stare neclară"}`),
+    li("hidro", `<b>${fmtV(en.hydro_mw)} MW</b> · toate centralele hidro din SEN`),
+    li("sold", en.imports_mw != null
+      ? `<b>${fmtN.format(en.imports_mw)} MW</b> ${en.imports_mw >= 0 ? "import" : "export"}${en.imports_share_consumption_pct != null ? ` · ${fmt1.format(en.imports_share_consumption_pct)}% din consum` : ""}`
+      : "–"),
+    li("actualizat", `${en.sen_updated || "–"} <span class="prov prov-masurat">măsurat</span>`),
+  ].join("");
+
+  const energyClaim = (d.claims || []).find((claim) => claim.key === "national_energy_crisis");
+  $("ro-energy-test").innerHTML = energyClaim ? `
+    <div class="chips">${roClaimChip(energyClaim.status)}</div>
+    <p><b>${energyClaim.conclusion}</b></p>
+    <p class="claim-limit">${energyClaim.limit}</p>
+    <ul class="check-list">
+      <li class="ok">starea unităților: verificată separat prin SNN, dacă raportul este proaspăt</li>
+      <li class="missing">rezerve și adecvanță SEN: lipsesc din flux</li>
+      <li class="missing">prețuri și comparație istorică a importurilor: lipsesc din această versiune</li>
+      <li class="missing">măsuri oficiale de urgență sau consum întrerupt: neidentificate în datele ingerate</li>
+    </ul>` : `<div class="err-box">test indisponibil</div>`;
+
+  const rainClaim = (d.claims || []).find((claim) => claim.key === "romania_scope");
+  const rainPoints = rainClaim?.evidence?.points || [];
+  $("ro-rain").innerHTML = rainClaim ? `
+    <div class="chips">${roClaimChip(rainClaim.status)}</div>
+    <p>${rainClaim.conclusion}</p>
+    <table class="data"><thead><tr><th>Zonă</th><th class="num">P90 zile</th><th class="num">Ian.–azi</th></tr></thead>
+      <tbody>${rainPoints.map((point) => `<tr><td class="name">${point.zone}</td>
+        <td class="num">P${fmtV(point.last90_percentile, fmt1)}</td>
+        <td class="num">${point.ytd_deviation_pct > 0 ? "+" : ""}${fmtV(point.ytd_deviation_pct, fmt1)}%</td></tr>`).join("")}</tbody>
+    </table>
+    <p class="claim-limit"><b>Limită:</b> ${rainClaim.limit}</p>` : `<div class="err-box">date indisponibile</div>`;
+
+  $("ro-missing").innerHTML = (d.missing_for_national_verdict || [])
+    .map((item, index) => li(`${index + 1}`, item)).join("") || li("stare", "lista nu este disponibilă");
+  pill("România", d.stale ? "stale" : "ok");
+}
+
 /* ---------------------------------------------------------------- main -- */
 async function main() {
   setupViewNavigation();
@@ -1441,6 +1647,7 @@ async function main() {
 
   refreshData();
   safeRun(renderEdo);
+  safeRun(renderRomania);
   // fluxul continuu: zona de date se recompune singură la 5 minute
   setInterval(refreshData, 5 * 60 * 1000);
 }

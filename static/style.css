@@ -132,6 +132,54 @@ section > h2 {
 .sinteza p b { color: var(--ink); }
 .sinteza .cine { font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin-top: 10px; }
 
+/* ------------------------------------------ proporționalitate România */
+.proportionality-head {
+  border-left: 4px solid var(--warning); padding: 22px 24px;
+}
+.proportionality-title {
+  margin: 0 0 8px; max-width: 95ch; color: var(--ink);
+  font-size: 18px; line-height: 1.5; font-weight: 650;
+}
+.proportionality-head .cine {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+}
+.ro-claim { display: flex; flex-direction: column; gap: 8px; }
+.ro-claim .chips, #ro-energy-test .chips, #ro-rain .chips { margin-bottom: 2px; }
+.ro-claim p, #ro-energy-test p, #ro-rain p { margin: 3px 0; }
+.claim-limit {
+  margin-top: auto !important; padding-top: 9px; border-top: 1px solid var(--grid);
+  color: var(--muted); font-size: 12px;
+}
+.claim-limit b { color: var(--ink-2); }
+.ro-history tr.current-year td,
+.ro-operational-table tr.current-year td { color: var(--ink); background: rgba(57, 135, 229, .08); }
+.ro-operational-table { min-width: 980px; }
+.ro-operational-table th:nth-child(1) { width: 80px; }
+.ro-operational-table th:nth-child(2) { width: 22%; }
+.ro-operational-table th:nth-child(3) { width: 25%; }
+.ro-operational-table th:nth-child(4) { width: 27%; }
+.table-detail { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.threshold-warning, .parameter-verdict {
+  margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--warning);
+  background: rgba(250,178,25,.06); color: var(--ink-2); font-size: 12.5px;
+}
+.threshold-warning b, .parameter-verdict b { color: var(--ink); }
+#ro-parameter-coverage h4 { margin: 18px 0 6px; color: var(--ink); font-size: 13px; }
+.compact-facts .k { min-width: 175px; }
+.parameter-list { margin: 0; padding: 0; list-style: none; }
+.parameter-list li { padding: 9px 0; border-bottom: 1px solid var(--grid); color: var(--ink-2); font-size: 12.5px; }
+.parameter-list li:last-child { border-bottom: 0; }
+.parameter-list li .sev { display: inline-block; margin: 0 7px 5px 0; }
+.parameter-list li b { color: var(--ink); }
+.parameter-list li small { color: var(--muted); }
+.check-list { margin: 12px 0 0; padding: 0; list-style: none; }
+.check-list li { padding: 6px 0 6px 22px; position: relative; border-bottom: 1px solid var(--grid); }
+.check-list li:last-child { border-bottom: 0; }
+.check-list li::before { position: absolute; left: 0; font-family: var(--mono); }
+.check-list li.ok::before { content: "✓"; color: var(--good); }
+.check-list li.missing::before { content: "○"; color: var(--warning); }
+.mono-hash { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
 /* ---------------------------------------------------------------- hero */
 .hero {
   display: grid; grid-template-columns: minmax(260px, 380px) 1fr;

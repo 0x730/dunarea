@@ -1239,6 +1239,147 @@ def sen_live():
     return cached("sen", 300, fetch)
 
 
+# ------------------------- CNE Cernavodă: rapoarte curente oficiale SNN ----
+# Pagina IR este lista canonică a rapoartelor curente. Titlurile permit să
+# detectăm imediat apariția unui document nou, dar cauza și starea exactă pot
+# fi numai în PDF. Pentru documentele revizuite manual păstrăm un rezumat
+# structurat și datat; dacă SNN publică un raport Cernavodă necunoscut, NU
+# propagăm automat vechiul verdict — îl marcăm pentru revizuire.
+
+SNN_CURRENT_REPORTS_URL = "https://nuclearelectrica.ro/ir/rapoarte-curente/"
+SNN_AUDITED_CERNAVODA_REPORTS = {
+    "RC-Status-Update-U2-bvb.pdf": {
+        "date": "2026-08-04",
+        "sha256": "786f7df06ba8f4dcfeb2b05661b6e98b4ebf1d0149a220e31740983d581de16f",
+        "u1": "oprită controlat",
+        "u2": "capacitate nominală",
+        "u1_cause": "parametri de exploatare legați de nivelul foarte scăzut al Dunării",
+        "water_related": True,
+        "note": "U2 continuă să funcționeze; U1 rămâne oprită până când nivelul permite reconectarea.",
+    },
+    "RC-SNN_raport-curent-Unitatea-2-CNE-Cernavoda-ramane-conectata-la-SEN-bvb.pdf": {
+        "date": "2026-07-30",
+        "sha256": "773e1828b96ab174961cfc0ee2becdee523b17dc845054ab66863a859fb17f9e",
+        "u1": "oprită controlat",
+        "u2": "conectată la SEN",
+        "u1_cause": "parametri de exploatare legați de nivelul foarte scăzut al Dunării",
+        "water_related": True,
+        "note": "Analiza parametrilor a permis menținerea U2 conectată.",
+    },
+    "RC-SNN_raport-curent-oprire-u-2-bvb-.pdf": {
+        "date": "2026-07-29",
+        "sha256": "0d103f141595248ffdb06540b17af0f775ff8b8821e60668acbf25a1699ff68e",
+        "u1": "oprită controlat",
+        "u2": "oprire controlată anunțată condiționat",
+        "u1_cause": "parametri de exploatare legați de nivelul foarte scăzut al Dunării",
+        "water_related": True,
+        "note": "Raportul anunța o posibilă oprire U2; un raport ulterior poate schimba starea.",
+    },
+    "RC-SNN_raport-curent-debit-dunare-bvb.pdf": {
+        "date": "2026-07-27",
+        "sha256": "3a0120e0cf0f290b43838952644e14fead8709fdeeee817ad865d07f2ae69ace",
+        "u1": "oprire controlată anunțată",
+        "u2": "nespecificată în rezumat",
+        "u1_cause": "parametri de exploatare legați de nivelul foarte scăzut al Dunării",
+        "water_related": True,
+        "note": "Oprirea U1 a fost anunțată pentru 28 iulie 2026.",
+    },
+    "RC-Reconectare-U1-CNE-Cernavoda.pdf": {
+        "date": "2026-07-05",
+        "sha256": "4814c18c12663f0d593a6941dbe7ce8b5269d7ecde2b88bb60e9ee86be651b4a",
+        "u1": "reconectată la SEN",
+        "u2": "nespecificată în rezumat",
+        "u1_cause": None,
+        "water_related": False,
+        "note": "Reconectare după oprirea planificată din 2026; nu este raportul despre episodul de ape mici.",
+    },
+}
+
+
+def _parse_snn_cernavoda_reports(page):
+    items = []
+    for href, label in re.findall(
+            r'<a\s+[^>]*href=["\'](https://nuclearelectrica\.ro/[^"\']+\.pdf)["\'][^>]*>(.*?)</a>',
+            page, re.S | re.I):
+        title = _strip_tags(label).strip()
+        normalized = title.lower().replace("ă", "a").replace("â", "a")
+        if "/2026/" not in href:
+            continue
+        if not ("cernavod" in normalized or
+                re.search(r"unitat(?:ea|ii)\s*[12]\b", normalized)):
+            continue
+        if not any(term in normalized for term in (
+                "oprir", "reconect", "deconect", "ramane conectat",
+                "functione", "capacitate nominal", "nivel", "debit dun")):
+            continue
+        filename = urllib.parse.unquote(urllib.parse.urlparse(href).path.rsplit("/", 1)[-1])
+        audited = SNN_AUDITED_CERNAVODA_REPORTS.get(filename)
+        items.append({
+            "title": re.sub(r"\s+", " ", title),
+            "url": href,
+            "filename": filename,
+            "audited": audited is not None,
+            **({"audit_date": audited["date"]} if audited else {}),
+        })
+    return items
+
+
+def snn_cernavoda_status():
+    def fetch():
+        page = http_get(SNN_CURRENT_REPORTS_URL, timeout=25)
+        reports = _parse_snn_cernavoda_reports(page)
+        if not reports:
+            raise RuntimeError("nu găsesc rapoarte Cernavodă în lista SNN")
+
+        latest = reports[0]
+        audited = SNN_AUDITED_CERNAVODA_REPORTS.get(latest["filename"])
+        if not audited:
+            return {
+                "source_page": SNN_CURRENT_REPORTS_URL,
+                "latest_report": latest,
+                "needs_review": True,
+                "status_available": False,
+                "reason": "SNN a publicat un raport Cernavodă nou; conținutul nu a fost încă revizuit.",
+                "recent_reports": reports[:6],
+            }
+        try:
+            raw = http_get(latest["url"], timeout=25, binary=True)
+            actual_sha256 = hashlib.sha256(raw).hexdigest()
+        except Exception:
+            return {
+                "source_page": SNN_CURRENT_REPORTS_URL,
+                "latest_report": latest,
+                "needs_review": True,
+                "status_available": False,
+                "reason": "PDF-ul SNN nu a putut fi reverificat; rezumatul anterior nu este folosit.",
+                "recent_reports": reports[:6],
+            }
+        if actual_sha256 != audited["sha256"]:
+            return {
+                "source_page": SNN_CURRENT_REPORTS_URL,
+                "latest_report": latest,
+                "needs_review": True,
+                "status_available": False,
+                "pdf_sha256": actual_sha256,
+                "reason": "Conținutul PDF-ului SNN s-a schimbat la același URL; necesită reverificare.",
+                "recent_reports": reports[:6],
+            }
+        age_days = max(0, (date.today() - date.fromisoformat(audited["date"])).days)
+        return {
+            "source_page": SNN_CURRENT_REPORTS_URL,
+            "latest_report": latest,
+            "needs_review": False,
+            "status_available": True,
+            "status_fresh": age_days <= 3,
+            "age_days": age_days,
+            **{key: value for key, value in audited.items() if key != "sha256"},
+            "pdf_sha256": actual_sha256,
+            "recent_reports": reports[:6],
+        }
+
+    return cached("snn_cernavoda:v2", 30 * 60, fetch)
+
+
 # ------------------------------------------- DAHITI (altimetrie satelitară) --
 # Niveluri măsurate din satelit (TU München) — independent de orice institut
 # național. Cont + cheie gratuite: dahiti.dgfi.tum.de → Register → API key.

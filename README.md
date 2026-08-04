@@ -5,6 +5,17 @@ oficiale despre Dunăre, de la Ingolstadt (Germania) până la Sulina — și sp
 pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată** sau
 **nepublicată în sursele revizuite**.
 
+Vederea `/romania` aplică un test determinist de proporționalitate: separă
+severitatea Dunării, impactul confirmat la CNE Cernavodă și criticitatea
+Sistemului Energetic Național. Comparația cu anii anteriori folosește aceeași
+celulă GloFAS și aceeași zi/fereastră calendaristică; nu o prezintă drept
+istoric al bazinului de aspirație al centralei. Separat, o matrice operațională
+leagă episoadele 2003, 2011, 2015 și 2022 de acțiunea publicată de SNN, iar
+starea anului curent este acceptată numai din raportul proaspăt verificat.
+Pragurile în mdMB publicate de SNN în 2011 sunt marcate exclusiv drept reper
+istoric; monitorul arată explicit că debitul Baziaș, mira AFDJ, GloFAS și
+producția SEN nu reproduc nivelul și limitele curente ale bazinului de aspirație.
+
 ## Pornire
 
 ```bash
@@ -75,6 +86,7 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [ENTSO-E Transparency](https://transparency.entsoe.eu) (opțional) | producție pe unități ≥100 MW (PF I) | orar, cu întârziere | măsurat |
 | [DanubeSTREAM](https://www.danubeportal.com) (FAIRway) | mirele de navigație din toate țările riverane (~100 stații AT/SK/HU/RS/RO/BG) + cross-check automat cu AFDJ | cvasi-orar | măsurat |
 | [Transelectrica SEN](https://www.transelectrica.ro/sen-grafic) | producția pe surse (hidro, nuclear/CNE), linia Djerdap, sold | timp real | măsurat |
+| [SNN — rapoarte curente](https://nuclearelectrica.ro/ir/rapoarte-curente/) | starea oficială a unităților CNE și cauza declarată de operator | la eveniment | oficial; rezumat auditat și datat |
 | [hydroweb.next](https://hydroweb.next.theia-land.fr) (cheie în `data/keys/hydroweb.key`) | niveluri din altimetrie satelitară (Sentinel-3/6, SWOT) pe stații virtuale Dunăre, cu percentila proprie | la trecerea satelitului | măsurat din orbită |
 | [DAHITI](https://dahiti.dgfi.tum.de) (opțional, `DAHITI_KEY=`) | rezervă la hydroweb.next, aceleași tipuri de date | la trecerea satelitului | măsurat din orbită |
 | [NASA OPERA DSWx-S1/HLS](https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1) via GIBS | întinderea apei din radar Sentinel-1 și optic Landsat/Sentinel-2, pe trei zone de control | la trecerea satelitului | observație clasificată, **shadow** |
@@ -103,6 +115,14 @@ Aplicația își construiește automat **arhiva locală**: un snapshot pe zi pen
 AFDJ, RHMZ, Hydroinfo, DanubeHIS, DanubeSTREAM, SEN, HydroWeb, OPERA și buletinele INHGA
 (`/api/istoric` arată stadiul).
 Cu fiecare zi de rulare, detectoarele capătă serie măsurată proprie.
+
+Pentru rapoartele SNN, titlul și URL-ul sunt detectate automat, dar starea și
+cauza sunt publicate numai pentru un PDF revizuit, cu amprenta SHA-256
+neschimbată. Apariția unui raport
+operațional Cernavodă necunoscut invalidează rezumatul anterior și afișează
+„de revizuit”; la fel și modificarea PDF-ului sub același URL. Nu păstrează o
+stare veche ca fapt curent. După trei zile fără
+o actualizare comparabilă, starea este marcată prudent ca posibil veche.
 
 Neintegrate, cu motivul la vedere: SHMU Slovacia (public doar niveluri, deja
 acoperite prin DanubeSTREAM), hidrologia ucraineană (fără endpoint public — a
@@ -158,6 +178,7 @@ verificabile, nu acuzații.
 server.py        server HTTP (stdlib) + rutele /api/*
 connectors.py    conectorii către surse + cache SQLite cu TTL
 anomalii.py      detectoarele și screeningurile de anomalii
+romania.py       testul determinist România/Cernavodă și comparația istorică
 static/          frontend (HTML/CSS/JS + ECharts vendorizat)
 cache.db         cache local (generat la rulare)
 ```
@@ -172,4 +193,5 @@ cache.db         cache local (generat la rulare)
 `/api/pegel/stations` · `/api/pegel/series?uuid=&param=W|Q&days=` ·
 `/api/glofas/recent?point=&days=` · `/api/glofas/years?point=&start=` ·
 `/api/precip?point=&start=` · `/api/delta` · `/api/entsoe` · `/api/points` ·
-`/api/anomalii` · `/api/inhga/serie?days=` · `/api/statistici` (+`.csv` pentru export)
+`/api/anomalii` · `/api/romania` · `/api/inhga/serie?days=` ·
+`/api/statistici` (+`.csv` pentru export)

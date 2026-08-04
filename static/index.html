@@ -20,6 +20,7 @@
   <span class="view-nav-label">Vedere</span>
   <div class="view-nav-links">
     <a href="/" data-view-link="acum">Acum</a>
+    <a href="/romania" data-view-link="romania">România &amp; Cernavodă</a>
     <a href="/bazin" data-view-link="context">Bazin &amp; istoric</a>
     <a href="/integritate" data-view-link="integritate">Verificări &amp; surse</a>
     <a href="/sectoare" data-view-link="sectoare">Porțile de Fier &amp; Delta</a>
@@ -32,6 +33,105 @@
 <section id="sec-sinteza" data-view="acum">
   <div class="sinteza card" id="sinteza-card">
     <div class="loading">se compune concluzia din ultimele date disponibile…</div>
+  </div>
+</section>
+
+<!-- ================================= testul de proporționalitate România -->
+<section id="sec-romania-verdict" data-view="romania">
+  <p class="eyebrow">test de realitate · România</p>
+  <h2>Ce este confirmat, ce este exagerat și ce nu știm încă</h2>
+  <p class="section-note">Analiza nu pornește de la verdictul „criză” sau „criză
+    contrafăcută”. Verifică separat fenomenul fizic, efectele observate și criticitatea
+    energetică națională. O verigă lipsă nu este completată prin presupuneri.</p>
+  <div class="card proportionality-head" id="ro-headline">
+    <div class="loading">se recompune din datele curente…</div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="grid-3" id="ro-claims">
+    <div class="card"><div class="loading">se verifică afirmațiile…</div></div>
+  </div>
+</section>
+
+<section id="sec-romania-cernavoda" data-view="romania">
+  <p class="eyebrow">cazul critic</p>
+  <h2>Cernavodă — patru valori care nu trebuie confundate</h2>
+  <p class="section-note">Debitul modelat al fluviului, cota mirei AFDJ, nivelul
+    bazinului de aspirație al centralei și producția nucleară sunt mărimi diferite.
+    Legătura dintre ele este afirmată numai când operatorul o confirmă.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Hidrologie locală și limita măsurării</h3>
+      <ul class="facts" id="ro-cernavoda-facts"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Starea oficială CNE</h3>
+      <ul class="facts" id="ro-cne-facts"><li><span class="loading">se verifică ultimul raport SNN…</span></li></ul>
+    </div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>Comparație cu anii precedenți <span class="prov prov-model">GloFAS · aceeași celulă</span></h3>
+    <p class="sub" id="ro-history-summary">se calculează rangul aceleiași zile…</p>
+    <div class="table-scroll" id="ro-history-table"></div>
+    <p class="sub">„Mai jos în model” nu înseamnă automat „centrala trebuia să se
+      oprească”: operarea depinde de nivelul și hidraulica prizei, nu doar de debitul
+      celulei GloFAS. Tabelul următor verifică separat ce a făcut efectiv operatorul.</p>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>S-a oprit centrala în episoadele comparabile? <span class="prov prov-masurat">istoric SNN</span></h3>
+    <p class="sub">Nu asociem automat un minim de debit cu o oprire. Fiecare rând
+      distinge situația hidrologică, acțiunea publicată de operator și cauza atribuită oficial.</p>
+    <div class="table-scroll" id="ro-operational-history">
+      <div class="loading">se leagă anii de rapoartele operaționale…</div>
+    </div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Praguri publicate în 2011 <span class="prov prov-calculat">reper istoric</span></h3>
+      <div id="ro-historical-thresholds"><div class="loading">se încarcă reperul documentat…</div></div>
+    </div>
+    <div class="card">
+      <h3>Putem verifica independent decizia de azi?</h3>
+      <div id="ro-parameter-coverage"><div class="loading">se verifică parametrii publici…</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="sec-romania-energie" data-view="romania">
+  <p class="eyebrow">impactul în sistem</p>
+  <h2>O unitate oprită nu este automat o criză energetică națională</h2>
+  <p class="section-note">Impactul CNE este material; criticitatea națională cere însă
+    o comparație cu cererea, rezervele, importurile, hidroproducția, prețurile și
+    eventualele măsuri de urgență.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Fotografia curentă SEN <span class="prov prov-masurat">Transelectrica</span></h3>
+      <ul class="facts" id="ro-sen-facts"><li><span class="loading">se încarcă…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Testul de criticitate</h3>
+      <div id="ro-energy-test"><div class="loading">se verifică verigile…</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="sec-romania-limits" data-view="romania">
+  <p class="eyebrow">acoperirea națională</p>
+  <h2>Ce mai lipsește pentru un verdict despre întreaga Românie</h2>
+  <p class="section-note">Un deficit al Dunării poate veni din amonte chiar când
+    precipitațiile locale nu sunt deficitare. Invers, patru puncte de ploaie nu descriu
+    singure starea acumulărilor, râurilor interioare sau agriculturii.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Precipitații în România <span class="prov prov-model">ERA5 · puncte-proxy</span></h3>
+      <div id="ro-rain"><div class="loading">se compară regiunile…</div></div>
+    </div>
+    <div class="card">
+      <h3>Date necesare înainte de concluzia națională</h3>
+      <ul class="facts" id="ro-missing"><li><span class="loading">se verifică acoperirea…</span></li></ul>
+    </div>
   </div>
 </section>
 
