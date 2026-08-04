@@ -240,6 +240,11 @@ footer {
   font-size: 12.5px; color: var(--muted); max-width: 90ch;
 }
 footer code { font-family: var(--mono); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+footer .brand {
+  margin-top: 26px; font-family: var(--mono); font-size: 13px;
+  letter-spacing: 0.22em; color: var(--ink-2); user-select: all;
+}
+footer .brand span { color: var(--blue); padding: 0 2px; }
 
 a { color: var(--blue-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
