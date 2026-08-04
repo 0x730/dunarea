@@ -6,6 +6,7 @@ Opțional: PORT=8080 python3 server.py
           ENTSOE_TOKEN=... python3 server.py   (activează datele PF I/II)
 """
 
+import base64
 import json
 import os
 import re
@@ -109,6 +110,27 @@ def api_hidmet(q):
     return {**r["data"], "stale": r["stale"]}
 
 
+def api_hydroinfo(q):
+    r = C.hydroinfo_danube()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_danubehis(q):
+    r = C.danubehis_danube()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_edo(q):
+    r = C.edo_status()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_edo_map(q):
+    kind = q.get("layer", ["cdi"])[0]
+    r = C.edo_map(kind)
+    return (base64.b64decode(r["data"]["png_base64"]), "image/png")
+
+
 def api_entsoe(q):
     return C.entsoe_irongates()
 
@@ -151,7 +173,7 @@ def api_delta(q):
 
 
 def api_anomalii(q):
-    r = C.cached("anomalii_report", 6 * 3600, anomalii.report)
+    r = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)
     return {**r["data"], "stale": r["stale"]}
 
 
@@ -160,7 +182,7 @@ def api_inhga_serie(q):
 
 
 def _stats_cached():
-    return C.cached("statistici", 6 * 3600, anomalii.full_stats)
+    return C.cached(anomalii.STATS_CACHE_KEY, 6 * 3600, anomalii.full_stats)
 
 
 def api_statistici(q):
@@ -213,6 +235,36 @@ def api_hydroweb(q):
     return {**r["data"], "stale": r["stale"]}
 
 
+def api_opera(q):
+    r = C.opera_surface_status()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_opera_map(q):
+    kind = q.get("layer", ["sentinel1"])[0]
+    zone = q.get("zone", ["dunarea_de_jos"])[0]
+    return (C.opera_surface_map(kind, zone), "image/png")
+
+
+def api_copernicus_land(q):
+    r = C.copernicus_land_context()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_copernicus_land_map(q):
+    kind = q.get("layer", ["snow"])[0]
+    return (C.copernicus_land_map(kind), "image/png")
+
+
+def api_satellite_catalog(q):
+    r = C.earthdata_satellite_catalog()
+    return {**r["data"], "stale": r["stale"]}
+
+
+def api_evidence_sources(q):
+    return C.evidence_source_registry()
+
+
 def api_gravimetrie(q):
     r = C.hydroweb_gravimetry()
     if isinstance(r, dict) and not r.get("activ", True):
@@ -225,7 +277,7 @@ def api_grdc(q):
 
 
 def api_bilant_apa(q):
-    r = C.cached("bilant_apa", 6 * 3600, anomalii.water_budget)
+    r = C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)
     return {**r["data"], "stale": r["stale"]}
 
 
@@ -237,12 +289,19 @@ def api_raport(q):
            .isoformat(timespec="seconds"),
            "aplicatie": "Monitor Dunărea — surse oficiale",
            "sectiuni": {}}
-    for nume, fn in (("anomalii", lambda: C.cached("anomalii_report", 6 * 3600, anomalii.report)["data"]),
+    for nume, fn in (("anomalii", lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)["data"]),
                      ("statistici", lambda: _stats_cached()["data"]),
-                     ("bilant_apa", lambda: C.cached("bilant_apa", 6 * 3600, anomalii.water_budget)["data"]),
+                     ("bilant_apa", lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)["data"]),
                      ("inhga", lambda: C.inhga_bulletin()["data"]),
                      ("afdj", lambda: C.afdj_cote()["data"]),
                      ("hidmet", lambda: C.hidmet_report()["data"]),
+                     ("hydroinfo", lambda: C.hydroinfo_danube()["data"]),
+                     ("danubehis", lambda: C.danubehis_danube()["data"]),
+                     ("edo", lambda: C.edo_status()["data"]),
+                     ("opera", lambda: C.opera_surface_status()["data"]),
+                     ("copernicus_land", lambda: C.copernicus_land_context()["data"]),
+                     ("catalog_sateliti", lambda: C.earthdata_satellite_catalog()["data"]),
+                     ("registru_provenienta", C.evidence_source_registry),
                      ("sen", lambda: C.sen_live()["data"])):
         try:
             out["sectiuni"][nume] = fn()
@@ -268,6 +327,10 @@ ROUTES = {
     "/api/afdj": api_afdj,
     "/api/inhga": api_inhga,
     "/api/hidmet": api_hidmet,
+    "/api/hydroinfo": api_hydroinfo,
+    "/api/danubehis": api_danubehis,
+    "/api/edo": api_edo,
+    "/api/edo/map": api_edo_map,
     "/api/entsoe": api_entsoe,
     "/api/delta": api_delta,
     "/api/points": api_points,
@@ -279,15 +342,25 @@ ROUTES = {
     "/api/danubeportal": api_danubeportal,
     "/api/dahiti": api_dahiti,
     "/api/hydroweb": api_hydroweb,
+    "/api/opera": api_opera,
+    "/api/opera/map": api_opera_map,
+    "/api/copernicus-land": api_copernicus_land,
+    "/api/copernicus-land/map": api_copernicus_land_map,
+    "/api/satellite-catalog": api_satellite_catalog,
+    "/api/evidence-sources": api_evidence_sources,
     "/api/gravimetrie": api_gravimetrie,
     "/api/grdc": api_grdc,
     "/api/bilant-apa": api_bilant_apa,
     "/api/raport": api_raport,
     "/api/istoric": lambda q: C.history_status(),
-    "/api/avize": lambda q: {**C.danubeportal_avize()["data"],
-                             "stale": C.danubeportal_avize()["stale"]},
+    "/api/avize": lambda q: api_avize(q),
     "/api/analiza-ai": lambda q: api_analiza_ai(q),
 }
+
+
+def api_avize(q):
+    r = C.danubeportal_avize()
+    return {**r["data"], "stale": r["stale"]}
 
 
 def api_analiza_ai(q):
@@ -300,6 +373,8 @@ def api_analiza_ai(q):
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
        "form-action 'none'; frame-ancestors 'none'")
+
+PAGE_PATHS = {"/", "/bazin", "/integritate", "/sectoare", "/optiuni"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -339,8 +414,10 @@ class Handler(BaseHTTPRequestHandler):
         if path in ROUTES:
             try:
                 res = ROUTES[path](parse_qs(parsed.query))
-                if isinstance(res, tuple):  # (text, content-type), ex. CSV
-                    self._send(200, res[0].encode("utf-8"), res[1], head_only)
+                if isinstance(res, tuple):  # (payload, content-type), CSV/PNG
+                    payload = (res[0] if isinstance(res[0], bytes)
+                               else res[0].encode("utf-8"))
+                    self._send(200, payload, res[1], head_only)
                 else:
                     self._send(200, res, head_only=head_only)
             except Exception:
@@ -352,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # fișiere statice — doar tipurile cunoscute, doar din static/
-        if path == "/":
+        if path in PAGE_PATHS:
             path = "/index.html"
         try:
             fpath = os.path.realpath(os.path.join(STATIC_DIR, path.lstrip("/")))
@@ -383,7 +460,9 @@ def warmup():
         print("warmup sărit (rulat recent)")
         return
 
-    jobs = [C.pegelonline_stations, C.inhga_bulletin, C.hidmet_report]
+    jobs = [C.pegelonline_stations, C.inhga_bulletin, C.hidmet_report,
+            C.hydroinfo_danube, C.danubehis_danube, C.edo_status,
+            C.copernicus_land_context, C.earthdata_satellite_catalog]
     jobs += [lambda p=pid: C.glofas_recent(p, past_days=10, forecast_days=3)
              for pid in C.GLOFAS_POINTS]
 
@@ -400,7 +479,7 @@ def warmup():
     # arhiva buletinelor INHGA (o singură dată; apoi doar ziua curentă)
     safe(lambda: C.inhga_backfill(days=90))
     # raportul de anomalii cere arhive lungi — îl pre-calculăm tot aici
-    safe(lambda: C.cached("anomalii_report", 6 * 3600, anomalii.report))
+    safe(lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report))
     safe(C.cache_gc)
     C.cache_put("warmup_done", True, 6 * 3600)
     print("istoric INHGA + raport anomalii pregătite")

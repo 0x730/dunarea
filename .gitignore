@@ -7,6 +7,8 @@ __pycache__/
 # secrete — NU se comit niciodată; pe server vin din env-ul daemonului Forge
 data/keys/
 
-# fișiere mari cerute manual (GRDC) — se urcă direct pe server dacă există
-data/grdc/
+# fișiere mari cerute manual (GRDC) — se urcă direct pe server dacă există;
+# instrucțiunile de import rămân versionate
+data/grdc/*
+!data/grdc/README.md
 data/tmp/

@@ -14,6 +14,12 @@ import connectors as C
 CLIM_START = 1991      # referința climatologică
 BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
+# Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
+# seria meteo „Best Match”) să rămână șase ore în cache după deploy.
+REPORT_CACHE_KEY = "anomalii_report:v4"
+STATS_CACHE_KEY = "statistici:v2"
+BUDGET_CACHE_KEY = "bilant_apa:v2"
+
 
 # ------------------------------------------------------------- utilitare ---
 
@@ -208,11 +214,18 @@ def measured_vs_model():
         return {"insuficient": True, "n": len(ratios),
                 "nota": "prea puține zile suprapuse între buletine și model"}
     rs = [r["raport"] for r in ratios]
-    mu, sd = mean(rs), pstdev(rs)
+    # Ultimele șapte zile sunt fereastra testată, nu parte din etalon;
+    # includerea lor în medie și abatere ar micșora artificial ruptura.
+    baseline = rs[:-7]
+    if len(baseline) < 3:
+        return {"insuficient": True, "n": len(ratios),
+                "nota": "prea puține zile anterioare ferestrei testate"}
+    mu, sd = mean(baseline), pstdev(baseline)
     last7 = mean(rs[-7:])
     z = (last7 - mu) / sd if sd > 0 else 0.0
     return {
-        "n": len(ratios), "raport_mediu": round(mu, 3), "sd": round(sd, 3),
+        "n": len(ratios), "n_etalon": len(baseline),
+        "raport_mediu": round(mu, 3), "sd": round(sd, 3),
         "raport_ultimele7": round(last7, 3), "z": round(z, 2),
         "serie": ratios[-30:],
     }
@@ -229,9 +242,10 @@ def precip_coherence(discharge_pct):
     (aceeași fereastră calendaristică din anii anteriori)."""
     out = []
     today = date.today()
+    all_points = C.era5_precip_all(2000)["data"]
     for pid, label in PRECIP_VS:
         try:
-            d = C.era5_precip(pid, 2000)["data"]
+            d = all_points[pid]
             smap = {t: v for t, v in zip(d["time"], d["precip"]) if v is not None}
             dates = sorted(smap)
             end = dates[-1]
@@ -269,11 +283,9 @@ def precip_stats():
     out = []
     today = date.today()
     cy = today.year
+    all_points = C.era5_precip_all(PRECIP_START)["data"]
     for pid, p in C.PRECIP_POINTS.items():
-        try:
-            d = C.era5_precip(pid, PRECIP_START)["data"]
-        except Exception:
-            continue
+        d = all_points[pid]
         snow_raw = d.get("snow") or []
         pairs = [(t, v, (snow_raw[i] if i < len(snow_raw) else None))
                  for i, (t, v) in enumerate(zip(d["time"], d["precip"]))
@@ -338,8 +350,8 @@ def precip_stats():
             "pana_la": end,
             "ian_azi": block(cur, hist),
             "iarna": block(wcur, whist),
-            "zapada_iarna": block(wsnow.get(cy),
-                                  [wsnow[y] for y in range(PRECIP_START + 1, cy)
+            "zapada_iarna": block(wsnow.get(an),
+                                  [wsnow[y] for y in range(PRECIP_START + 1, an)
                                    if y in wsnow]),
             "ultimele90": {"cumul_mm": round(cum90, 1),
                            "pct": _rank(cum90, ref90)},
@@ -419,11 +431,11 @@ def crosscheck_mire():
     }
 
 
-# ------------------------------------------ context GRDC (istoric secular) --
+# ------------------------------------------ context GRDC (istoric măsurat) --
 
 def grdc_context():
     """Așază valoarea de azi (model, Ceatal Izmail) în istoricul MĂSURAT
-    secular de la GRDC — cu eticheta de proveniență mixtă la vedere."""
+    GRDC de la aceeași stație — cu proveniența mixtă la vedere."""
     g = C.grdc_series()
     if not g.get("activ"):
         return g
@@ -445,7 +457,7 @@ def grdc_context():
         "percentila_vs_masurat": pct, "mostre_referinta": len(ref),
         "record_minim_zi": {"m3s": rec_min[0], "data": rec_min[1]} if rec_min else None,
         "nota": "valoarea de azi e din model (GloFAS); istoricul e măsurat (GRDC) "
-                "— comparație orientativă, bias-ul model/măsurat e ~0,7–0,8",
+                "— comparație orientativă între produse necalibrate unul față de celălalt",
     })
     return g
 
@@ -464,22 +476,41 @@ def _doy_diff(mmdd_a, mmdd_b):
 # ----------------- 6/7/8. restul surselor, băgate în verificări -------------
 
 def satellite_check():
-    """Satelitul (hydroweb) vs. râul: percentilele altimetrice ar trebui să
-    spună aceeași poveste ca percentilele de debit."""
+    """Altimetrie ca probă secundară, filtrată și spațial distribuită.
+
+    Nu numărăm stații apropiate drept surse independente și nu folosim
+    observații vechi/nesigure. Semnalul rămâne context fizic, nu „vot de
+    adevăr” și nici validare a debitului derivat/modelat.
+    """
     h = C.hydroweb_danube()
     data = h.get("data") if isinstance(h, dict) and "data" in h else h
     if not data or not data.get("activ", True):
         raise RuntimeError(data.get("motiv", "hydroweb inactiv") if data else "hydroweb inactiv")
-    pcts = [s["percentila_lunii"] for s in data["statii"]
-            if s.get("percentila_lunii") is not None]
-    if len(pcts) < 3:
-        raise RuntimeError("prea puține stații satelitare cu percentile")
-    pcts.sort()
-    med = pcts[len(pcts) // 2]
+    eligible = [s for s in data["statii"] if s.get("eligibila_detector")]
+    excluded = [s for s in data["statii"] if not s.get("eligibila_detector")]
+    pcts = [s["percentila_lunii"] for s in eligible]
+    segments = sorted({s.get("segment") for s in eligible if s.get("segment")})
+    sufficient = len(pcts) >= 6 and len(segments) >= 3
+    med = round(median(pcts), 1) if pcts else None
     sub10 = sum(1 for p in pcts if p < 10)
-    return {"statii": len(pcts), "mediana_pct": med, "sub_p10": sub10,
-            "metoda": "percentila lunară a fiecărei stații virtuale în propria "
-                      "serie satelitară (hydroweb.next/CNES)"}
+    return {
+        "status": "shadow_coerent" if sufficient and med <= 15 else
+                  "shadow_fara_semnal" if sufficient else "insuficient",
+        "poate_sustine_context": sufficient,
+        "statii": len(pcts), "statii_total": len(data["statii"]),
+        "statii_excluse": len(excluded), "segmente": segments,
+        "acoperire_km": data.get("acoperire_km"),
+        "mediana_pct": med, "sub_p10": sub10,
+        "excluderi": [{"statie": s.get("statie"), "km": s.get("km"),
+                       "quality_flags": s.get("quality_flags") or ["date_incomplete"]}
+                      for s in excluded],
+        "familie_evidenta": data.get("product_family"),
+        "metoda": "selecție stratificată pe cursul principal; mediana "
+                  "percentilelor lunare numai pentru observații proaspete, "
+                  "cu incertitudine acceptabilă și istoric suficient",
+        "limita": "probă secundară din orbită; nu transformă nivelul în debit "
+                  "și nu este numărată ca mai multe surse independente",
+    }
 
 
 def germany_check():
@@ -507,7 +538,13 @@ def serbia_check():
     rs = C.hidmet_report()["data"]["statii"]
     ns = next((s for s in rs if s["statie"] == "Novi Sad" and s.get("debit_m3s")), None)
     if not ns:
-        raise RuntimeError("Novi Sad fără debit publicat azi")
+        # RHMZ lasă uneori debitul gol; tabelul oficial OVF/Hydroinfo
+        # retransmite zilnic aceeași rețea regională și poate avea valoarea.
+        hu = C.hydroinfo_danube()["data"]["statii"]
+        ns = next((s for s in hu if s["statie"] == "Novi Sad"
+                   and s.get("debit_m3s")), None)
+    if not ns:
+        raise RuntimeError("Novi Sad fără debit publicat azi în RHMZ/Hydroinfo")
     r = C.glofas_recent("novi_sad", past_days=7, forecast_days=0)
     latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
     if not latest:
@@ -516,17 +553,65 @@ def serbia_check():
     return {"masurat_m3s": ns["debit_m3s"], "model_m3s": round(latest[1], 1),
             "raport": round(raport, 2),
             "coerent": 0.4 <= raport <= 2.5,
-            "metoda": "debit zilnic RHMZ la Novi Sad vs. GloFAS în aceeași "
-                      "secțiune — a patra pereche măsurat/model, alt stat"}
+            "metoda": "debit zilnic publicat pentru Novi Sad de RHMZ sau "
+                      "OVF/Hydroinfo vs. GloFAS în aceeași secțiune"}
+
+
+def hungary_check():
+    """Debit măsurat în Ungaria vs. model, în secțiunea Budapesta."""
+    direct = None
+    normalized = None
+    try:
+        stations = C.hydroinfo_danube()["data"]["statii"]
+        direct = next((s for s in stations if s["statie"] == "Budapest"
+                       and s.get("debit_m3s")), None)
+    except Exception:
+        pass
+    try:
+        stations = C.danubehis_danube()["data"]["statii"]
+        normalized = next((s for s in stations if s["statie"] == "Budapest"
+                           and s.get("debit_m3s")), None)
+    except Exception:
+        pass
+    budapest = direct or normalized
+    if not budapest:
+        raise RuntimeError("Budapest fără debit în Hydroinfo și DanubeHIS")
+    r = C.glofas_recent("budapesta", past_days=7, forecast_days=0)
+    latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
+    if not latest or not latest[1]:
+        raise RuntimeError("GloFAS Budapesta indisponibil")
+    ratio = budapest["debit_m3s"] / latest[1]
+    delivery_diff = None
+    if direct and normalized and direct["debit_m3s"]:
+        delivery_diff = 100 * (normalized["debit_m3s"] - direct["debit_m3s"]) / direct["debit_m3s"]
+    delivery_ok = delivery_diff is None or abs(delivery_diff) <= 15
+    return {
+        "masurat_m3s": budapest["debit_m3s"],
+        "sursa_masurata": "Hydroinfo direct" if direct else "ICPDR DanubeHIS",
+        "hydroinfo_m3s": direct["debit_m3s"] if direct else None,
+        "danubehis_m3s": normalized["debit_m3s"] if normalized else None,
+        "diferenta_livrari_pct": round(delivery_diff, 1) if delivery_diff is not None else None,
+        "livrari_coerente": delivery_ok,
+        "model_m3s": round(latest[1], 1),
+        "raport": round(ratio, 2),
+        "coerent": 0.4 <= ratio <= 2.5 and delivery_ok,
+        "data": budapest.get("data"),
+        "metoda": "debitul OVF la Budapesta, livrat direct prin Hydroinfo și "
+                  "normalizat prin ICPDR DanubeHIS, vs. GloFAS în aceeași "
+                  "secțiune. Cele două portaluri nu sunt măsurători "
+                  "independente; banda largă testează doar incompatibilități "
+                  "evidente, nu validează modelul",
+    }
 
 
 # ------------------------- 9. Austria sub lupă (test de retenție) -----------
 
 def austria_check():
-    """Testul direct al ipotezei „Austria stochează apa": dacă barajele
-    austriece ar reține apă, mirele din lacurile lor de fir ar CREȘTE în timp
-    ce intrarea dinspre Germania scade. Mirele VIA DONAU sunt orare, publice,
-    prin PEGELONLINE."""
+    """Screening al tendințelor nivelurilor austriece, nu bilanț de stocare.
+
+    Mirele VIA DONAU sunt orare și publice prin PEGELONLINE, dar fără curbe
+    cotă-volum și debite intrare/ieșire nu pot demonstra ori exclude retenția.
+    """
     st = C.pegelonline_stations()["data"]
     at = [s for s in st if s.get("agency") == "VIA DONAU" and s.get("w")]
     if len(at) < 4:
@@ -570,24 +655,19 @@ def austria_check():
         "statii": trends, "mediana_trend_cm": mediana,
         "intrare_trend_pct": intrare_pct,
         "suspiciune_retentie": retentie,
-        "metoda": "variația nivelului pe 30 de zile la toate mirele austriece "
+        "metoda": "screening: variația nivelului pe 30 de zile la mirele austriece "
                   "(VIA DONAU, orar, via PEGELONLINE) vs. debitul măsurat la "
-                  "intrarea dinspre Germania (Hofkirchen). Retenția ar apărea "
-                  "ca niveluri în creștere în lacurile de fir austriece pe "
-                  "fond de intrare stabilă/în scădere. Capacitatea fizică de "
-                  "stocare pe firul apei rămâne oricum de ordinul orelor–zilelor. "
-                  "Atenție la iluzia din imagini/webcam-uri: un lac de fir e "
-                  "ținut la aceeași cotă-țintă tot anul, pentru navigație — "
-                  "Dunărea «arată plină» la Viena și la 800, și la 2.000 m³/s; "
-                  "nivelul menținut nu înseamnă apă acumulată, contează debitul "
-                  "care trece și trendul, exact ce se măsoară aici.",
+                  "intrarea dinspre Germania (Hofkirchen). Creșteri larg "
+                  "răspândite pe intrare în scădere ar merita investigate, "
+                  "dar niveluri stabile nu exclud manevre: lipsesc curbele "
+                  "cotă-volum și debitele de intrare/ieșire ale fiecărui baraj.",
     }
 
 
 # ------------------------------------------------- bilanțul „unde e apa" ----
-# Contabilitatea apei pentru bazinul superior (deasupra Passau), unde punctul
-# ERA5 e un proxy defensabil: ce a plouat, ce a curs prin râu, restul =
-# atmosferă + sol. Plus volumul trecut la Baziaș față de un an normal.
+# Screening pentru bazinul superior (deasupra Passau): șase puncte ERA5 drept
+# proxy rar pentru precipitații, debit GloFAS și un rezidual care amestecă
+# stocuri, schimburi neobservate și erori. Nu este un bilanț hidrologic închis.
 
 AREA_PASSAU_KM2 = 76650  # bazinul hidrografic al Dunării la Achleiten/Passau
 
@@ -599,8 +679,9 @@ def water_budget():
     # cumulată de la 1 ianuarie, fără 29 februarie (ferestre identice)
     per_punct = []
     end = None
+    all_points = C.era5_upper_basin(PRECIP_START)["data"]
     for tag, lat, lon in C.UPPER_BASIN_POINTS:
-        d = C.era5_point(tag, lat, lon, PRECIP_START)["data"]
+        d = all_points[tag]
         pairs = [(t, v) for t, v in zip(d["time"], d["precip"]) if v is not None]
         if not pairs:
             continue
@@ -680,14 +761,15 @@ def water_budget():
             "lipsa_km3": r1(q_baz_med - q_baz_cur),
         },
         "grace": grace,
-        "consum_uman_nota": "consumul uman net al întregului bazin este de "
-                            "ordinul câtorva km³/an (referință EEA) — cu două "
-                            "ordine de mărime sub rândurile de mai sus",
+        "consum_uman_nota": "captările, transferurile și variația stocurilor "
+                            "nu sunt cuantificate separat în datele publice "
+                            "folosite aici",
         "metoda": "ploaie: ERA5, media a 6 puncte-proxy distribuite "
                   "(câmpie+alpin) × aria bazinului la Achleiten; râu: GloFAS "
                   "cumulat de la 1 ianuarie; normal = mediana exact acelorași "
                   "ferestre calendaristice (fără 29 feb), 1991/2000–anul "
-                  "trecut; atmosferă+sol = rezidualul P−Q",
+                  "trecut; rezidual P−Q = evapotranspirație + variația "
+                  "stocurilor + schimburi neobservate + eroarea proxy/model",
     }
 
 
@@ -734,6 +816,7 @@ def report():
 
     for key, fn in (("satelit", satellite_check),
                     ("germania", germany_check),
+                    ("ungaria", hungary_check),
                     ("serbia", serbia_check),
                     ("austria", austria_check)):
         try:

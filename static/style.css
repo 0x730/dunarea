@@ -63,9 +63,45 @@ header.site h1 .thin { color: var(--muted); font-weight: 400; }
 .pill.ok::before { content: "● "; color: var(--good); font-size: 9px; }
 .pill.err::before { content: "○ "; color: var(--critical); }
 .pill.stale::before { content: "◐ "; color: var(--warning); }
+.pill.off { color: var(--muted); }
+.pill.off::before { content: "– "; color: var(--muted); }
+
+/* ------------------------------------------- navigație pe vederi */
+.view-nav {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 14px;
+  margin: 0 -20px; padding: 10px 20px;
+  background: rgba(13, 13, 13, 0.96); border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+.view-nav-label {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em;
+}
+.view-nav-links {
+  display: flex; gap: 4px; min-width: 0; overflow-x: auto;
+  scrollbar-width: thin; padding-bottom: 1px;
+}
+.view-nav a {
+  flex: 0 0 auto; padding: 5px 10px; border-radius: 5px;
+  color: var(--muted); font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; border: 1px solid transparent;
+}
+.view-nav a:hover { color: var(--ink); text-decoration: none; background: var(--surface); }
+.view-nav a[aria-current="page"] {
+  color: var(--ink); background: var(--surface-2); border-color: var(--border);
+}
+.view-toc {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 20px;
+  margin-top: 14px; font-family: var(--mono); font-size: 11px;
+}
+.view-toc::before { content: "Pe pagină"; color: var(--muted); }
+.view-toc a { color: var(--ink-2); }
+.view-toc:empty { display: none; }
+[hidden] { display: none !important; }
 
 /* ------------------------------------------------------------ sections */
-section { margin-top: 44px; }
+section { margin-top: 44px; scroll-margin-top: 110px; }
 .eyebrow {
   font-family: var(--mono); font-size: 11.5px; text-transform: uppercase;
   letter-spacing: 0.14em; color: var(--muted); margin: 0 0 6px;
@@ -141,7 +177,7 @@ section > h2 {
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
 .card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; padding: 18px 20px;
+  border-radius: 8px; padding: 18px 20px; min-width: 0;
 }
 .card h3 { margin: 0 0 2px; color: var(--ink); font-size: 15.5px; font-weight: 700; }
 .card .sub { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
@@ -162,6 +198,7 @@ table.data td.num { font-family: var(--mono); font-variant-numeric: tabular-nums
 table.data th.num { text-align: right; }
 table.data td.name { color: var(--ink); }
 table.data tr:last-child td { border-bottom: none; }
+.table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
 .up   { color: var(--blue-bright); }
 .down { color: var(--serious); }
 .flat { color: var(--muted); }
@@ -220,6 +257,38 @@ table.data tr:last-child td { border-bottom: none; }
 
 @media (max-width: 900px) { .anom-strip { grid-template-columns: 1fr 1fr; } }
 
+/* ------------------------------------------------------ Copernicus EDO */
+.edo-grid .card { overflow: hidden; }
+.edo-map-wrap {
+  position: relative; aspect-ratio: 11 / 4; overflow: hidden; margin-top: 12px;
+  border: 1px solid var(--border); border-radius: 5px; background: #e7e9e4;
+}
+.edo-map-wrap img { width: 100%; height: 100%; display: block; object-fit: fill; }
+.sat-map-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.sat-map-grid .sub { margin: 0 0 5px; }
+@media (max-width: 640px) { .sat-map-grid { grid-template-columns: 1fr; } }
+.edo-place {
+  position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%);
+  padding: 1px 4px; border-radius: 3px; background: rgba(20, 20, 19, .78);
+  color: #fff; font-family: var(--mono); font-size: 9px; white-space: nowrap;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .25);
+}
+.edo-place::before { content: "·"; color: #fff; margin-right: 2px; }
+.edo-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.edo-legend span { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.edo-legend span::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 4px;
+  border-radius: 2px; vertical-align: -1px;
+}
+.edo-legend.cdi span:nth-child(1)::before { background: #f4d419; }
+.edo-legend.cdi span:nth-child(2)::before { background: #f39a12; }
+.edo-legend.cdi span:nth-child(3)::before { background: #e32119; }
+.edo-legend.soil span:nth-child(1)::before { background: #c96c05; }
+.edo-legend.soil span:nth-child(2)::before { background: #f4a13c; }
+.edo-legend.soil span:nth-child(3)::before { background: #f5f4ed; }
+.edo-legend.soil span:nth-child(4)::before { background: #5ba2cc; }
+.edo-note { margin-top: 10px; }
+
 /* ------------------------------------------------------- transparență */
 table.trans { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 table.trans th {
@@ -234,6 +303,36 @@ table.trans td {
 table.trans td.what { color: var(--ink); font-weight: 600; width: 24%; }
 table.trans td a { color: var(--ink-2); }
 table.trans tr:last-child td { border-bottom: none; }
+.audit-details {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--axis);
+}
+.audit-details summary {
+  color: var(--ink); font-weight: 650; cursor: pointer;
+}
+.audit-details summary::marker { color: var(--warning); }
+.audit-details[open] summary { margin-bottom: 8px; }
+.hydro-accountability {
+  margin-top: 18px; padding: 16px 18px 15px;
+  border: 1px solid var(--axis); border-left: 4px solid var(--warning);
+  border-radius: 5px; background: var(--surface-2);
+}
+.hydro-accountability .eyebrow { margin-bottom: 5px; }
+.hydro-accountability h3 { margin: 0 0 9px; }
+.hydro-accountability > p:not(.eyebrow) { max-width: 92ch; }
+.hydro-role-list {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 24px; margin: 12px 0; padding-left: 20px;
+}
+.hydro-role-list li::marker { color: var(--warning); }
+.hydro-consequence {
+  margin: 14px 0 10px; padding-top: 12px; border-top: 1px solid var(--axis);
+}
+.hydro-abandoned { border-top-color: var(--warning); }
+.hydro-total td { padding-top: 12px; border-top: 2px solid var(--axis); font-weight: 650; }
+@media (max-width: 640px) {
+  .hydro-accountability { padding: 14px; }
+  .hydro-role-list { grid-template-columns: 1fr; gap: 6px; }
+}
 
 footer {
   margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--border);
@@ -254,11 +353,76 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 
 .loading { color: var(--muted); font-family: var(--mono); font-size: 12.5px; padding: 12px 0; }
 .err-box { color: var(--serious); font-size: 13px; padding: 8px 0; }
+.ai-web-sources { margin-top: 12px; max-width: 90ch; }
+.ai-web-sources .sub { margin-bottom: 4px; }
+.ai-web-sources ol { margin: 0; padding-left: 22px; font-size: 12.5px; color: var(--muted); }
+.ai-web-sources li { margin: 3px 0; }
 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .hero-num .value { font-size: 46px; }
+  .view-nav { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .view-nav-links { width: 100%; }
+}
+
+@media (max-width: 640px) {
+  #sec-metodologie table.trans,
+  #sec-metodologie table.trans tbody,
+  #sec-metodologie table.trans tr,
+  #sec-metodologie table.trans td,
+  #sec-trans table.trans,
+  #sec-trans table.trans tbody,
+  #sec-trans table.trans tr,
+  #sec-trans table.trans td,
+  #sec-solutii table.trans,
+  #sec-solutii table.trans tbody,
+  #sec-solutii table.trans tr,
+  #sec-solutii table.trans td { display: block; width: 100%; }
+  #sec-metodologie table.trans thead,
+  #sec-trans table.trans thead,
+  #sec-solutii table.trans thead { display: none; }
+  #sec-metodologie table.trans tr,
+  #sec-trans table.trans tr,
+  #sec-solutii table.trans tr {
+    padding: 12px 0; border-bottom: 1px solid var(--axis);
+  }
+  #sec-metodologie table.trans tr:last-child,
+  #sec-trans table.trans tr:last-child,
+  #sec-solutii table.trans tr:last-child { border-bottom: 0; }
+  #sec-metodologie table.trans td,
+  #sec-metodologie table.trans td.what,
+  #sec-trans table.trans td,
+  #sec-trans table.trans td.what,
+  #sec-solutii table.trans td,
+  #sec-solutii table.trans td.what {
+    padding: 4px 0; border-bottom: 0;
+  }
+  #sec-metodologie table.trans td.what,
+  #sec-trans table.trans td.what,
+  #sec-solutii table.trans td.what { margin-bottom: 5px; }
+  #sec-metodologie table.trans td:not(.what)::before,
+  #sec-trans table.trans td:not(.what)::before,
+  #sec-solutii table.trans td:not(.what)::before {
+    display: block; margin: 4px 0 1px;
+    font-family: var(--mono); font-size: 9.5px; line-height: 1.3;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  }
+  #sec-metodologie table.trans td:nth-child(2)::before { content: "Surse folosite"; }
+  #sec-metodologie table.trans td:nth-child(3)::before { content: "Metodă și referință"; }
+  #sec-metodologie table.trans td:nth-child(4)::before { content: "Limite cunoscute"; }
+  #sec-trans table.trans td:nth-child(2)::before { content: "Stare"; }
+  #sec-trans table.trans td:nth-child(3)::before { content: "Sursa publică și limita ei"; }
+  #sec-solutii table.trans td:nth-child(2)::before { content: "Dovadă / rol"; }
+  #sec-solutii table.trans td:nth-child(3)::before { content: "Limită / date necesare"; }
+  #sec-solutii table.trans td:nth-child(4)::before { content: "Sursă / statut"; }
+  #sec-solutii .hydro-abandoned table.trans td:nth-child(2)::before {
+    content: "Obiectiv / treaptă abandonată";
+  }
+  #sec-solutii .hydro-abandoned table.trans td:nth-child(3)::before,
+  #sec-solutii .hydro-abandoned table.trans .hydro-total td:nth-child(2)::before {
+    content: "Valoare contabilă brută";
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {

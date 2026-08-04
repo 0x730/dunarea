@@ -1,83 +1,100 @@
 """Stratul opțional de interpretare AI — narativ, nu verdict.
 
-Sinteza din capul paginii rămâne deterministă (calculată din date, fără
-model de limbaj). Acest modul adaugă, separat și etichetat, o analiză
-narativă generată de un LLM printr-un API OpenAI-compatibil, cu trei
-reguli de transparență: promptul e public, datele de intrare sunt exact
-digestul de mai jos (auditabil la /api/analiza-ai), iar modelul e obligat
-să citeze cifrele pe care își sprijină fiecare afirmație.
+Sinteza din capul paginii rămâne deterministă. Acest modul adaugă separat o
+analiză LLM auditabilă: publică promptul, digestul exact și modelul folosit.
 
-Activare: AI_API_KEY=... (+ opțional AI_MODEL, AI_BASE_URL) în env-ul
-serverului. Implicit: OpenAI, gpt-4o-mini. Merge identic cu OpenRouter,
-Groq, Mistral sau un Ollama local (AI_BASE_URL=http://localhost:11434/v1).
+Activare de bază (orice API OpenAI-compatibil):
+    AI_API_KEY=... [AI_MODEL=...] [AI_BASE_URL=...] python3 server.py
+
+Comparația cu surse web este deliberat opt-in și disponibilă numai prin API-ul
+OpenAI oficial, deoarece are cost/latency suplimentare și trebuie să întoarcă
+citări verificabile:
+    AI_WEB_SEARCH=1 [AI_WEB_MODEL=gpt-5.6-terra] python3 server.py
 """
 
 import hashlib
 import json
 import os
+import re
 import threading
+import urllib.parse
 import urllib.request
 from datetime import date
 
 import anomalii
 import connectors as C
 
-# regenerare condusă de stare, nu de ceas:
-MAX_VARSTA_S = 7 * 86400   # plasă de siguranță — reîmprospătare oricum la 7 zile
-MIN_INTERVAL_S = 1800      # anti-flapping — nu mai des de o dată la 30 min
+MAX_VARSTA_S = 7 * 86400
+MIN_INTERVAL_S = 1800
+PROMPT_VERSION = 3
 
-# apelul e plătit: o singură generare simultană, oricâte cereri ar veni
 _lock_ai = threading.Lock()
 
 AI_BASE = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+AI_WEB_MODEL = os.environ.get("AI_WEB_MODEL", "gpt-5.6-terra")
+AI_WEB_SEARCH = os.environ.get("AI_WEB_SEARCH", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
-PROMPT_SISTEM = """Ești un analist hidrologic riguros și sobru. Primești un JSON cu starea la zi a Dunării: percentile climatologice pe secțiuni, bilanțuri, verificări încrucișate între surse independente (mire naționale, model Copernicus, satelit, gravimetrie GRACE) și statistici de precipitații.
+PROMPT_SISTEM = """Ești un analist hidrologic riguros și sobru. Primești un JSON auditabil cu starea Dunării. Scopul tău este să descrii situația, să cauți contradicții și anomalii de date și să delimitezi ce este susținut de probe de ceea ce rămâne necunoscut.
 
-Dicționarul câmpurilor (folosește termenii corect):
-- azi.value, azi_m3s, debit, masurat_m3s, model_m3s = DEBITE în m³/s (volum de apă pe secundă), NU niveluri;
-- pct / percentila = percentila față de istoricul aceleiași zile calendaristice: P0 = cea mai mică valoare din istoric, P50 = mediană, P100 = cea mai mare; NU e un procent din ceva;
-- streak_sub_p10 = zile consecutive sub percentila 10;
+Dicționarul câmpurilor:
+- azi.value, azi_m3s, debit, masurat_m3s și model_m3s sunt DEBITE în m³/s, nu niveluri;
+- pct / percentila este rangul față de istoricul aceleiași zile calendaristice: P0 minim, P50 mediană, P100 maxim; nu este procent din debit;
+- streak_sub_p10 = zile consecutive sub P10;
 - abatere_pct = abaterea procentuală față de mediana istorică a zilei;
-- lipsa_km3 = volumul de apă lipsă față de mediană, cumulat de la 1 ianuarie;
-- anomalie_km3 (gravimetrie) = abaterea apei totale din bazin față de media de referință, în km³;
-- z = scor standardizat: |z| ≤ 1,5 înseamnă în limitele variabilității istorice.
+- lipsa_km3 = volum cumulat lipsă față de mediană;
+- anomalie_km3 la GRACE = abaterea apei totale față de referință, nu debit;
+- z este scor standardizat; |z| ≤ 1,5 este în variabilitatea istorică a testului.
 
-Reguli stricte, nenegociabile:
-1. Folosește EXCLUSIV cifrele din JSON. Nu inventa valori, stații, ani sau procente. Dacă o informație lipsește, spune că lipsește.
-2. Structura obligatorie a răspunsului, cu exact aceste patru titluri:
-   SITUAȚIA — 2-3 fraze, starea factuală.
-   CAUZE PROBABILE — listă ordonată după plauzibilitate; fiecare cauză cu nivel de încredere (mare/medie/mică) și cu cifrele din JSON care o susțin, citate explicit.
-   CE NU SE POATE CONCLUZIONA DIN ACESTE DATE — onestitate despre limite.
-   CE AR SCHIMBA CONCLUZIA — ce valori sau evoluții viitoare ar contrazice interpretarea de mai sus.
-3. Fără speculații politice, fără acuzații la adresa vreunei țări sau instituții. Dacă verificările încrucișate sunt în limite, spune explicit ce exclude asta.
-4. Ton sobru, română, maximum 350 de cuvinte în total."""
+Reguli stricte:
+1. Pentru starea monitorului și toate valorile numerice hidrologice folosește exclusiv JSON-ul. Nu inventa și nu completa din memorie valori, stații, date, ani sau procente. Spune explicit când lipsesc.
+2. Păstrează tipul fiecărei probe: măsurătoare in-situ, model, reanaliză, măsurătoare orbitală, clasificare satelitară ori catalog_only. O granula prezentă în catalog nu este o valoare observată sau ingerată.
+3. Consultă registru_provenienta. Sursele din aceeași familie/dependență se numără o singură dată; două căi de livrare ale aceleiași măsurători nu sunt confirmări independente.
+4. Verifică erori_calcul și metadate_actualizare înaintea concluziilor. O sursă absentă, stale sau cu eroare reduce acoperirea; nu este o anomalie a fluviului.
+5. Încredere mare este permisă numai când există cel puțin două familii de probe independente, direct relevante, fără contradicție materială. Pentru fiecare cauză arată proba, contra-proba, limita și nivelul de încredere.
+6. Nu transforma o corelație, un reziduu sau o nepotrivire măsurat/model în cauzalitate. O contradicție indică mai întâi probleme posibile de timp, poziție, unitate, parsare, bias ori prospețime.
+7. Dacă testele sunt în limite, spune doar că nu apare o incompatibilitate în testele disponibile; nu susține că un fenomen nemăsurat a fost exclus.
+8. Bilanțul P−Q folosește șase puncte-proxy și debit modelat, nu este închidere hidrologică de bazin. Nu poate izola stocarea, evapotranspirația, captările, transferurile sau eroarea de model.
+9. Dacă mod_verificare_externa.activ este true, folosește căutarea web numai pentru context oficial/instituțional actual și pentru contradicții. Preferă surse primare, indică data și păstrează citările produse de instrument. Separă clar ce vine din web de datele monitorului. Dacă modul este false sau instrumentul nu a rulat, scrie exact că verificarea externă nu a fost efectuată; nu prezenta memoria modelului ca verificare externă.
+10. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
+
+Răspunsul trebuie să aibă exact aceste șase titluri, în română, maximum 500 de cuvinte:
+SITUAȚIA
+CAUZE PROBABILE
+ANOMALII DE DATE ȘI CONTRADICȚII
+VERIFICARE EXTERNĂ
+CE NU SE POATE CONCLUZIONA DIN ACESTE DATE
+CE AR SCHIMBA CONCLUZIA"""
+
+REQUIRED_HEADINGS = (
+    "SITUAȚIA",
+    "CAUZE PROBABILE",
+    "ANOMALII DE DATE ȘI CONTRADICȚII",
+    "VERIFICARE EXTERNĂ",
+    "CE NU SE POATE CONCLUZIONA DIN ACESTE DATE",
+    "CE AR SCHIMBA CONCLUZIA",
+)
 
 
-def _digest():
-    """Datele de intrare, distilate: tot ce contează, fără seriile lungi."""
-    r = C.cached("anomalii_report", 6 * 3600, anomalii.report)["data"]
-    st = C.cached("statistici", 6 * 3600, anomalii.full_stats)["data"]
-    bi = C.cached("bilant_apa", 6 * 3600, anomalii.water_budget)["data"]
+def _delivery_meta(result):
+    """Păstrează proveniența temporală a wrapperelor de cache."""
+    if not isinstance(result, dict):
+        return {}
+    return {k: result[k] for k in ("stale", "cache_age_s", "error") if k in result}
 
-    def fara(d, *chei):
-        return {k: v for k, v in (d or {}).items() if k not in chei}
 
-    return {
-        "data": date.today().isoformat(),
-        "climatologie_sectiuni": [fara(c, "recent") for c in r.get("climatologie", [])],
-        "bilant_portile_de_fier": r.get("bilant"),
-        "inhga_vs_model": fara(r.get("masurat_vs_model"), "serie"),
-        "mire_incrucisate": r.get("mire_crosscheck"),
-        "precipitatii_vs_debit": r.get("precipitatii"),
-        "satelit_altimetrie": r.get("satelit"),
-        "germania_masurat_vs_model": r.get("germania"),
-        "serbia_masurat_vs_model": r.get("serbia"),
-        "austria_test_retentie": fara(r.get("austria"), "statii"),
-        "bilant_apa_bazin_superior": bi,
-        "statistici_precipitatii_zone": st.get("precipitatii"),
-        "buletin_inhga": fara(_inhga(), "text_oficial"),
-    }
+def _safe_context(fetch_fn):
+    """O sursă de context căzută nu trebuie să anuleze întregul digest."""
+    try:
+        result = fetch_fn()
+        if isinstance(result, dict) and "data" in result and (
+                "stale" in result or "cache_age_s" in result):
+            return {"date": result["data"], "livrare": _delivery_meta(result)}
+        return {"date": result, "livrare": {}}
+    except Exception as exc:
+        return {"date": None, "livrare": {"eroare": str(exc)[:240]}}
 
 
 def _inhga():
@@ -87,33 +104,84 @@ def _inhga():
         return {}
 
 
-def _amprenta_stare():
-    """Starea CATEGORIALĂ a fluviului — analiza se regenerează doar când se
-    schimbă ceva de aici, nu la fiecare fluctuație de zecimale."""
-    r = C.cached("anomalii_report", 6 * 3600, anomalii.report)["data"]
-    bi = C.cached("bilant_apa", 6 * 3600, anomalii.water_budget)["data"]
+def _digest():
+    """Datele necesare analizei, fără seriile lungi sau imaginile binare."""
+    raport = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)
+    stats = C.cached(anomalii.STATS_CACHE_KEY, 6 * 3600, anomalii.full_stats)
+    budget = C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)
+    r, st, bi = raport["data"], stats["data"], budget["data"]
 
-    def z_ok(d, prag=1.5):
-        return None if not d or d.get("insuficient") else abs(d.get("z", 0)) <= prag
+    def fara(value, *keys):
+        return {k: v for k, v in (value or {}).items() if k not in keys}
+
+    return {
+        "data": date.today().isoformat(),
+        "mod_verificare_externa": {
+            "activ": AI_WEB_SEARCH,
+            "regula": "web doar pentru context oficial actual; cifrele monitorului rămân din JSON",
+        },
+        "metadate_actualizare": {
+            "raport_anomalii": _delivery_meta(raport),
+            "statistici": _delivery_meta(stats),
+            "bilant_apa": _delivery_meta(budget),
+        },
+        "erori_calcul": r.get("erori", {}),
+        "climatologie_sectiuni": [fara(c, "recent") for c in r.get("climatologie", [])],
+        "statistici_debit_sectiuni": st.get("debit"),
+        "metode_statistici": st.get("metoda"),
+        "bilant_portile_de_fier": r.get("bilant"),
+        "inhga_vs_model": fara(r.get("masurat_vs_model"), "serie"),
+        "mire_incrucisate": r.get("mire_crosscheck"),
+        "precipitatii_vs_debit": r.get("precipitatii"),
+        "satelit_altimetrie": r.get("satelit"),
+        "germania_masurat_vs_model": r.get("germania"),
+        "ungaria_masurat_vs_model": r.get("ungaria"),
+        "serbia_masurat_vs_model": r.get("serbia"),
+        "austria_test_retentie": fara(r.get("austria"), "statii"),
+        "bilant_apa_bazin_superior": bi,
+        "statistici_precipitatii_zone": st.get("precipitatii"),
+        "buletin_inhga": fara(_inhga(), "text_oficial"),
+        "registru_provenienta": C.evidence_source_registry(),
+        "context_seceta_copernicus_edo": _safe_context(C.edo_status),
+        "context_suprafata_apa_opera": _safe_context(C.opera_surface_status),
+        "context_zapada_sol_copernicus_land": _safe_context(C.copernicus_land_context),
+        "catalog_misiuni_satelitare_nasa": _safe_context(C.earthdata_satellite_catalog),
+        "context_istoric_masurat_grdc": _safe_context(anomalii.grdc_context),
+    }
+
+
+def _amprenta_stare():
+    """Starea categorială; zecimalele mici nu declanșează apeluri plătite."""
+    r = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)["data"]
+    bi = C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)["data"]
+
+    def z_ok(value, prag=1.5):
+        return None if not value or value.get("insuficient") else abs(value.get("z", 0)) <= prag
 
     inhga = _inhga()
     debit, medie = inhga.get("debit_bazias_m3s"), inhga.get("media_multianuala_m3s")
+    normal = (bi.get("bazias") or {}).get("normal_km3")
+    lipsa = (bi.get("bazias") or {}).get("lipsa_km3")
     parti = {
+        "versiune_metoda": PROMPT_VERSION,
+        "configuratie_ai": {
+            "mod": "web_cu_citari" if AI_WEB_SEARCH else "doar_json",
+            "model": AI_WEB_MODEL if AI_WEB_SEARCH else AI_MODEL,
+        },
         "severitati": [c.get("severitate") for c in r.get("climatologie", [])],
+        "erori": sorted((r.get("erori") or {}).keys()),
         "verificari": {
             "bilant_pf": z_ok(r.get("bilant")),
             "inhga_model": z_ok(r.get("masurat_vs_model")),
             "mire": (r.get("mire_crosscheck") or {}).get("mediana_abatere_cm", 99) <= 10,
             "satelit": (r.get("satelit") or {}).get("mediana_pct", 99) <= 15,
             "germania": (r.get("germania") or {}).get("coerent"),
+            "ungaria": (r.get("ungaria") or {}).get("coerent"),
             "serbia": (r.get("serbia") or {}).get("coerent"),
             "austria": not (r.get("austria") or {}).get("suspiciune_retentie", False),
         },
-        # găleți de 5 puncte procentuale — trecerea dintr-una în alta = schimbare
-        "bilant_gaura_pct5": round(100 * bi["bazias"]["lipsa_km3"]
-                                   / bi["bazias"]["normal_km3"] / 5),
+        "bilant_gaura_pct5": round(100 * lipsa / normal / 5) if normal and lipsa is not None else None,
         "grace_luna": (bi.get("grace") or {}).get("luna"),
-        # debitul INHGA în găleți de 10% din media multianuală
         "inhga_pct10": round(10 * debit / medie) if debit and medie else None,
     }
     fp = hashlib.sha256(json.dumps(parti, sort_keys=True).encode()).hexdigest()[:16]
@@ -121,25 +189,133 @@ def _amprenta_stare():
 
 
 def _ai_key():
-    k = os.environ.get("AI_API_KEY", "").strip()
-    if k:
-        return k
-    cale = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    key = os.environ.get("AI_API_KEY", "").strip()
+    if key:
+        return key
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "data", "keys", "openai.key")
-    if os.path.isfile(cale):
-        return open(cale).read().strip()
+    if os.path.isfile(path):
+        with open(path) as handle:
+            return handle.read().strip()
     return ""
+
+
+def _official_openai_base():
+    parsed = urllib.parse.urlparse(AI_BASE)
+    return parsed.scheme == "https" and parsed.hostname == "api.openai.com"
+
+
+def _request_spec(date_intrare):
+    """Construiește cererea fără a o trimite; util și pentru audit/teste."""
+    user_text = "Datele de azi:\n" + json.dumps(date_intrare, ensure_ascii=False)
+    if AI_WEB_SEARCH:
+        return {
+            "mode": "web_cu_citari",
+            "model": AI_WEB_MODEL,
+            "url": f"{AI_BASE}/responses",
+            "body": {
+                "model": AI_WEB_MODEL,
+                "instructions": PROMPT_SISTEM,
+                "input": user_text,
+                "tools": [{"type": "web_search", "search_context_size": "medium"}],
+                "max_output_tokens": 1400,
+            },
+        }
+    return {
+        "mode": "doar_json",
+        "model": AI_MODEL,
+        "url": f"{AI_BASE}/chat/completions",
+        "body": {
+            "model": AI_MODEL,
+            "temperature": 0.2,
+            "max_tokens": 1200,
+            "messages": [
+                {"role": "system", "content": PROMPT_SISTEM},
+                {"role": "user", "content": user_text},
+            ],
+        },
+    }
+
+
+def _parse_responses_output(out):
+    """Extrage textul, căutările și citările URL din Responses API."""
+    text_parts, raw_citations, queries = [], [], []
+    for item in out.get("output") or []:
+        if item.get("type") == "web_search_call":
+            action = item.get("action") or {}
+            candidates = action.get("queries") or [action.get("query")]
+            queries.extend(q for q in candidates if isinstance(q, str) and q)
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            if content.get("type") != "output_text":
+                continue
+            part = content.get("text") or ""
+            offset = sum(len(p) for p in text_parts)
+            text_parts.append(part)
+            for ann in content.get("annotations") or []:
+                if ann.get("type") != "url_citation":
+                    continue
+                url = ann.get("url") or ""
+                if not url.startswith("https://"):
+                    continue
+                raw_citations.append({
+                    "url": url,
+                    "title": ann.get("title") or url,
+                    "end": offset + min(max(int(ann.get("end_index", len(part))), 0), len(part)),
+                })
+
+    text = "".join(text_parts) or (out.get("output_text") or "")
+    citations, ids_by_url, insertions = [], {}, {}
+    for citation in raw_citations:
+        if citation["url"] not in ids_by_url:
+            cid = len(citations) + 1
+            ids_by_url[citation["url"]] = cid
+            citations.append({"id": cid, "url": citation["url"],
+                              "title": citation["title"]})
+        cid = ids_by_url[citation["url"]]
+        insertions.setdefault(citation["end"], set()).add(cid)
+    for end in sorted(insertions, reverse=True):
+        markers = "".join(f"⟦WEB:{cid}⟧" for cid in sorted(insertions[end]))
+        text = text[:end] + markers + text[end:]
+    return text.strip(), citations, list(dict.fromkeys(queries))
+
+
+def _normalize_response(text):
+    """Normalizează numai titlurile, fără a rescrie analiza modelului."""
+    patterns = {
+        "SITUAȚIA": r"SITUAȚIA",
+        "CAUZE PROBABILE": r"CAUZE PROBABILE",
+        "ANOMALII DE DATE ȘI CONTRADICȚII": r"ANOMALII DE DATE ȘI CONTRADICȚII",
+        "VERIFICARE EXTERNĂ": r"VERIFICARE EXTERNĂ",
+        "CE NU SE POATE CONCLUZIONA DIN ACESTE DATE":
+            r"CE NU SE POATE CONCLUZIONA DIN ACESTE DATE",
+        "CE AR SCHIMBA CONCLUZIA": r"CE AR SCHIMB[ĂA] CONCLUZIA",
+    }
+    normalized = text
+    for heading, pattern in patterns.items():
+        normalized = re.sub(
+            rf"(?mi)^\s*(?:#{{1,6}}\s*)?(?:\*\*)?{pattern}\s*:?\s*(?:\*\*)?\s*$",
+            heading, normalized,
+        )
+    missing = [heading for heading in REQUIRED_HEADINGS if heading not in normalized]
+    return normalized.strip(), missing
 
 
 def analiza():
     key = _ai_key()
     if not key:
-        return {"activ": False,
-                "motiv": "Lipsește AI_API_KEY. Setați în env-ul serverului "
-                         "AI_API_KEY (+ opțional AI_MODEL, AI_BASE_URL) pentru "
-                         "analiza narativă generată de AI. Sinteza deterministă "
-                         "din capul paginii funcționează oricum, fără AI."}
-
+        return {
+            "activ": False,
+            "motiv": "Lipsește AI_API_KEY. Sinteza deterministă funcționează fără AI; "
+                     "pentru analiza narativă setați AI_API_KEY și opțional AI_MODEL/AI_BASE_URL.",
+        }
+    if AI_WEB_SEARCH and not _official_openai_base():
+        return {
+            "activ": False,
+            "motiv": "AI_WEB_SEARCH=1 cere API-ul OpenAI oficial (AI_BASE_URL=https://api.openai.com/v1), "
+                     "pentru ca răspunsul să includă citări web verificabile.",
+        }
     with _lock_ai:
         return _analiza_locked(key)
 
@@ -149,8 +325,12 @@ def _analiza_locked(key):
     veche = C.cache_get("analiza_ai", max_age=10 ** 9)
     if veche:
         vd, varsta = veche["data"], veche["age"]
+        compatibila = vd.get("prompt_version") == PROMPT_VERSION
         neschimbat = vd.get("amprenta") == fp
-        if (neschimbat and varsta < MAX_VARSTA_S) or varsta < MIN_INTERVAL_S:
+        configuratie_veche = (vd.get("amprenta_parti") or {}).get("configuratie_ai")
+        aceeasi_configuratie = configuratie_veche == parti["configuratie_ai"]
+        if compatibila and aceeasi_configuratie and (
+                (neschimbat and varsta < MAX_VARSTA_S) or varsta < MIN_INTERVAL_S):
             return {"data": vd, "stale": False}
         schimbate = [k for k in parti
                      if parti.get(k) != (vd.get("amprenta_parti") or {}).get(k)]
@@ -161,33 +341,42 @@ def _analiza_locked(key):
 
     def fetch():
         date_intrare = _digest()
-        body = json.dumps({
-            "model": AI_MODEL,
-            "temperature": 0.2,
-            "max_tokens": 900,
-            "messages": [
-                {"role": "system", "content": PROMPT_SISTEM},
-                {"role": "user", "content": "Datele de azi:\n" +
-                 json.dumps(date_intrare, ensure_ascii=False)},
-            ],
-        }).encode("utf-8")
+        spec = _request_spec(date_intrare)
+        body = json.dumps(spec["body"]).encode("utf-8")
         req = urllib.request.Request(
-            f"{AI_BASE}/chat/completions", data=body,
+            spec["url"], data=body,
             headers={"Authorization": f"Bearer {key}",
                      "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             out = json.load(resp)
-        text = out["choices"][0]["message"]["content"].strip()
+        if spec["mode"] == "web_cu_citari":
+            text, citations, queries = _parse_responses_output(out)
+        else:
+            text = out["choices"][0]["message"]["content"].strip()
+            citations, queries = [], []
+        if not text:
+            raise RuntimeError("API-ul AI nu a întors text")
+        text, missing_headings = _normalize_response(text)
         rezultat = {
-            "activ": True, "text": text, "model": AI_MODEL,
+            "activ": True,
+            "text": text,
+            "model": out.get("model") or spec["model"],
+            "mod": spec["mode"],
+            "citari_web": citations,
+            "cautari_web": queries,
+            "sectiuni_lipsa": missing_headings,
             "generat": date.today().isoformat(),
             "declansator": declansator,
-            "amprenta": fp, "amprenta_parti": parti,
+            "amprenta": fp,
+            "amprenta_parti": parti,
+            "prompt_version": PROMPT_VERSION,
             "prompt_sistem": PROMPT_SISTEM,
             "date_intrare": date_intrare,
         }
-        C.daily_snapshot("analiza_ai", {"text": text, "model": AI_MODEL,
-                                        "declansator": declansator})
+        C.daily_snapshot("analiza_ai", {
+            "text": text, "model": rezultat["model"], "mod": spec["mode"],
+            "citari_web": citations, "declansator": declansator,
+        })
         return rezultat
 
     try:
@@ -195,6 +384,6 @@ def _analiza_locked(key):
         C.cache_put("analiza_ai", rezultat, 10 ** 9)
         return {"data": rezultat, "stale": False}
     except Exception as exc:
-        if veche:  # la eroare de API servim ultima analiză, marcată
+        if veche:
             return {"data": veche["data"], "stale": True, "error": str(exc)}
         raise

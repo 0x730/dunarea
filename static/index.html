@@ -16,8 +16,20 @@
   <div id="status-pills"></div>
 </header>
 
+<nav class="view-nav" aria-label="Secțiunile monitorului">
+  <span class="view-nav-label">Vedere</span>
+  <div class="view-nav-links">
+    <a href="/" data-view-link="acum">Acum</a>
+    <a href="/bazin" data-view-link="context">Bazin &amp; istoric</a>
+    <a href="/integritate" data-view-link="integritate">Verificări &amp; surse</a>
+    <a href="/sectoare" data-view-link="sectoare">Porțile de Fier &amp; Delta</a>
+    <a href="/optiuni" data-view-link="actiuni">Opțiuni</a>
+  </div>
+</nav>
+<nav id="view-toc" class="view-toc" aria-label="În această vedere"></nav>
+
 <!-- ============================================================ sinteza -->
-<section id="sec-sinteza">
+<section id="sec-sinteza" data-view="acum">
   <div class="sinteza card" id="sinteza-card">
     <div class="loading">se compune concluzia din datele de azi…</div>
   </div>
@@ -25,7 +37,7 @@
 </section>
 
 <!-- ================================================== buletinul de azi -->
-<section id="sec-hero">
+<section id="sec-hero" data-view="acum">
   <div class="hero">
     <div class="hero-num" id="hero-num">
       <div class="loading">se încarcă buletinul INHGA…</div>
@@ -35,12 +47,12 @@
 </section>
 
 <!-- ============================================== profilul longitudinal -->
-<section id="sec-profil">
+<section id="sec-profil" data-view="acum">
   <p class="eyebrow">semnătura fluviului</p>
   <h2>Profil longitudinal — debitul de la Ingolstadt la vărsare</h2>
   <p class="section-note">Fiecare punct e o stație sau o secțiune de calcul, așezată la
     kilometrul ei fluvial. Punctele pline <b>●</b> sunt măsurători oficiale
-    (PEGELONLINE&nbsp;DE/AT, RHMZ&nbsp;RS, INHGA&nbsp;RO); punctele goale <b>○</b> sunt
+    (PEGELONLINE&nbsp;DE, Hydroinfo&nbsp;HU, RHMZ&nbsp;RS, INHGA&nbsp;RO); punctele goale <b>○</b> sunt
     estimări de model (GloFAS/Copernicus). Trecerea cu mouse-ul arată valorile; scara
     debitului e logaritmică.</p>
   <div class="profil-box">
@@ -56,13 +68,13 @@
 </section>
 
 <!-- ============================================================ anomalii -->
-<section id="sec-anomalii">
+<section id="sec-anomalii" data-view="acum">
   <p class="eyebrow">detectorul</p>
   <h2>Anomalii față de istoric — ce e anormal și ce nu se leagă</h2>
-  <p class="section-note">Patru verificări automate, cu metoda și limitele la vedere.
-    Diferența contează: un debit <b>anormal de mic</b> poate fi pe deplin explicat de ploi
-    (secetă), pe când o <b>gaură persistentă în bilanț</b> între două stații ar fi un semnal
-    real de investigat. Detectoarele produc cifre verificabile, nu concluzii.</p>
+  <p class="section-note">O suită de verificări automate, cu metoda și limitele la vedere.
+    Diferența contează: un debit <b>anormal de mic</b> poate fi compatibil cu un deficit de
+    precipitații, iar o <b>abatere persistentă</b> între serii independente merită investigată.
+    Detectoarele produc cifre verificabile, nu concluzii.</p>
   <div class="card">
     <h3>Starea de azi față de ultimii ~30 de ani <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
     <p class="sub">percentila zilei calendaristice (fereastră ±7 zile, referință 1991–anul trecut)</p>
@@ -84,20 +96,59 @@
   </div>
 </section>
 
+<!-- ================================================ context Copernicus EDO -->
+<section id="sec-edo" data-view="context">
+  <p class="eyebrow">contextul terestru</p>
+  <h2>Seceta din bazin — două straturi Copernicus EDO</h2>
+  <p class="section-note">Hărți oficiale, decupate aproximativ pe coridorul bazinului
+    Dunării. CDI combină precipitații, umiditatea solului și starea vegetației;
+    anomalia de umiditate a solului este modelată față de propria climatologie.
+    Sunt <b>context spațial</b>, nu măsurători de debit și nu schimbă verdictele automate.</p>
+  <div class="grid-2 edo-grid">
+    <div class="card">
+      <h3>Combined Drought Indicator <span class="prov prov-model">Copernicus EDO</span></h3>
+      <p class="sub" id="edo-cdi-meta">se citește data stratului…</p>
+      <div class="edo-map-wrap">
+        <img id="edo-cdi-map" alt="Harta Combined Drought Indicator pentru bazinul Dunării">
+        <span class="edo-place" style="--x:25%;--y:18%">Passau</span>
+        <span class="edo-place" style="--x:38%;--y:25%">Viena</span>
+        <span class="edo-place" style="--x:50%;--y:32%">Budapesta</span>
+        <span class="edo-place" style="--x:62%;--y:45%">Baziaș</span>
+        <span class="edo-place" style="--x:94%;--y:60%">Delta</span>
+      </div>
+      <div class="edo-legend cdi"><span>veghe</span><span>avertizare</span><span>alertă</span></div>
+    </div>
+    <div class="card">
+      <h3>Anomalia umidității solului <span class="prov prov-model">LISFLOOD / EDO</span></h3>
+      <p class="sub" id="edo-soil-meta">se citește data stratului…</p>
+      <div class="edo-map-wrap">
+        <img id="edo-soil-map" alt="Harta anomaliei umidității solului pentru bazinul Dunării">
+        <span class="edo-place" style="--x:25%;--y:18%">Passau</span>
+        <span class="edo-place" style="--x:38%;--y:25%">Viena</span>
+        <span class="edo-place" style="--x:50%;--y:32%">Budapesta</span>
+        <span class="edo-place" style="--x:62%;--y:45%">Baziaș</span>
+        <span class="edo-place" style="--x:94%;--y:60%">Delta</span>
+      </div>
+      <div class="edo-legend soil"><span>mult mai uscat</span><span>mai uscat</span><span>normal</span><span>mai umed</span></div>
+    </div>
+  </div>
+  <p class="sub edo-note" id="edo-note">Sursă: Copernicus Emergency Management Service — European Drought Observatory.</p>
+</section>
+
 <!-- ======================================================== unde e apa -->
-<section id="sec-bilant">
+<section id="sec-bilant" data-view="context">
   <p class="eyebrow">contabilitatea</p>
   <h2>Unde e apa — bilanțul, rând cu rând</h2>
-  <p class="section-note">Apa nu dispare: se mută pe alt rând din bilanț. Panoul calculează
-    automat, pentru bazinul superior (deasupra Passau, ~77.000 km²), cât a plouat de la
-    1 ianuarie, cât a curs prin râu și cât au luat atmosfera și solul — față de un an
-    normal. Rândul cel mai mare din bilanț, evaporarea, e și singurul care nu se vede
-    cu ochiul liber.</p>
+  <p class="section-note">Un screening P−Q pentru bazinul superior (deasupra Passau,
+    ~77.000 km²): precipitația aproximată din șase puncte ERA5, debitul modelat și
+    rezidualul dintre ele, toate față de aceeași fereastră istorică. Rezidualul nu este
+    o măsurătoare a evaporării: amestecă evapotranspirația, zăpada și celelalte stocuri,
+    schimburile neobservate și erorile de estimare.</p>
   <div class="card" id="bilant-card"><div class="loading">se calculează…</div></div>
 </section>
 
 <!-- ================================================= sectorul românesc -->
-<section id="sec-tabele">
+<section id="sec-tabele" data-view="acum">
   <p class="eyebrow">azi, pe stații</p>
   <h2>Cotele și debitele de azi</h2>
   <p class="section-note">Stânga: cotele oficiale AFDJ pe sectorul românesc
@@ -117,7 +168,7 @@
   </div>
   <div style="height:22px"></div>
   <div class="card">
-    <h3>Avize oficiale către navigatori — punctele critice din albie <span class="prov prov-masurat">oficial · AFDJ / APPD / administrațiile riverane</span></h3>
+    <h3>Avize oficiale către navigatori — punctele critice din albie <span class="prov prov-masurat">oficial</span></h3>
     <p class="sub">„Notices to Skippers" active azi — restricțiile, dragajele și sectoarele cu
       niveluri scăzute, cu kilometrajul exact: versiunea oficială a locurilor din fotografiile
       cu albia dezvelită</p>
@@ -126,7 +177,7 @@
 </section>
 
 <!-- ============================================ comparația multianuală -->
-<section id="sec-ani">
+<section id="sec-ani" data-view="context">
   <p class="eyebrow">memoria fluviului</p>
   <h2>Comparație cu anii trecuți</h2>
   <p class="section-note">Debit zilnic pe ani suprapuși, cu banda min–max și mediana
@@ -154,7 +205,7 @@
 </section>
 
 <!-- ========================================================== statistici -->
-<section id="sec-statistici">
+<section id="sec-statistici" data-view="context">
   <p class="eyebrow">cifrele</p>
   <h2>Statistici complete — anul curent față de istoric</h2>
   <p class="section-note">Toate secțiunile și toate zonele, în două tabele: cât e azi,
@@ -171,22 +222,23 @@
   <div class="card">
     <h3>Precipitații pe zone <span class="prov prov-model">reanaliza ERA5 · referință 2000–anul trecut</span></h3>
     <p class="sub">ian→azi = cumul de la 1 ianuarie până la ultima zi disponibilă; iarna = noiembrie–martie
-      (zăpada din bazinul superior ține debitul verii)</p>
+      · ninsoarea cumulată este un context, nu măsoară stratul rămas sau apa stocată în el</p>
     <div id="tabel-stat-precip"><div class="loading">se calculează…</div></div>
   </div>
 </section>
 
 <!-- ========================================================= contra-probe -->
-<section id="sec-contraprobe">
+<section id="sec-contraprobe" data-view="integritate">
   <p class="eyebrow">contra-probe</p>
-  <h2>Verificare independentă — surse care nu cer încredere</h2>
-  <p class="section-note">Aceeași apă, măsurată de alte sisteme: rețeaua de navigație a
+  <h2>Contra-probe — surse comparate</h2>
+  <p class="section-note">Aceeași apă, observată de alte sisteme: rețeaua de navigație a
     tuturor statelor riverane (cvasi-orar), dispecerul energetic național (timp real),
-    satelitul (altimetrie) și arhiva mondială de debite măsurate. Dacă cifrele oficiale
-    românești ar fi „aranjate", aici s-ar vedea rupturile.</p>
+    altimetria și suprafața apei din satelit, starea zăpezii/solului și arhiva
+    mondială de debite măsurate. Acordul dintre ele poate
+    găsi incompatibilități evidente; nu dovedește că toate sursele sunt complete sau corecte.</p>
   <div class="grid-2">
     <div class="card">
-      <h3>DanubeSTREAM — mirele tuturor țărilor <span class="prov prov-masurat">măsurat · cvasi-orar</span></h3>
+      <h3>DanubeSTREAM — mire transfrontaliere <span class="prov prov-masurat">măsurat · cvasi-orar</span></h3>
       <p class="sub"><a href="https://www.danubeportal.com" target="_blank" rel="noopener">danubeportal.com</a> —
         administrațiile de navigație riverane (FAIRway Danube)</p>
       <div id="cp-danubeportal"><div class="loading">se încarcă…</div></div>
@@ -202,7 +254,39 @@
       <p class="sub"><a href="https://hydroweb.next.theia-land.fr" target="_blank" rel="noopener">hydroweb.next</a> (CNES/Theia)
         + <a href="https://dahiti.dgfi.tum.de" target="_blank" rel="noopener">DAHITI</a> ca rezervă —
         niveluri din Sentinel-3/6, SWOT și Jason, independent de orice institut național</p>
-      <ul class="facts" id="cp-dahiti"><li><span class="loading">se încarcă…</span></li></ul>
+      <div id="cp-dahiti"><div class="loading">se încarcă…</div></div>
+    </div>
+    <div class="card">
+      <h3>Suprafața apei — NASA OPERA <span class="prov prov-calculat">shadow · radar + optic</span></h3>
+      <p class="sub"><a href="https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1" target="_blank" rel="noopener">DSWx-S1</a>
+        + DSWx-HLS prin NASA GIBS — clase publicate de NASA/JPL; nu clasificăm noi imaginile</p>
+      <ul class="facts" id="cp-opera"><li><span class="loading">se caută ultima trecere utilă…</span></li></ul>
+      <div class="sat-map-grid">
+        <div><p class="sub" id="opera-s1-meta">Sentinel-1 SAR</p><div class="edo-map-wrap"><img id="opera-s1-map" alt="OPERA DSWx Sentinel-1, Dunărea de Jos"></div></div>
+        <div><p class="sub" id="opera-hls-meta">Landsat/Sentinel-2</p><div class="edo-map-wrap"><img id="opera-hls-map" alt="OPERA DSWx HLS, Dunărea de Jos"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Zăpadă și sol — Copernicus Land <span class="prov prov-calculat">context datat</span></h3>
+      <p class="sub">Catalogul public CDSE; hărțile sunt produse satelitare, iar data și
+        buletinele de calitate rămân atașate</p>
+      <ul class="facts" id="cp-copernicus-land"><li><span class="loading">se încarcă…</span></li></ul>
+      <div class="sat-map-grid">
+        <div><p class="sub" id="clms-snow-meta">zăpadă</p><div class="edo-map-wrap"><img id="clms-snow-map" alt="Extinderea zăpezii în Europa"></div></div>
+        <div><p class="sub" id="clms-soil-meta">umiditatea solului</p><div class="edo-map-wrap"><img id="clms-soil-map" alt="Umiditatea solului în Europa"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Misiuni complementare <span class="prov prov-calculat">catalog public · valori opționale</span></h3>
+      <p class="sub">NASA Earthdata CMR — SWOT, SMAP, ICESat-2 și NISAR. Catalogul este
+        public; fișierele științifice cer un cont Earthdata gratuit.</p>
+      <ul class="facts" id="cp-satellite-catalog"><li><span class="loading">se verifică acoperirea…</span></li></ul>
+    </div>
+    <div class="card">
+      <h3>Lineage — ce este cu adevărat independent <span class="prov prov-calculat">regulă de integritate</span></h3>
+      <p class="sub">Registrul tuturor surselor și relațiile care împiedică dublarea
+        aceleiași măsurători, scene sau familii de model.</p>
+      <ul class="facts" id="cp-source-lineage"><li><span class="loading">se construiește registrul…</span></li></ul>
     </div>
     <div class="card">
       <h3>Gravimetrie GRACE — toată apa din bazin <span class="prov prov-masurat">măsurat din orbită</span></h3>
@@ -211,27 +295,27 @@
       <ul class="facts" id="cp-grav"><li><span class="loading">se încarcă (prima rulare descarcă ~48 de luni)…</span></li></ul>
     </div>
     <div class="card">
-      <h3>Arhiva seculară — GRDC <span class="prov prov-masurat">măsurat · din sec. XIX</span></h3>
+      <h3>Arhiva istorică — GRDC <span class="prov prov-masurat">măsurat · multidecenal</span></h3>
       <p class="sub"><a href="https://portal.grdc.bafg.de" target="_blank" rel="noopener">Global Runoff Data Centre</a>,
-        Koblenz — debite măsurate, serii de peste 100 de ani</p>
+        Koblenz — debite zilnice măsurate; intervalul diferă de la stație la stație</p>
       <ul class="facts" id="cp-grdc"><li><span class="loading">se încarcă…</span></li></ul>
     </div>
   </div>
   <p class="section-note" style="margin-top:16px">Alte contra-probe, direct în browser:
     <a href="https://drought.emergency.copernicus.eu" target="_blank" rel="noopener">European Drought Observatory</a> (indicatorii UE de secetă) ·
-    <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (date validate, toate țările, cont gratuit) ·
+    <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (tabelele curente sunt publice; export WaterML/CSV cu cont) ·
     <a href="https://ehyd.gv.at" target="_blank" rel="noopener">eHYD Austria</a> (serii lungi CSV) ·
     <a href="https://browser.dataspace.copernicus.eu" target="_blank" rel="noopener">Copernicus Browser</a> (imagini Sentinel-2 la 10 m — lacuri, brațe, Bâstroe).</p>
 </section>
 
 <!-- ==================================================== Porțile de Fier -->
-<section id="sec-pf">
+<section id="sec-pf" data-view="sectoare">
   <p class="eyebrow">nodul energetic</p>
   <h2>Porțile de Fier I &amp; II</h2>
   <p class="section-note">Ce se vede din date publice — și ce nu se publică nicăieri.
     Intrarea în lac se măsoară la Baziaș, ieșirea din sistem se citește la Gruia și
     Prahovo. Telemetria barajelor (debit pe turbine, deversoare, ecluzări, pe ore)
-    <b>nu este un flux public</b> la niciun operator — nici în România, nici în Serbia.</p>
+    <b>nu a fost identificată ca flux public</b> în sursele oficiale revizuite din România și Serbia.</p>
   <div class="grid-3">
     <div class="card">
       <h3>Bilanțul public al nodului</h3>
@@ -264,7 +348,7 @@
 </section>
 
 <!-- ============================================================= delta -->
-<section id="sec-delta">
+<section id="sec-delta" data-view="sectoare">
   <p class="eyebrow">despletirea</p>
   <h2>Delta — Ceatal Izmail, Chilia, Sulina, Sf. Gheorghe, Bâstroe</h2>
   <p class="section-note">Aici se termină datele publice în timp real. Distribuția exactă a
@@ -290,14 +374,14 @@
         <li><span class="k">canal Bâstroe</span><span class="v">derivație din brațul Chilia, pe teritoriul Ucrainei; adâncit în 2004 și re-dragat din 2022 pentru coridorul de export</span></li>
         <li><span class="k">debit Bâstroe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — fără măsurători ucrainene publice; se poate doar estima din bilanțul brațelor</span></li>
         <li><span class="k">distribuția pe brațe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> ca flux; există în rapoartele campaniilor INHGA/AFDJ și ale Comisiei Dunării</span></li>
-        <li><span class="k">verificabil azi</span><span class="v">cotele AFDJ pe Tulcea/Sulina și nivelurile totale — orice deviere majoră de debit s-ar vedea în ele</span></li>
+        <li><span class="k">verificabil azi</span><span class="v">cotele AFDJ pe Tulcea/Sulina oferă context de nivel; fără debite pe brațe nu pot cuantifica și nici atribui o eventuală deviere</span></li>
       </ul>
     </div>
   </div>
 </section>
 
 <!-- ======================================================= metodologie -->
-<section id="sec-metodologie">
+<section id="sec-metodologie" data-view="integritate">
   <p class="eyebrow">auditabil</p>
   <h2>Metodologie — fiecare verificare, cu sursele și limitele ei</h2>
   <p class="section-note">Tot ce afirmă aplicația, redus la rețetă: ce surse intră în fiecare
@@ -331,25 +415,37 @@
           <td>percentila cumulului pe 90 de zile (aceeași fereastră calendaristică, 2000+) vs. percentila debitului</td>
           <td>euristic; puncte-proxy, nu medie de bazin; nu e bilanț hidrologic</td></tr>
         <tr><td class="what">Satelit ↔ râu</td>
-          <td>hydroweb.next/CNES (Sentinel-3/6)</td>
-          <td>percentila lunară a fiecărei stații virtuale în propria serie (9–19 ani); mediană pe 11–12 stații</td>
-          <td>reper geoid (nu se compară absolut cu mirele); revizită 10–27 zile</td></tr>
+          <td>hydroweb.next/CNES (Sentinel-3/6, SWOT)</td>
+          <td>stații stratificate pe cursul principal; numai observații ≤35 zile, incertitudine ≤0,25 m și istoric lunar suficient</td>
+          <td>shadow/context; reper geoid, nu debit; stațiile apropiate și DAHITI pe aceleași misiuni nu sunt voturi independente</td></tr>
+        <tr><td class="what">Suprafața apei</td>
+          <td>NASA OPERA DSWx-S1 + DSWx-HLS</td>
+          <td>ultima scenă cu acoperire utilă pe trei zone fixe; clasele open water/inundated vegetation publicate de NASA/JPL</td>
+          <td>shadow până există baseline sezonier; radarul și opticul sunt senzori diferiți, dar împart familia de algoritmi OPERA</td></tr>
+        <tr><td class="what">Zăpadă și sol</td>
+          <td>Copernicus Land/CDSE: SCE 500 m + SSM 1 km</td>
+          <td>catalog STAC și hartă publică datată pe bazin; quality notice atașat produsului</td>
+          <td>context fizic, nu debit; norii, masca, vegetația și interferențele radio pot produce goluri sau artefacte</td></tr>
         <tr><td class="what">Germania: miră ↔ model</td>
           <td>PEGELONLINE/WSV + GloFAS</td>
           <td>debit orar măsurat la Hofkirchen vs. model în aceeași secțiune; bandă de plauzibilitate 0,4–2,5</td>
           <td>o singură stație; bandă largă tocmai ca să nu alarmeze pe bias normal</td></tr>
         <tr><td class="what">Serbia: miră ↔ model</td>
-          <td>RHMZ + GloFAS</td>
+          <td>RHMZ/OVF Hydroinfo + GloFAS</td>
           <td>debit zilnic măsurat la Novi Sad vs. model; aceeași bandă</td>
-          <td>RHMZ publică o dată pe zi (ora 10); TLS-ul sitului cere verificare relaxată</td></tr>
-        <tr><td class="what">Austria: test de retenție</td>
+          <td>valoarea poate lipsi într-unul dintre cele două tabele zilnice; banda testează doar incompatibilități evidente</td></tr>
+        <tr><td class="what">Ungaria: miră ↔ model</td>
+          <td>OVF Hydroinfo + ICPDR DanubeHIS + GloFAS</td>
+          <td>debit zilnic măsurat la Budapesta vs. model în aceeași secțiune</td>
+          <td>o singură secțiune și o bandă largă; nu validează modelul</td></tr>
+        <tr><td class="what">Austria: screening de nivel</td>
           <td>PEGELONLINE (9 mire VIA DONAU, orar)</td>
-          <td>trendul nivelului pe 30 de zile la toate mirele austriece vs. debitul de intrare (Hofkirchen); retenția = niveluri în creștere pe intrare în scădere</td>
-          <td>vede doar lacurile de fir de pe Dunăre (oricum singurele relevante fizic); nu vede bazinele alpine de pompaj, care sunt în afara cursului Dunării</td></tr>
+          <td>trendul nivelului pe 30 de zile la mirele austriece vs. debitul de intrare (Hofkirchen)</td>
+          <td>fără curbe cotă–volum și debite intrare/ieșire nu demonstrează și nu exclude retenția</td></tr>
         <tr><td class="what">Unde e apa (bilanț P–Q)</td>
           <td>ERA5 (6 puncte) + GloFAS + GRACE</td>
           <td>media a 6 puncte-proxy (câmpie+alpin) × aria bazinului la Achleiten (76.650 km²); ferestre calendaristice identice, fără 29 feb</td>
-          <td>proxy ≠ medie de bazin adevărată (±câteva %); rezidualul cumulează erorile ambelor rânduri</td></tr>
+          <td>proxy ≠ medie areală; debitul e modelat; rezidualul amestecă ET, variația stocurilor, schimburi neobservate și erorile ambelor rânduri</td></tr>
         <tr><td class="what">Rezerva bazinului</td>
           <td>GRACE/GRACE-FO (SAGSA/CNES)</td>
           <td>anomalia lunară a apei totale, suma celulelor 1° pe caseta bazinului, serie 2002+</td>
@@ -364,268 +460,397 @@
 </section>
 
 <!-- ================================================ ce se poate face -->
-<section id="sec-solutii">
-  <p class="eyebrow">context</p>
-  <h2>Ce s-a pierdut și ce se poate face</h2>
-  <p class="section-note">Restul paginii măsoară. Secțiunea asta explică <b>de ce un deficit
-    de apă doare mai tare la noi decât la vecini</b> și ce opțiuni există — fiecare cifră cu
-    sursa ei, ca tot ce e mai sus. Nu e o listă de revendicări politice, ci inventarul
-    documentat al capacității pierdute și al soluțiilor deja studiate.</p>
+<section id="sec-solutii" data-view="actiuni">
+  <p class="eyebrow">opțiuni · audit 04.08.2026</p>
+  <h2>Ce știm, ce estimăm și ce se poate face</h2>
+  <p class="section-note">Această pagină separă deliberat <b>faptele oficiale datate</b>,
+    <b>estimările</b> și <b>opțiunile</b>. Nu compară România cu țările vecine fără un set de
+    indicatori omogeni și nu transformă un anunț, un acord de finanțare sau o procedură de
+    mediu în „lucrare executată”. Informația nu se actualizează automat; data auditului este
+    afișată mai sus.</p>
 
   <div class="card">
-    <h3>Ce s-a pierdut — capacitatea de tampon</h3>
-    <p class="sub">Lunca Dunării funcționa ca un rezervor natural: se umplea la ape mari și
-      restituia apa lent, în lunile secetoase</p>
+    <h3>Repere istorice — cu anul și limita lor</h3>
+    <p class="sub">Luncile conectate pot reține temporar apa, favoriza infiltrarea și susține
+      ecosistemele. Contribuția lor la debitele de secetă este însă locală și nu este
+      cuantificată de această pagină.</p>
     <table class="trans">
-      <thead><tr><th>Ce</th><th>Cifra</th><th>Sursa</th></tr></thead>
+      <thead><tr><th>Indicator</th><th>Ce spune sursa</th><th>Ce nu putem deduce</th><th>Sursa</th></tr></thead>
       <tbody>
         <tr>
-          <td class="what">Lunca îndiguită și desecată</td>
-          <td>de la <b>10.200 ha</b> îndiguite în 1949 la <b>~395.000 ha</b> transformate în
-            teren agricol până în 1969 — tamponul natural al fluviului, eliminat în două decenii</td>
+          <td class="what">Îndiguirea luncii românești
+            <br><span class="prov prov-model">inventar istoric</span></td>
+          <td><b>10.200 ha</b> îndiguite în 1949, <b>395.000 ha</b> în 1969 și un maxim de
+            <b>430.000 ha</b> în 1987, echivalent cu 84% din lunca românească în inventarul citat.</td>
+          <td>„Îndiguit” nu înseamnă automat că întreaga suprafață a fost desecată, cultivată
+            sau că tot volumul ei de retenție poate fi recuperat astăzi.</td>
           <td><a href="https://www.asas.ro/noutati/interes-public/Incintele%20indiguite%20la%20Dunare%20-%20probleme%20actuale%20si%20de%20perspectiva.pdf" target="_blank" rel="noopener">ASAS — analiza incintelor îndiguite</a>
-            <span style="color:var(--muted)">(Academia de Științe Agricole și Silvice)</span></td>
+            <span style="color:var(--muted)">(sinteză instituțională)</span></td>
         </tr>
         <tr>
-          <td class="what">Zone umede deconectate</td>
-          <td><b>~80%</b> din fostele zone umede și lunci ale bazinului sunt considerate
-            deconectate de fluviu. Evaluarea ICPDR a suprafețelor: din <b>41.605 km²</b> de
-            lunci istorice au rămas <b>7.845 km²</b> — o pierdere <b>de peste 80%</b>.
-            Potențialul de reconectare identificat în planul de management: <b>144.659 ha</b>,
-            din care <b>23.399 ha</b> prevăzute până în 2027.</td>
+          <td class="what">Lunci la scara bazinului
+            <br><span class="prov prov-model">evaluare ~1999</span></td>
+          <td>O evaluare ICPDR publicată în 1999 inventaria <b>41.605 km²</b> de lunci istorice
+            și <b>7.845 km²</b> existente atunci. Documentele ICPDR mai recente identifică
+            <b>144.659 ha</b> cu potențial de reconectare, dintre care <b>23.399 ha</b> planificate
+            până în 2027.</td>
+          <td>Diferența de peste 80% este un reper istoric al bazinului, nu procentul măsurat în
+            2026 și nici exclusiv situația României. „Potențial” și „planificat” nu înseamnă
+            suprafață deja reconectată.</td>
           <td><a href="https://www.icpdr.org/tasks-topics/topics/hydromorphology/wetlands" target="_blank" rel="noopener">ICPDR — zone umede</a> ·
-            <a href="https://www.icpdr.org/sites/default/files/EVALUATIONWETLANDSFLOODPLAINAREAS.pdf" target="_blank" rel="noopener">evaluarea suprafețelor (ICPDR)</a></td>
+            <a href="https://www.icpdr.org/sites/default/files/EVALUATIONWETLANDSFLOODPLAINAREAS.pdf" target="_blank" rel="noopener">evaluarea din 1999</a></td>
         </tr>
         <tr>
-          <td class="what">Irigații: proiectat vs. funcțional</td>
-          <td><b>~3,1 mil. ha</b> amenajate până în 1989 (375 de sisteme mari) · azi
-            <b>~1,6 mil. ha</b> pregătite pentru irigat, din care <b>~794.000 ha</b> efectiv
-            irigate (2024) — sub 10% din arabil</td>
-          <td><a href="https://old.madr.ro/pages/strategie/proiect-de-reabilitare-si-reforma-a-irigatiilor.pdf" target="_blank" rel="noopener">MADR</a> ·
-            cifrele anuale ANIF, preluate din
-            <a href="https://jurnalul.ro/bani-afaceri/economia/romania-dezastru-irigatii-seceta-sisteme-vechi-1020918.html" target="_blank" rel="noopener">presă economică</a>
-            <span style="color:var(--warning)">(nivel ③ — ANIF nu publică un raport anual consolidat)</span></td>
+          <td class="what">Irigații ANIF
+            <br><span class="prov prov-masurat">28.11.2025</span></td>
+          <td>ANIF raporta <b>1.823.300 ha pregătite</b>, <b>996.905 ha contractate</b> și
+            <b>2.944.664 ha „suprafață irigată”</b> în campania 2025.</td>
+          <td>Ultimul indicator este mai mare decât suprafața contractată, deci nu poate fi
+            comparat ca hectar fizic unic fără definiția ANIF; poate include udări repetate.
+            Nu îl folosim pentru procentul terenului agricol irigat.</td>
+          <td><a href="https://www.anif.ro/campania-de-irigatii/" target="_blank" rel="noopener">ANIF — campania de irigații 2025</a></td>
         </tr>
       </tbody>
     </table>
-    <p class="sub" style="margin-top:12px">Sistemul de irigații a fost proiectat pentru energie
-      ieftină: pompează apa Dunării pe terase înalte. Costul pompării raportat la valoarea recoltei este unul dintre motivele invocate pentru
-      utilizarea redusă a amenajărilor existente.</p>
   </div>
 
   <div style="height:22px"></div>
 
   <div class="card">
-    <h3>Ce se poate face — opțiuni documentate</h3>
-    <p class="sub">Nu propuneri noi: lucruri deja studiate, semnate sau finanțate, cu surse. Ordinea nu implică o ierarhie cost-beneficiu — nu există evaluări comparabile pentru toate</p>
+    <h3>Opțiuni — dovadă, limită și test de rezultat</h3>
+    <p class="sub">Acestea sunt direcții de lucru, nu promisiuni de debit. Ordinea nu este un
+      clasament cost–beneficiu; evaluările disponibile nu sunt comparabile între ele.<br><br>
+      <b>Ordinea de decizie recomandată de Comisia Europeană în 2025:</b> reducerea consumului,
+      apoi eficiență, apoi reutilizare și abia după aceea extinderea alimentării. Este o
+      recomandare de politică publică, nu dovada că o măsură concretă este rentabilă în România.
+      <a href="https://eur-lex.europa.eu/eli/reco/2025/1179/oj/eng" target="_blank" rel="noopener">Recomandarea (UE) 2025/1179</a> ·
+      <a href="https://www.eea.europa.eu/en/analysis/publications/water-savings-for-a-water-resilient-europe" target="_blank" rel="noopener">AEM — economisirea apei</a></p>
     <table class="trans">
-      <thead><tr><th>Măsura</th><th>De ce funcționează</th><th>Sursa</th></tr></thead>
+      <thead><tr><th>Opțiune</th><th>Ce susține dovada</th><th>Ce trebuie măsurat</th><th>Sursa / statut</th></tr></thead>
       <tbody>
         <tr>
           <td class="what">1. Sol care reține apa
-            <br><span style="color:var(--warning);font-size:12px">efect real, magnitudine disputată</span></td>
-          <td>Practicile de conservare a solului (rotații, culturi de acoperire, lucrări minime)
-            cresc infiltrarea și reduc scurgerea de suprafață — beneficiu necontestat.
-            <b>Cât</b> apă suplimentară rețin efectiv este însă subiect de dispută științifică:
-            o lucrare des citată (Hudson 1994, preluată de FAO) dă <b>+3,7%</b> capacitate de
-            apă utilă pentru fiecare +1% materie organică, în timp ce o <b>meta-analiză a 60 de
-            studii, cu peste 50.000 de măsurători</b> (Minasny &amp; McBratney, 2018) găsește un
-            efect mult mai mic. Pagina arată ambele poziții; practica rămâne rezonabilă, dar
-            cifrele spectaculoase care circulă nu se sprijină pe literatura recentă.</td>
-          <td><a href="https://agris.fao.org/search/en/providers/122535/records/65df2f3a63b8185d9cab777b" target="_blank" rel="noopener">meta-analiză (via AGRIS/FAO)</a> ·
-            <a href="https://www.fao.org/4/a0100e/a0100e08.htm" target="_blank" rel="noopener">FAO — materia organică din sol</a> ·
-            <a href="https://journals.flvc.org/edis/article/view/104541" target="_blank" rel="noopener">Univ. Florida (poziția opusă)</a></td>
+            <br><span class="prov prov-calculat">efect modest, contextual</span></td>
+          <td>Meta-analiza a 60 de studii și peste 50.000 de măsurători estimează, în medie,
+            <b>+1,16 mm apă disponibilă la 100 mm de sol</b> pentru +1 punct procentual de
+            carbon organic. FAO documentează și mecanismele prin care acoperirea solului și
+            materia organică pot reduce evaporarea și scurgerea.</td>
+          <td>Carbon organic, infiltrație, umiditate în profil, consum de irigație și producție,
+            pe soluri și culturi comparabile. Efectul local nu se extrapolează direct la debitul Dunării.</td>
+          <td><a href="https://agris.fao.org/search/en/providers/122535/records/65df2f3a63b8185d9cab777b" target="_blank" rel="noopener">meta-analiză (AGRIS/FAO)</a> ·
+            <a href="https://www.fao.org/4/a0100e/a0100e08.htm" target="_blank" rel="noopener">FAO — materia organică</a></td>
         </tr>
         <tr>
           <td class="what">2. Redarea selectivă a luncii</td>
-          <td>Coridorul Verde al Dunării de Jos — acord semnat în <b>2000</b> de România,
-            Bulgaria, Ucraina și Moldova: <b>935.000 ha</b> protejate și <b>224.000 ha</b> de
-            luncă redate. Cost estimat al refacerii: <b>183 mil. €</b>; beneficii de ecosistem
-            estimate la <b>~111,8 mil. €/an</b> (ambele cifre din aceeași sursă, care nu le pune
-            în raport direct). Până în 2020, refacerea era <b>în curs de desfășurare</b> pe
-            ~60.000 ha în tot cursul inferior; finalizate: Babina și Cernovca (6.000 ha).</td>
+          <td>Acordul Coridorului Verde (2000) are ca ținte <b>935.000 ha protejate</b> și
+            <b>224.000 ha restaurate</b>. Studiul de caz AEM, publicat în 2020, menționa lucrări
+            începute pe peste 60.000 ha și circa 6.000 ha reconectate sau în reconectare în
+            <b>cinci</b> zone din România. Costul de 183 mil. € și beneficiile de 111,8 mil. €/an
+            sunt <b>estimări ale sursei</b>, nu cost și venit observat.</td>
+          <td>Hectare efectiv reconectate, volum inundabil la cote definite, durată de retenție,
+            impact asupra localităților, agriculturii, biodiversității și nivelului freatic.</td>
           <td><a href="https://climate-adapt.eea.europa.eu/ro/metadata/case-studies/lower-danube-green-corridor-floodplain-restoration-for-flood-protection" target="_blank" rel="noopener">Climate-ADAPT (Agenția Europeană de Mediu)</a></td>
         </tr>
         <tr>
-          <td class="what">3. Irigații regândite, nu restaurate</td>
-          <td>Prioritate zonelor cu aducțiune gravitațională sau ridicare mică; picurare în loc
-            de brazdă; contorizare obligatorie. Mai puține hectare, dar funcționale.</td>
-          <td><a href="https://old.madr.ro/pages/strategie/proiect-de-reabilitare-si-reforma-a-irigatiilor.pdf" target="_blank" rel="noopener">MADR — proiect de reabilitare și reformă a irigațiilor</a></td>
+          <td class="what">3. Irigații evaluate prin apă și energie</td>
+          <td>O suprafață „pregătită” sau „contractată” nu spune singură câtă apă a ajuns la
+            cultură. Selecția investițiilor trebuie comparată pe aceeași unitate funcțională.</td>
+          <td>m³ livrați și consumați/ha, kWh/m³, pierderi pe tronson, cost/m³, udări repetate,
+            producție și valoare adăugată. Separat: captare, retur și consum net.</td>
+          <td><span class="prov prov-calculat">opțiune de evaluare</span> · baza publică actuală:
+            <a href="https://www.anif.ro/campania-de-irigatii/" target="_blank" rel="noopener">ANIF</a></td>
         </tr>
         <tr>
-          <td class="what">4. Contorizare și date publice</td>
-          <td>Captările reale, orare, publicate — exact „ultimul kilometru" marcat ca <span class="prov prov-lipsa">nepublicat</span> în
-            tabelul de transparență de mai jos. Nu cere investiție în infrastructură, ci
-            publicarea unor date deja colectate.</td>
-          <td>vezi secțiunea „Transparența surselor" ↓</td>
+          <td class="what">4. Captări comparabile și publice</td>
+          <td>Publicarea poate începe cu limitele autorizate și volumele reale lunare/anuale,
+            agregate când există restricții legitime. Serii orare la fiecare priză nu sunt
+            demonstrate ca existente și pot necesita contoare, telemetrie, control de calitate
+            și reguli de confidențialitate.</td>
+          <td>Acoperirea contoarelor, intervalul de raportare, lipsurile, reviziile, captarea
+            brută, returul și consumul net; identificator stabil al prizei și bazinului.</td>
+          <td><span class="prov prov-lipsa">opțiune, nu capabilitate curentă verificată</span></td>
         </tr>
         <tr>
           <td class="what">5. Planificare pe scenarii de ape mici</td>
-          <td>Dragaj programat pe baza prognozei, nu în avarie; scenarii publice de funcționare
-            la debite mici pentru consumatorii critici (răcire, alimentare cu apă, navigație) —
-            stabilite dinainte, nu improvizate în criză.</td>
-          <td>avizele curente și sectoarele critice: cardul „Avize oficiale către navigatori" ↑</td>
+          <td>DanubeHIS publică deja nivel, debit, temperatură și precipitații din peste o mie
+            de stații selectate, pe baza contribuțiilor voluntare. FAIRway Danube II dezvoltă
+            monitorizarea și prognoza pentru navigație, inclusiv studiul unei prognoze de până
+            la șase săptămâni.</td>
+          <td>Praguri publice, probabilități și intervale de incertitudine; reguli predefinite
+            pentru alimentare, mediu, răcire și navigație. Dragajul rămâne o intervenție supusă
+            evaluării, nu răspunsul implicit la orice prognoză.</td>
+          <td><a href="https://www.icpdr.org/tasks-topics/tasks/flood-risk-management/icpdr-launches-danube-hydrological-information-system" target="_blank" rel="noopener">ICPDR — DanubeHIS</a> ·
+            <a href="https://www.afdj.ro/ro/fairway-danube-2" target="_blank" rel="noopener">AFDJ — FAIRway II</a></td>
         </tr>
         <tr>
-          <td class="what">6. Presiune în forurile transfrontaliere</td>
-          <td>Comisia Internațională pentru Protecția Dunării e locul unde se pot negocia un
-            protocol de ape mici și schimbul obligatoriu de date — inclusiv cu partea
-            ucraineană, pentru Chilia și Bâstroe, unde azi nu există flux public.</td>
+          <td class="what">6. Protocol transfrontalier de ape mici</td>
+          <td>ICPDR este un cadru potrivit pentru armonizarea datelor și scenariilor. DanubeHIS
+            demonstrează că schimbul aproape în timp real este posibil, dar sursa precizează că
+            furnizorii contribuie <b>voluntar</b>.</td>
+          <td>Acoperire pe țări și sub-bazine, praguri comune, latență, validare, responsabilități
+            și procedură de criză. Obligațiile juridice cer acordul statelor sau alt instrument
+            legal; ICPDR nu le poate crea unilateral.</td>
           <td><a href="https://www.icpdr.org" target="_blank" rel="noopener">ICPDR</a> ·
             <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a></td>
         </tr>
+        <tr>
+          <td class="what">7. Reutilizarea sigură a apei tratate
+            <br><span class="prov prov-calculat">cadru legal, nu capacitate dovedită</span></td>
+          <td>Regulamentul (UE) 2020/741 se aplică din 26 iunie 2023 pentru reutilizarea apelor
+            urbane epurate în irigații. Cere permis, plan de management al riscului, clase de
+            calitate, monitorizare de rutină și validare, control al conformității și informare
+            publică. AEM citează pentru România un potențial <b>teoretic</b> de înlocuire a 10%
+            din captarea agricolă, bazat pe un studiu JRC din 2017 și supus constrângerilor.</td>
+          <td>m³ de apă proaspătă înlocuiți — nu doar m³ produși —, conformitate microbiologică
+            și chimică, consum energetic, cost/m³, distanța până la utilizator și reducerea
+            debitelor returnate în emisar. Nu presupunem că instalațiile necesare există.</td>
+          <td><a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32020R0741" target="_blank" rel="noopener">Regulamentul (UE) 2020/741</a> ·
+            <a href="https://www.eea.europa.eu/en/analysis/publications/water-savings-for-a-water-resilient-europe" target="_blank" rel="noopener">AEM 2025</a></td>
+        </tr>
+        <tr>
+          <td class="what">8. Reducerea pierderilor măsurate</td>
+          <td>Recomandarea UE cere bilanțuri actualizate și monitorizarea captărilor, pierderilor
+            și retururilor. AEM identifică reducerea pierderilor din irigații, alimentarea
+            publică și industrie drept măsură de eficiență, dar cifrele sale sunt regionale sau
+            europene — <b>nu</b> le prezentăm ca rată a pierderilor din România.</td>
+          <td>Captare și apă facturată pe aceeași perioadă, pierderi reale separate de consumul
+            autorizat nefacturat și de erorile contoarelor, m³/km/zi, presiune, avarii și economia
+            verificată după intervenție. Pentru irigații: pierderi pe fiecare tronson.</td>
+          <td><a href="https://eur-lex.europa.eu/eli/reco/2025/1179/oj/eng" target="_blank" rel="noopener">Recomandarea (UE) 2025/1179</a> ·
+            <a href="https://www.eea.europa.eu/en/analysis/publications/water-savings-for-a-water-resilient-europe" target="_blank" rel="noopener">AEM 2025</a></td>
+        </tr>
       </tbody>
     </table>
-    <p class="sub" style="margin-top:12px">Cifrele din tabele sunt preluate din sursele citate și
-      pot fi verificate acolo; unde presa citează date ANIF/MADR, am marcat asta explicit.
-      Această secțiune e informativă și <b>nu</b> face parte din verificările automate ale
-      aplicației — ea nu se actualizează singură.</p>
   </div>
 
   <div style="height:22px"></div>
 
   <div class="card">
-    <h3>Proiecte anunțate, amânate, reluate — cronologia publică</h3>
-    <p class="sub">Fără nume și fără calificative: doar date, termene și stadii, fiecare cu sursa lui</p>
+    <h3>Proiecte — ultimul stadiu oficial pe care îl putem demonstra</h3>
+    <p class="sub">„Aprobat”, „în achiziție”, „în execuție” și „livrat” sunt stadii diferite.
+      Dacă sursa nu dovedește trecerea dintre ele, pagina nu o presupune.</p>
     <table class="trans">
-      <thead><tr><th>Proiect</th><th>Cronologie documentată</th><th>Stadiu</th><th>Sursa</th></tr></thead>
+      <thead><tr><th>Proiect</th><th>Fapt verificat</th><th>Stadiu afișabil</th><th>Sursa</th></tr></thead>
       <tbody>
         <tr>
           <td class="what">Canalul magistral Siret–Bărăgan</td>
-          <td>Canal proiectat pe <b>198 km</b>, gândit în anii '80 și rămas nefinalizat. Din
-            lotul scos acum la licitație, <b>5,71 km</b> sunt realizați, dar necesită
-            reabilitare. Reluare anunțată pentru un tronson de <b>23 km</b>, cu buget de
-            <b>1 mld. lei</b> (~200 mil. €), lucrări din 2025.</td>
-          <td>tronsonul relansat acoperă ~12% din traseul proiectat, la peste patru decenii de
-            la începerea lucrărilor</td>
-          <td><a href="https://jurnalul.ro/bani-afaceri/economia/ministrul-agriculturii-reluare-lucrari-canalul-irigatii-siret-baragan-981722.html" target="_blank" rel="noopener">presă economică</a> ·
-            <a href="https://www.capital.ro/canalul-siret-baragan-prinde-viata-dupa-aproape-jumatate-de-secol-lucrarile-la-primul-tronson-vor-incepe-in-2025.html" target="_blank" rel="noopener">stadiu 2025</a>
-            <span style="color:var(--warning)">(nivel ③ — cifrele provin din comunicări MADR/ANIF citate de presă)</span></td>
+          <td>OUG 4/2019 descrie obiectivul de <b>191 km</b>: etapa I, 51,5 km, și etapa II,
+            139,5 km. La 10 iulie 2024, ANIF anunța depunerea raportului de impact și a studiului
+            de evaluare adecvată pentru tronsonul <b>km 0+000–23+372</b>.</td>
+          <td><span class="prov prov-calculat">procedură de mediu documentată</span><br>
+            Nu afișăm „lucrări începute în 2025”: în sursele instituționale revizuite nu am
+            identificat dovada atribuirii sau a începerii execuției.</td>
+          <td><a href="https://www.anif.ro/wp-content/uploads/2021/01/OUG-nr-4-din-15-feb-2019-transmitere-obiectiv-de-investitii-Canal-magistral-Siret-Baragan.pdf" target="_blank" rel="noopener">OUG 4/2019 (ANIF)</a> ·
+            <a href="https://www.anif.ro/informatii-de-interes-public/" target="_blank" rel="noopener">ANIF — 10.07.2024</a></td>
         </tr>
         <tr>
           <td class="what">Coridorul Verde al Dunării de Jos</td>
-          <td>Acord semnat în <b>2000</b> de patru state. Angajament: <b>224.000 ha</b> de luncă
-            redate, 935.000 ha protejate. Până în 2020, refacerea era <b>în curs</b> pe ~60.000 ha pe tot cursul
-            inferior, în toate cele patru țări.</td>
-          <td>după 20 de ani, lucrări începute pe ~un sfert din suprafața angajată</td>
+          <td>Acord semnat în 2000 de România, Bulgaria, Ucraina și Republica Moldova. Studiul
+            de caz AEM, creat în 2020, consemna restaurare în curs pe peste 60.000 ha la nivelul
+            coridorului inferior.</td>
+          <td><span class="prov prov-model">stadiu public datat 2020</span><br>
+            „În curs” nu este echivalent cu „finalizat”, iar sursa nu oferă aici un total 2026.</td>
           <td><a href="https://climate-adapt.eea.europa.eu/ro/metadata/case-studies/lower-danube-green-corridor-floodplain-restoration-for-flood-protection" target="_blank" rel="noopener">Climate-ADAPT (AEM)</a></td>
         </tr>
         <tr>
-          <td class="what">FAST Danube (șenalul RO–BG)</td>
-          <td>Proiect de studii pentru condițiile de navigație pe sectorul comun româno-bulgar,
-            planificat pe <b>50 de luni: 2014–2018</b>. Etapa următoare, „FAST Danube 2",
-            estimată la ~<b>230 mil. €</b>, face obiectul unei <b>cereri comune de finanțare
-            depuse de România și Bulgaria în ianuarie 2024</b>.</td>
-          <td>de la studiu la execuție: peste un deceniu</td>
-          <td><a href="https://www.fastdanube.eu/" target="_blank" rel="noopener">fastdanube.eu</a> ·
-            <a href="https://www.afdj.ro/ro/content/fast-danube" target="_blank" rel="noopener">AFDJ</a> ·
-            <a href="https://www.mtc.government.bg/en/category/1/bulgaria-and-romania-joint-danube-deepening-project-worth-eur-230-million" target="_blank" rel="noopener">Min. Transporturilor BG</a></td>
+          <td class="what">FAST Danube 2 (sectorul RO–BG)</td>
+          <td>Cererea comună de circa <b>230 mil. €</b> a fost depusă în ianuarie 2024 și
+            <b>aprobată pentru finanțare</b> în iulie 2024. Ulterior, ministerele au semnat un
+            acord pentru atribuirea comună a activităților.</td>
+          <td><span class="prov prov-calculat">finanțat · achiziție comună</span><br>
+            Aprobarea și acordul de achiziție nu dovedesc că lucrările hidrotehnice sunt finalizate.</td>
+          <td><a href="https://www.mtc.government.bg/en/category/1/bulgaria-and-romania-joint-danube-deepening-project-worth-eur-230-million" target="_blank" rel="noopener">depunere — Min. Transporturilor BG</a> ·
+            <a href="https://www.mtc.government.bg/bg/category/1/osche-chetiri-blgarski-proekta-sa-odobreni-za-finansirane-ot-mekhanizma-za-svrzvane-na-evropa" target="_blank" rel="noopener">aprobare — 17.07.2024</a> ·
+            <a href="https://www.mtc.government.bg/bg/category/1/blgariya-i-rumniya-podpisakha-sporazumenie-za-svmestno-vzlagane-na-deynostite-po-proekt-fast-danube-2" target="_blank" rel="noopener">acord de atribuire comună</a></td>
         </tr>
         <tr>
-          <td class="what">Reabilitarea irigațiilor</td>
-          <td>De la <b>~3,1 mil. ha</b> amenajate în 1989 la <b>~794.000 ha</b> efectiv irigate
-            în 2024, prin programe succesive de reabilitare, fără ca suprafața irigată efectiv
-            să se apropie de cea amenajată.</td>
-          <td>sub 10% din arabil irigat efectiv</td>
-          <td><a href="https://old.madr.ro/pages/strategie/proiect-de-reabilitare-si-reforma-a-irigatiilor.pdf" target="_blank" rel="noopener">MADR</a> ·
-            auditele pe programele ANIF se pot căuta în
-            <a href="https://www.curteadeconturi.ro/rapoarte-audit" target="_blank" rel="noopener">arhiva Curții de Conturi</a></td>
+          <td class="what">FAIRway Danube II</td>
+          <td>Proiect activ între <b>aprilie 2023 și decembrie 2027</b>, cu valoare de
+            <b>70 mil. €</b> și 47 mil. € finanțare UE. Include, ca obiective, modernizarea a
+            19 stații, 183 geamanduri cu senzori, nave și drone de măsurători, senzori pentru
+            poduri și extinderea prognozei.</td>
+          <td><span class="prov prov-calculat">în implementare</span><br>
+            Lista este planul oficial al proiectului; nu marcăm toate echipamentele drept livrate.</td>
+          <td><a href="https://www.afdj.ro/ro/fairway-danube-2" target="_blank" rel="noopener">AFDJ — FAIRway Danube II</a></td>
         </tr>
         <tr>
-          <td class="what">Ce a fost livrat (pentru echilibru)</td>
-          <td><b>FAIRway Danube</b> (finanțare CEF): navă de semnalizare, navă de măsurători,
-            <b>10 stații hidrometrice automate noi</b> plus 8 reabilitate și platforma de
-            management al căii navigabile. Renaturări finalizate: <b>Babina și Cernovca
-            (6.000 ha)</b>; în lucru: Mahmudia, Gârla Mare–Vrata (~2.000 ha vizate).</td>
-          <td>funcțional</td>
-          <td><a href="https://www.afdj.ro/ro/content/fairway-danube" target="_blank" rel="noopener">AFDJ</a> ·
-            renaturări: <a href="https://climate-adapt.eea.europa.eu/ro/metadata/case-studies/lower-danube-green-corridor-floodplain-restoration-for-flood-protection" target="_blank" rel="noopener">Climate-ADAPT (AEM)</a></td>
+          <td class="what">Investiții hidroenergetice nefinalizate</td>
+          <td>Raportarea Hidroelectrica T1 2026 publică starea la <b>31 martie 2026</b> pentru
+            opt obiective majore. Unele contracte avansează, altele au autorizații sau avize,
+            iar altele sunt constrânse de litigii, exproprieri, insolvența contractantului ori
+            achiziții fără ofertanți. Rolul declarat al investițiilor istorice, obiectivele
+            abandonate și starea proiect-cu-proiect sunt imediat sub tabel.</td>
+          <td><span class="prov prov-lipsa">stadii diferite · termen 2026 neconfirmat</span><br>
+            Estimarea din raportul 2023 că anumite lucrări s-ar finaliza în 2026 nu mai este
+            prezentată drept stare curentă.</td>
+          <td><a href="https://m.bvb.ro/infocont/infocont26/H2O_20260514191051_H2O-EN-Q1-2026-Report.pdf" target="_blank" rel="noopener">Hidroelectrica — raport T1 2026 (BVB), p. 18–21</a></td>
         </tr>
       </tbody>
     </table>
+
+    <div class="hydro-accountability" role="note" aria-labelledby="hydro-role-title">
+      <p class="eyebrow">rol proiectat · raportarea operatorului din 2025</p>
+      <h3 id="hydro-role-title">Ce trebuiau să asigure investițiile hidroenergetice istorice</h3>
+      <p>În situațiile sale financiare pentru 2025, Hidroelectrica descrie aceste amenajări
+        istorice drept investiții cu funcțiuni complexe, proiectate cu <b>funcție energetică
+        secundară</b>. Obiectivul primar declarat era gospodărirea rațională și sigură a apei,
+        inclusiv:</p>
+      <ul class="hydro-role-list">
+        <li>limitarea efectelor inundațiilor și viiturilor;</li>
+        <li>protecția populației, comunităților și terenurilor agricole;</li>
+        <li>alimentarea cu apă a comunităților riverane;</li>
+        <li>rezerve de apă pentru populație și industria locală;</li>
+        <li>debit pentru irigații în perioadele de secetă;</li>
+        <li>menținerea debitului solid în acumulări.</li>
+      </ul>
+      <p class="hydro-consequence"><b>De ce contează:</b> funcția specifică unei trepte
+        abandonate nu poate fi furnizată de lucrarea care nu a fost terminată. Raportul nu
+        repartizează însă cele șase roluri pe fiecare proiect sau treaptă și nu permite un
+        număr de metri cubi „pierduți”: efectul real asupra unei secete sau viituri cere volume
+        utile, reguli de exploatare, amplasament, debite ecologice și proiectul tehnic al
+        fiecărui obiectiv.</p>
+      <p class="sub"><b>Limită importantă:</b> aceasta este descrierea de portofoliu și
+        contabilă a operatorului, nu demonstrația independentă că fiecare proiect sau fiecare
+        treaptă ar fi furnizat toate cele șase funcții.</p>
+      <p class="sub">Sursă:
+        <a href="https://bvb.ro/infocont/infocont26/H2O_20260326221940_H2O-RO-Raport-FY-2025-merged.pdf" target="_blank" rel="noopener">Hidroelectrica — Raport anual 2025, situații financiare consolidate, p. 49–50 (BVB)</a>.</p>
+    </div>
+
+    <details class="audit-details hydro-abandoned" open>
+      <summary>Obiective sau trepte abandonate — confirmate la 31.12.2025</summary>
+      <p class="sub">În 2018, după o analiză cost–beneficiu, conducerea a decis abandonarea
+        obiectivelor de mai jos. Situațiile financiare consolidate pentru 2025 le mențin ca
+        investiții abandonate, cu valoarea contabilă brută depreciată integral. PDF-ul
+        raportează totalul rotunjit la mii RON; valorile exacte de mai jos sunt cele păstrate
+        în raportarea electronică ESEF aferentă aceluiași raport.</p>
+      <table class="trans">
+        <thead><tr><th>Proiect</th><th>Obiectiv / treaptă abandonată</th><th>Valoare contabilă brută</th></tr></thead>
+        <tbody>
+          <tr><td class="what">Borca–Poiana Teiului</td><td>Treapta Galu</td><td>9.022.718 RON</td></tr>
+          <tr><td class="what">Cosmești–Movileni</td><td>Treapta Cosmești</td><td>93.206.729 RON</td></tr>
+          <tr><td class="what">AHE Surduc–Siriu</td><td>Treapta Cireșu–Surduc</td><td>17.345.275 RON</td></tr>
+          <tr><td class="what">Făgăraș–Hoghiz</td><td>Făgăraș–Hoghiz</td><td>174.949.578 RON</td></tr>
+          <tr><td class="what">Runcu–Firiza</td><td>Runcu–Firiza</td><td>87.807.430 RON</td></tr>
+          <tr><td class="what">Dâmbovița–Clăbucet</td><td>Dâmbovița–Clăbucet</td><td>34.761.669 RON</td></tr>
+          <tr><td class="what">Valea Sadului–Vădeni</td><td>Valea Sadului–Vădeni</td><td>165.209.205 RON</td></tr>
+          <tr><td class="what">Altele</td><td>Obiective neindividualizate în tabel</td><td>8.586.873 RON</td></tr>
+          <tr class="hydro-total"><td class="what" colspan="2">Total — valoare contabilă brută, depreciată integral</td><td>590.889.477 RON</td></tr>
+        </tbody>
+      </table>
+      <p class="sub"><b>Nu amestecăm treapta cu întreaga schemă:</b> de exemplu, raportarea
+        contabilă marchează drept abandonată treapta Cireșu–Surduc, în timp ce raportul T1 2026
+        consemnează contracte și proceduri active pentru alte componente ale amenajării
+        Surduc–Siriu. Valoarea de mai sus este cost contabil istoric, nu cost de finalizare,
+        valoarea apei nelivrate sau o estimare a prejudiciului.</p>
+      <p class="sub">Sursă:
+        <a href="https://bvb.ro/infocont/infocont26/H2O_20260326221940_H2O-RO-Raport-FY-2025-merged.pdf" target="_blank" rel="noopener">Hidroelectrica — Raport anual 2025, p. 49–50</a> ·
+        <a href="https://bvb.ro/FinancialInstruments/SelectedData/NewsItem/H2O-Raport-anual-2025/06558" target="_blank" rel="noopener">pachetul BVB, inclusiv ESEF</a>.</p>
+    </details>
+
+    <details class="audit-details">
+      <summary>Starea celor opt proiecte Hidroelectrica la 31.03.2026</summary>
+      <p class="sub">Rezumat fidel al raportării operatorului; „în implementare” nu înseamnă
+        automat că întregul obiectiv are autorizațiile, terenurile și finanțarea necesare.</p>
+      <table class="trans">
+        <thead><tr><th>Obiectiv</th><th>Stare raportată</th><th>Constrângere / pas următor</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="what">Pașcani</td>
+            <td>În implementare; contractele în curs erau raportate în grafic.</td>
+            <td>Operatorul nu identifica atunci constrângeri semnificative pentru termen.</td>
+          </tr>
+          <tr>
+            <td class="what">Răstolița</td>
+            <td>Acordul de mediu era suspendat de instanță; lucrările continuau numai unde nu
+              necesitau scoatere din fondul forestier.</td>
+            <td>Litigiul, insolvența antreprenorului general și lipsa proiectantului general.</td>
+          </tr>
+          <tr>
+            <td class="what">Surduc–Siriu</td>
+            <td>Contracte în curs pentru barajul Surduc, nodul de presiune și aducțiune;
+              emiterea acordului de mediu pentru baraj fusese aprobată la 4 martie 2026.</td>
+            <td>Achiziția echipamentelor Nehoiașu II a fost relansată după două anulări fără
+              ofertanți; continuau acțiuni în instanță privind autorizația.</td>
+          </tr>
+          <tr>
+            <td class="what">Livezeni–Bumbești</td>
+            <td>Contracte în curs pentru racordarea Dumitra, Bumbești și Livezeni la SEN.</td>
+            <td>Acordul de mediu din 2025 era contestat în instanță; rămâneau autorizații de construire.</td>
+          </tr>
+          <tr>
+            <td class="what">Cornetu–Avrig</td>
+            <td>Studii de mediu și actualizarea analizei cost–beneficiu în curs.</td>
+            <td>Fără acord de mediu și hotărâre de expropriere nu putea fi obținută autorizația;
+              existau și suprapuneri cu autostrada și calea ferată.</td>
+          </tr>
+          <tr>
+            <td class="what">Cerna–Belareca</td>
+            <td>Acordul de mediu și avizul de gospodărire a apelor fuseseră emise în 2025.</td>
+            <td>În curs: autorizația de construire, racordarea la SEN, drepturile asupra terenurilor și achiziția lucrărilor.</td>
+          </tr>
+          <tr>
+            <td class="what">Bistra–Poiana Mărului</td>
+            <td>În implementare, cu lucrări rămase la Ruieni și Râul Alb.</td>
+            <td>Documentația cadastrală și exproprierile condiționau certificatul de urbanism.</td>
+          </tr>
+          <tr>
+            <td class="what">Cerna–Motru–Tismana II</td>
+            <td>Acord de mediu obținut la 9 martie 2026; studiul de fezabilitate actualizat
+              primise aviz favorabil în comitetul tehnico-economic al operatorului.</td>
+            <td>Avizul intern și acordul de mediu nu sunt echivalente cu finalizarea lucrărilor.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="sub">Sursă unică pentru toate rândurile:
+        <a href="https://m.bvb.ro/infocont/infocont26/H2O_20260514191051_H2O-EN-Q1-2026-Report.pdf" target="_blank" rel="noopener">raportul Hidroelectrica T1 2026, p. 18–21 (BVB)</a>.</p>
+    </details>
     <div style="height:26px"></div>
-    <h3 style="margin-bottom:2px">Baraje și hidrocentrale neterminate — ce funcție au, de fapt</h3>
-    <p class="sub">Aici am greșit inițial și am corectat după verificare: presupusesem că
-      hidrocentralele neterminate sunt „doar energie". <b>Raportul propriu al operatorului spune
-      altceva</b> — pentru aceste obiective funcția energetică e <i>secundară</i>, iar
-      gospodărirea apei e primară. Tipul lucrării contează, însă, foarte mult: nu orice
-      construcție hidrotehnică adaugă rezervă de apă</p>
+    <h3 style="margin-bottom:2px">Ce poate adăuga reziliență la secetă — și ce nu</h3>
+    <p class="sub">Numele „hidrocentrală” nu este suficient. Evaluarea trebuie făcută după
+      configurația hidraulică, volumul util și regula reală de exploatare.</p>
     <table class="trans">
-      <thead><tr><th>Proiect</th><th>Stadiu documentat</th><th>Ce rezolvă la secetă</th><th>Sursa</th></tr></thead>
+      <thead><tr><th>Tip de lucrare</th><th>Rol posibil</th><th>Date fără de care nu afirmăm beneficiul</th></tr></thead>
       <tbody>
         <tr>
-          <td class="what">Obiectivele neterminate — ce spune operatorul</td>
-          <td>Raportul anual al Hidroelectrica (raportare reglementată, depusă la Bursă)
-            enumeră printre imobilizările în curs: <b>Bumbești-Livezeni, Siriu-Surduc,
-            Răstolița, Cornetu-Avrig, Pașcani, Cerna-Belareca, Cerna-Motru-Tismana</b> —
-            descrise drept <b>„investiții cu funcțiuni complexe […] proiectate pentru a avea
-            funcție energetică secundară"</b>, ale căror obiective primare sunt gospodărirea
-            apei: limitarea efectelor viiturilor, alimentarea cu apă a comunităților,
-            <b>asigurarea rezervelor de apă</b> și <b>a debitului pentru irigații în perioadele
-            de secetă</b>.</td>
-          <td><b>Mai mult decât credeam.</b> Nu sunt „doar energie": după propria descriere a
-            operatorului, sunt lucrări de gospodărire a apelor cu energie ca produs secundar.</td>
-          <td><a href="https://bvb.ro/infocont/infocont24/H2O_20240430120503_H2O-RO-Raport-anual-2023.pdf" target="_blank" rel="noopener">Hidroelectrica — raport anual 2023 (BVB), citat direct</a></td>
+          <td class="what">Acumulare cu stocare sezonieră</td>
+          <td>Poate muta apă din perioade umede spre perioade secetoase, în limitele regulii de exploatare.</td>
+          <td>Curba cotă–volum, volum util, intrări/ieșiri, pierderi, debit ecologic, priorități
+            legale și scenariul climatic.</td>
         </tr>
         <tr>
-          <td class="what">Stadiul, din același raport</td>
-          <td>Pentru <b>Bumbești-Livezeni</b> și <b>Siriu-Surduc</b>, conducerea consideră că
-            nu există probleme care să împiedice obținerea autorizațiilor și estimează
-            finalizarea în <b>2026</b>. Pentru <b>Răstolița</b>, raportul consemnează o valoare
-            contabilă brută de ~<b>697,9 mil. lei</b> în tabelul de depreciere.</td>
-          <td>Stadiul e o chestiune de autorizări și contracte, nu de imposibilitate tehnică.</td>
-          <td>același raport anual (BVB)</td>
+          <td class="what">Transfer între bazine</td>
+          <td>Poate crește disponibilul într-un bazin și îl reduce sau îi schimbă regimul în altul.</td>
+          <td>Bilanț pentru ambele bazine, drepturi de apă, consum net, efecte ecologice și
+            cost energetic — nu doar debitul ajuns la destinație.</td>
         </tr>
         <tr>
-          <td class="what">Tarnița–Lăpuștești (pompaj)</td>
-          <td>Proiect conceput în anii '70 și readus periodic pe agendă. Caracteristica tehnică
-            definitorie: e o centrală <b>cu acumulare prin pompaj</b>.</td>
-          <td><b>Nu adaugă rezervă de apă</b> pentru secetă: aceeași apă e urcată și coborâtă
-            între două bazine, pentru a stoca <i>energie</i>. (Nu e complet închisă — bazinul
-            superior are aport natural — dar rolul ei nu e hidrologic.)</td>
-          <td>caracteristică tehnică general acceptată a centralelor cu pompaj; stadiul
-            proiectului nu e documentat aici, lipsind o sursă instituțională curentă</td>
+          <td class="what">Baraj pe firul apei / priză</td>
+          <td>Poate ridica local nivelul și stabiliza o priză, fără a oferi neapărat rezervă sezonieră.</td>
+          <td>Volum util și timp de rezidență; „există baraj” nu dovedește stocare pentru secetă.</td>
         </tr>
         <tr>
-          <td class="what">Ce adaugă apă și ce nu</td>
-          <td>Adaugă rezervă: acumulările cu <b>stocare sezonieră</b> și lucrările de
-            <b>transfer între bazine</b> (două dintre obiectivele de mai sus, Cerna-Belareca și
-            Cerna-Motru-Tismana, sunt tocmai scheme de aducțiune între bazine). Nu adaugă:
-            pompajul. Efect local, dar nu rezervă sezonieră: barajele pe firul apei, care
-            ridică nivelul și susțin prizele de apă.</td>
-          <td>Distincția e de tip de lucrare, nu de „energie vs. apă".</td>
-          <td>descrierea funcțiilor, din raportul operatorului de mai sus</td>
+          <td class="what">Acumulare prin pompaj</td>
+          <td>Stochează în primul rând energie prin recircularea apei între două bazine.</td>
+          <td>Aporturile naturale și volumul rezervat altor folosințe; capacitatea energetică
+            nu se contabilizează automat drept rezervă nouă de apă.</td>
         </tr>
       </tbody>
     </table>
-    <p class="sub" style="margin-top:10px">Litigiile de mediu sunt prezentate aici ca fapt
-      documentat, nu ca verdict: obligațiile Natura 2000 sunt tot lege, iar unele proiecte au
-      fost abandonate în anii '80 tocmai pentru că pagubele depășeau beneficiile. Pagina nu ia
-      partea nimănui în aceste dispute — arată doar stadiul și ce efect ar avea, hidrologic,
-      fiecare tip de lucrare.</p>
 
     <div style="height:20px"></div>
-    <p class="sub" style="margin-top:12px"><b>Tiparul, în cifre:</b> decizia și execuția sunt
-      despărțite de decenii; studiile expiră înainte să înceapă lucrările; programele se
-      relansează la fiecare secetă. Nu e o problemă de intenție declarată — toate proiectele de
-      mai sus au fost anunțate ca priorități naționale — ci de continuitate: infrastructura de
-      apă are orizont de 30 de ani, iar ciclul de decizie, de patru.
-      <br><br><b>Politica de surse a acestei secțiuni</b>, în ordinea preferinței:
-      ① documente instituționale și raportări reglementate (Camera Deputaților, Curtea de
-      Conturi, rapoarte anuale depuse la Bursă, ICPDR, Agenția Europeană de Mediu, AFDJ, MADR);
-      ② literatură științifică; ③ presă economică — <b>doar</b> acolo unde nicio instituție nu
-      publică cifra, și marcată ca atare. Nu folosim publicații de partid sau cu miză
-      editorială declarată, nici surse care prezintă o dispută ca fapt încheiat. Unde
-      literatura științifică e împărțită — cazul materiei organice din sol — pagina arată
-      <b>ambele poziții</b>, nu pe cea convenabilă. Nu numim persoane și nu atribuim intenții:
-      datele verificabile sunt suficiente.
-      Dacă o cifră e greșită, depășită, sau o sursă vi se pare părtinitoare,
+    <p class="sub"><b>Politica de surse:</b> această versiune folosește documente
+      instituționale, raportări reglementate și literatură științifică; afirmațiile bazate doar
+      pe presă au fost eliminate. Data sursei și stadiul sunt parte din afirmație. Un obiectiv
+      poate avea beneficii multiple, dar pagina nu le confirmă fără volum util, regulă de
+      exploatare, autorizare și rezultat măsurat. Secțiunea este informativă și nu intră în
+      verificările automate ale aplicației.
+      Dacă o cifră este greșită, depășită sau interpretată prea ferm,
       <a href="https://github.com/0x730/dunarea/issues" target="_blank" rel="noopener">semnalați-o</a> — se corectează.</p>
   </div>
 </section>
 
 <!-- ====================================================== transparența -->
-<section id="sec-trans">
+<section id="sec-trans" data-view="integritate">
   <p class="eyebrow">cine publică ce</p>
   <h2>Transparența surselor — cerință cu cerință</h2>
   <p class="section-note">Lista ta de cerințe, verificată sursă cu sursă. „Nepublicat" nu
@@ -636,9 +861,9 @@
       <thead><tr><th>Cerința</th><th>Stare</th><th>Sursa publică și limita ei</th></tr></thead>
       <tbody>
         <tr>
-          <td class="what">Debite orare Germania → Baziaș</td>
-          <td><span class="prov prov-masurat">public</span></td>
-          <td>PEGELONLINE (DE/AT, orar, <a href="https://www.pegelonline.wsv.de" target="_blank" rel="noopener">API oficial</a>, date brute neverificate) · Ungaria: <a href="https://www.hydroinfo.hu" target="_blank" rel="noopener">hydroinfo.hu</a> · Serbia: <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">RHMZ</a> (zilnic) · România: <a href="https://www.hidro.ro" target="_blank" rel="noopener">INHGA</a> + <a href="https://www.afdj.ro/ro/cotele-dunarii" target="_blank" rel="noopener">AFDJ</a> (zilnic) · bazin întreg: <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (cont gratuit)</td>
+          <td class="what">Debite măsurate Germania → Baziaș</td>
+          <td><span class="prov prov-calculat">parțial</span></td>
+          <td>PEGELONLINE (DE, orar, <a href="https://www.pegelonline.wsv.de" target="_blank" rel="noopener">API oficial</a>, date brute neverificate) · Austria/Ungaria și alte secțiuni: <a href="https://www.hydroinfo.hu/tables/eng/dunhif.html" target="_blank" rel="noopener">OVF Hydroinfo</a> (zilnic) · Serbia: <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">RHMZ</a> (zilnic) · România: <a href="https://www.hidro.ro" target="_blank" rel="noopener">INHGA</a> + <a href="https://www.afdj.ro/ro/cotele-dunarii" target="_blank" rel="noopener">AFDJ</a> (zilnic) · bazin întreg: <a href="https://www.danubehis.org" target="_blank" rel="noopener">DanubeHIS</a> (valori curente publice; export cu cont)</td>
         </tr>
         <tr>
           <td class="what">Niveluri și volume utile ale marilor acumulări</td>
@@ -688,20 +913,12 @@
   <br><br>
   <b>Pot exista greșeli — și au existat.</b> Datele vin din surse externe care își pot schimba
   formatul, calculele sunt scrise de un neprofesionist, iar interpretările pot fi greșite.
-  Concret: la ultima verificare independentă a paginii, din câteva zeci de afirmații,
-  <b>patru erau greșite sau insuficient sprijinite de sursa citată</b> — inclusiv o teză
-  întreagă despre rolul hidrocentralelor, care era <i>inversată</i>, și o eroare de geografie
-  (km 2458 e Ingolstadt, nu Kelheim). Toate au fost corectate, iar modificările sunt vizibile
-  în istoricul public al codului. Dacă găsiți a cincea, se corectează și aceea.
+  Verificările independente au găsit deja afirmații greșite sau insuficient sprijinite;
+  au fost corectate, iar modificările sunt vizibile în istoricul public al codului.
+  Orice eroare nouă documentată va fi tratată la fel.
   Cifrele afișate în timp real <b>nu trebuie folosite pentru decizii operaționale</b> de
   navigație, agricultură sau siguranță — pentru acelea există sursele oficiale, linkate
   peste tot în pagină.</p>
-  <p>Fără cont și fără servicii terțe de analytics. Serverul interoghează
-  direct sursele oficiale și ține un cache local (<code>cache.db</code>) ca să nu le
-  suprasolicite. PEGELONLINE marchează datele drept <em>brute, neverificate</em>; GloFAS și
-  ERA5 sunt produse Copernicus (model/reanaliză, nu măsurători). Pentru producția pe unități
-  la Porțile de Fier: cont gratuit pe transparency.entsoe.eu, apoi porniți serverul cu
-  <code>ENTSOE_TOKEN=…&nbsp;python3 server.py</code>.</p>
   <a class="brand" href="https://0x730.com" target="_blank" rel="noopener" aria-label="0x730 — Daniel Vladescu">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" role="img" aria-hidden="true">
       <path d="M7 3 H4 V21 H7" />

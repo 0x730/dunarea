@@ -5,15 +5,21 @@ cache SQLite cu TTL, ca să nu lovim serverele oficiale la fiecare refresh.
 Doar biblioteca standard — fără dependențe externe.
 """
 
+import base64
+import hashlib
 import json
+import html as html_lib
 import os
 import re
 import sqlite3
 import ssl
+import struct
 import threading
 import time
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
+import zlib
 from datetime import date, datetime, timedelta, timezone
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -78,7 +84,8 @@ def cache_gc(max_age_expirat=30 * 86400):
                 conn.execute("DELETE FROM cache WHERE key=?", (key,))
                 sterse += 1
         # prefixe abandonate de versiuni vechi ale codului
-        for mort in ("grav:%", "era5:%"):
+        for mort in ("grav:%", "era5:%", "era5v2:%", "era5pt:v3:%",
+                     "era5batch:v1:regional:%", "era5batch:v1:upper:%"):
             sterse += conn.execute("DELETE FROM cache WHERE key LIKE ?",
                                    (mort,)).rowcount
     return sterse
@@ -133,7 +140,8 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
                 return {"data": hit["data"], "cache_age_s": int(hit["age"]),
                         "stale": False}
             # dacă tocmai a eșuat, nu punem toți așteptătorii să reîncerce
-            failed_at = _last_fail.get(key)
+            with _inflight_lock:
+                failed_at = _last_fail.get(key)
             if failed_at and time.time() - failed_at < FAIL_BACKOFF_S:
                 old = cache_get(key, max_age=10 ** 9) if stale_ok else None
                 if old:
@@ -142,10 +150,19 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
                 raise RuntimeError("sursa nu a răspuns recent (backoff)")
             try:
                 res = _fetch_and_store(key, ttl, fetch_fn, stale_ok)
-                _last_fail.pop(key, None)
+                # _fetch_and_store poate întoarce copia veche în loc să
+                # arunce excepția. Și acesta este un eșec al sursei: păstrăm
+                # backoff-ul, altfel fiecare cerere publică ar reîncerca
+                # imediat aceeași sursă căzută.
+                with _inflight_lock:
+                    if res.get("stale"):
+                        _last_fail[key] = time.time()
+                    else:
+                        _last_fail.pop(key, None)
                 return res
             except Exception:
-                _last_fail[key] = time.time()
+                with _inflight_lock:
+                    _last_fail[key] = time.time()
                 raise
     finally:
         with _inflight_lock:
@@ -286,12 +303,101 @@ def era5_point(tag, lat, lon, start_year):
     def fetch():
         qs = urllib.parse.urlencode(
             {"latitude": lat, "longitude": lon, "start_date": start,
-             "end_date": end, "daily": "precipitation_sum", "timezone": "UTC"})
+             "end_date": end, "daily": "precipitation_sum", "timezone": "UTC",
+             # Pentru comparații multidecenale avem nevoie de aceeași
+             # reanaliză în toată seria. Implicitul Open-Meteo „Best Match”
+             # combină IFS, ERA5 și ERA5-Land și se poate schimba în timp.
+             "models": "era5"})
         d = http_json(f"{ARCHIVE_API}?{qs}")
         return {"time": d["daily"]["time"],
                 "precip": d["daily"]["precipitation_sum"]}
 
-    return cached(f"era5pt:{tag}:{start_year}", 24 * 3600, fetch)
+    return cached(f"era5pt:v3:{tag}:{start_year}", 24 * 3600, fetch)
+
+
+def _era5_batch(cache_group, points, start_year, include_snow=False):
+    """Fetch fixed monitor points in one documented multi-coordinate request.
+
+    Besides being faster, this keeps a cold cache from issuing a burst of
+    long-history calls and tripping the provider's rate limit.
+    """
+    start = f"{start_year}-01-01"
+    end = (date.today() - timedelta(days=3)).isoformat()
+    daily = ("precipitation_sum,snowfall_sum" if include_snow
+             else "precipitation_sum")
+
+    def fetch():
+        qs = urllib.parse.urlencode({
+            "latitude": ",".join(str(lat) for _, lat, _ in points),
+            "longitude": ",".join(str(lon) for _, _, lon in points),
+            "start_date": start,
+            "end_date": end,
+            "daily": daily,
+            "timezone": "UTC",
+            "models": "era5",
+        }, safe=",")
+        payload = http_json(f"{ARCHIVE_API}?{qs}")
+        rows = payload if isinstance(payload, list) else [payload]
+        if len(rows) != len(points):
+            raise RuntimeError("răspuns ERA5 incomplet pentru punctele grupate")
+        out = {}
+        for (tag, _, _), row in zip(points, rows):
+            values = row["daily"]
+            out[tag] = {
+                "time": values["time"],
+                "precip": values["precipitation_sum"],
+            }
+            if include_snow:
+                out[tag]["snow"] = values.get("snowfall_sum", [])
+        return out
+
+    key = f"era5batch:v1:{cache_group}:{start_year}"
+    return cached(key, 24 * 3600, fetch)
+
+
+def _era5_monitor_batch(start_year):
+    """All monitor coordinates in one request, with coordinate aliases.
+
+    The upper-basin Passau proxy is the same coordinate as the public
+    ``bazin_superior`` series, so it is requested only once.
+    """
+    aliases = {"regional": {}, "upper": {}}
+    points = []
+    by_coordinate = {}
+
+    def register(group, public_tag, lat, lon):
+        coordinate = (lat, lon)
+        internal_tag = by_coordinate.get(coordinate)
+        if internal_tag is None:
+            internal_tag = f"p{len(points)}"
+            by_coordinate[coordinate] = internal_tag
+            points.append((internal_tag, lat, lon))
+        aliases[group][public_tag] = internal_tag
+
+    for pid, p in PRECIP_POINTS.items():
+        register("regional", pid, p["lat"], p["lon"])
+    for tag, lat, lon in UPPER_BASIN_POINTS:
+        register("upper", tag, lat, lon)
+
+    result = _era5_batch("monitor", points, start_year, include_snow=True)
+    data = {
+        group: {tag: result["data"][internal]
+                for tag, internal in mapping.items()}
+        for group, mapping in aliases.items()
+    }
+    return {**result, "data": data}
+
+
+def era5_precip_all(start_year):
+    """All six public precipitation zones from the shared monitor request."""
+    result = _era5_monitor_batch(start_year)
+    return {**result, "data": result["data"]["regional"]}
+
+
+def era5_upper_basin(start_year):
+    """All six upper-basin proxy points from the shared monitor request."""
+    result = _era5_monitor_batch(start_year)
+    return {**result, "data": result["data"]["upper"]}
 
 
 # --------------------------------------------------------------- GloFAS ----
@@ -389,7 +495,8 @@ def era5_precip(point_id, start_year):
         qs = urllib.parse.urlencode(
             {"latitude": p["lat"], "longitude": p["lon"],
              "start_date": start, "end_date": end,
-             "daily": "precipitation_sum,snowfall_sum", "timezone": "UTC"}
+             "daily": "precipitation_sum,snowfall_sum", "timezone": "UTC",
+             "models": "era5"}
         )
         d = http_json(f"{ARCHIVE_API}?{qs}")
         return {"time": d["daily"]["time"],
@@ -397,7 +504,7 @@ def era5_precip(point_id, start_year):
                 "snow": d["daily"].get("snowfall_sum"),
                 "point": p}
 
-    return cached(f"era5v2:{point_id}:{start_year}", 24 * 3600, fetch)
+    return cached(f"era5v3:{point_id}:{start_year}", 24 * 3600, fetch)
 
 
 # ---------------------------------------------------------- PEGELONLINE ----
@@ -490,10 +597,10 @@ def inhga_bulletin():
 
         # „[^.]*?" ar bloca fraza dacă apare un număr cu punct (1.500) sau o
         # oră (06.00) între ancoră și valoare — limităm pe lungime, nu pe punct
-        debit = grab(r"Baziaș\)\s*a fost.{0,120}?valoarea de\s*([\d.,]+)\s*m")
+        debit = grab(r"Baziaș\)\s*a fost.{0,120}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m")
         trend = grab(r"Baziaș\)\s*a fost în\s*([^\s,]+(?:\s+ușoară)?)")
         medie = grab(r"media multianuală a lunii \w+\s*\(?\s*([\d.,]+)\s*m")
-        prognoza = grab(r"Baziaș\)\s*va fi.{0,160}?valoarea de\s*([\d.,]+)\s*m")
+        prognoza = grab(r"Baziaș\)\s*va fi.{0,160}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m")
 
         # paragrafele oficiale integrale (diagnoză + prognoză), fără titluri
         lines = [ln.strip() for ln in t.split("\n") if len(ln.strip()) > 60]
@@ -532,7 +639,10 @@ def _parse_inhga_html(html):
     t = (text.replace("ş", "ș").replace("ţ", "ț")
              .replace("Ş", "Ș").replace("Ţ", "Ț"))
     t = re.sub(r"m\s*\n\s*3\s*\n\s*/s", " m³/s", t)
-    m = re.search(r"Baziaș\)\s*a fost[^.]*?valoarea de\s*([\d.,]+)\s*m", t, re.S | re.I)
+    # Ca la parserul buletinului curent, nu oprim la primul punct: între
+    # ancoră și debit pot apărea ore (06.00) sau mii scrise cu separator.
+    m = re.search(r"Baziaș\)\s*a fost.{0,180}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m",
+                  t, re.S | re.I)
     return _num(m.group(1)) if m else None
 
 
@@ -640,6 +750,243 @@ def hidmet_report():
     return cached("hidmet", 3600, fetch)
 
 
+# ------------------------------------------------------ Hydroinfo Hungary ---
+# Serviciul Hidrologic Național al Ungariei (OVF) publică zilnic, într-un
+# singur tabel, niveluri, debite și temperaturi de-a lungul Dunării. Este
+# deosebit de util pentru debitele MĂSURATE din sectorul maghiar, unde
+# DanubeSTREAM oferă în principal cote.
+
+HYDROINFO_URL = "https://www.hydroinfo.hu/tables/eng/dunhif.html"
+HYDROINFO_PROFILE_KM = {
+    "Budapest": 1647,
+    "Mohács": 1447,
+}
+
+
+def _parse_hydroinfo_html(page):
+    observed = re.search(r"Observed on:\s*([^<]+)", page, re.I)
+    observed_iso = None
+    if observed:
+        try:
+            observed_iso = datetime.strptime(
+                re.sub(r"\s+", " ", observed.group(1)).strip(), "%d %B %Y"
+            ).date().isoformat()
+        except ValueError:
+            pass
+
+    out = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S | re.I):
+        cells = []
+        for cell in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S | re.I):
+            value = html_lib.unescape(re.sub(r"<[^>]+>", " ", cell))
+            cells.append(re.sub(r"\s+", " ", value).strip())
+        if len(cells) != 10 or cells[2].lower() != "danube":
+            continue
+
+        def number(value):
+            if value in ("", "//"):
+                return None
+            try:
+                return float(value.replace(",", "."))
+            except ValueError:
+                return None
+
+        name = cells[1]
+        out.append({
+            "cod": cells[0],
+            "statie": name,
+            "data": observed_iso,
+            "nivel_cm": number(cells[5]),
+            "variatie_cm": number(cells[6]),
+            "debit_m3s": number(cells[7]),
+            "temp_apa_c": number(cells[8]),
+            "km": HYDROINFO_PROFILE_KM.get(name),
+        })
+    return out
+
+
+def hydroinfo_danube():
+    def fetch():
+        out = _parse_hydroinfo_html(http_get(HYDROINFO_URL, timeout=40))
+        if len(out) < 20:
+            raise RuntimeError(f"doar {len(out)} stații Dunăre în Hydroinfo — "
+                               "structura paginii s-a schimbat?")
+        daily_snapshot("hydroinfo", out)
+        return {"url": HYDROINFO_URL, "statii": out}
+
+    return cached("hydroinfo", 3600, fetch)
+
+
+# --------------------------------------------------------- DanubeHIS/ICPDR --
+# Tabelul public DanubeHIS oferă valorile curente normalizate fără autentificare;
+# doar exporturile WaterML/CSV/XLS cer cont. Pentru Ungaria, furnizorul din
+# spatele ambelor căi este OVF, deci aceasta este o cale alternativă de livrare,
+# nu o măsurătoare independentă de Hydroinfo.
+
+DANUBEHIS_HU_DANUBE_Q = (
+    "https://www.danubehis.org/time-series/stations/Q?country=HU&river=Danube"
+)
+DANUBEHIS_PROFILE_KM = {"Budapest": 1647, "Mohács": 1447}
+
+
+def _parse_danubehis_current(page):
+    out = []
+    for row in re.findall(
+            r'<tr[^>]*class="[^"]*\bsync-id-id\b[^"]*"[^>]*>(.*?)</tr>',
+            page, re.S | re.I):
+        raw_cells = re.findall(r"<td([^>]*)>(.*?)</td>", row, re.S | re.I)
+        if len(raw_cells) < 5:
+            continue
+        cells = []
+        for _, body in raw_cells:
+            text = html_lib.unescape(re.sub(r"<[^>]+>", " ", body))
+            cells.append(re.sub(r"\s+", " ", text).strip())
+
+        name = re.sub(r"\s+HU$", "", cells[0]).strip()
+        link = re.search(r'href="/results/([^?"/]+)', row, re.I)
+        try:
+            value = float(cells[3].replace(",", "."))
+            observed_day = datetime.strptime(cells[2], "%d.%m.%Y").date().isoformat()
+        except (ValueError, IndexError):
+            continue
+
+        observed_utc = None
+        sort_value = re.search(r'data-sort-value="(\d{9,})"', raw_cells[2][0])
+        if sort_value:
+            try:
+                observed_utc = datetime.fromtimestamp(
+                    int(sort_value.group(1)), timezone.utc
+                ).isoformat()
+            except (ValueError, OSError, OverflowError):
+                pass
+        out.append({
+            "cod": link.group(1) if link else None,
+            "statie": name,
+            "tara": "HU",
+            "data": observed_day,
+            "masurat_utc": observed_utc,
+            "debit_m3s": value,
+            "km": DANUBEHIS_PROFILE_KM.get(name),
+        })
+    return out
+
+
+def danubehis_danube():
+    def fetch():
+        out = _parse_danubehis_current(
+            http_get(DANUBEHIS_HU_DANUBE_Q, timeout=45)
+        )
+        if len(out) < 8:
+            raise RuntimeError(f"doar {len(out)} debite Dunăre în DanubeHIS — "
+                               "structura paginii s-a schimbat?")
+        daily_snapshot("danubehis", out)
+        return {
+            "url": DANUBEHIS_HU_DANUBE_Q,
+            "furnizor_date": "OVF via ICPDR DanubeHIS",
+            "independent_de_hydroinfo": False,
+            "statii": out,
+        }
+
+    return cached("danubehis:hu-danube-q:v1", 3600, fetch)
+
+
+# ------------------------------------------------ Copernicus drought/EDO --
+# EDO publică hărți OGC WMS. Le folosim numai drept context spațial datat;
+# nu extragem valori din culorile PNG și nu le introducem în verdicte.
+
+EDO_WMS = "https://drought.emergency.copernicus.eu/api/wms"
+EDO_WMS_PAGE = "https://drought.emergency.copernicus.eu/data/wms-service"
+EDO_MAP_SPECS = {
+    "cdi": {
+        "layer": "cdiad",
+        "title": "Combined Drought Indicator v4.1",
+        "tip": "indicator compozit pentru secetă agricolă",
+    },
+    "soil": {
+        "layer": "smian",
+        "title": "Soil Moisture Anomaly",
+        "tip": "anomalie modelată a umidității solului",
+    },
+}
+
+
+def _parse_edo_status(capabilities, service_page=""):
+    root = ET.fromstring(capabilities)
+    by_layer = {}
+    for layer in root.iter("Layer"):
+        name = layer.findtext("Name")
+        if not name:
+            continue
+        extent = next((e for e in layer.findall("Extent")
+                       if e.attrib.get("name") == "time"), None)
+        latest = None
+        if extent is not None and extent.text:
+            parts = extent.text.strip().split("/")
+            latest = parts[1] if len(parts) >= 2 else parts[0]
+        by_layer[name] = latest
+
+    out = {}
+    for public_name, spec in EDO_MAP_SPECS.items():
+        layer_name = spec["layer"]
+        # Pagina oficială de serviciu expune explicit data folosită de
+        # exemplul curent; poate fi mai proaspătă decât cache-ul Capabilities.
+        current = re.search(
+            rf"LAYERS={re.escape(layer_name)}[^\"']*?TIME=(\d{{4}}-\d{{2}}-\d{{2}})",
+            service_page, re.I,
+        )
+        out[public_name] = {
+            **spec,
+            "data": current.group(1) if current else by_layer.get(layer_name),
+        }
+    if any(not item["data"] for item in out.values()):
+        raise RuntimeError("datele straturilor EDO nu au putut fi determinate")
+    return out
+
+
+def edo_status():
+    def fetch():
+        qs = urllib.parse.urlencode({
+            "SERVICE": "WMS", "REQUEST": "GetCapabilities", "VERSION": "1.1.1"
+        })
+        capabilities = http_get(f"{EDO_WMS}?{qs}", timeout=45)
+        service_page = http_get(EDO_WMS_PAGE, timeout=45)
+        return {
+            "url": EDO_WMS_PAGE,
+            "bbox": [8, 42, 30, 50],
+            "straturi": _parse_edo_status(capabilities, service_page),
+            "nota": "context spațial Copernicus; nu intră în verdictele automate",
+        }
+
+    return cached("edo:status:v1", 6 * 3600, fetch)
+
+
+def edo_map(kind):
+    if kind not in EDO_MAP_SPECS:
+        raise KeyError("strat EDO necunoscut")
+    status = edo_status()["data"]
+    layer = status["straturi"][kind]
+    observation_day = layer["data"]
+
+    def fetch():
+        qs = urllib.parse.urlencode({
+            "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap",
+            "LAYERS": layer["layer"], "STYLES": "", "SRS": "EPSG:4326",
+            "BBOX": ",".join(str(v) for v in status["bbox"]),
+            "WIDTH": 1100, "HEIGHT": 400, "FORMAT": "image/png",
+            "TRANSPARENT": "TRUE", "TIME": observation_day,
+        }, safe=",")
+        raw = http_get(f"{EDO_WMS}?{qs}", timeout=60, binary=True)
+        if not raw.startswith(b"\x89PNG\r\n\x1a\n") or len(raw) < 1000:
+            raise RuntimeError("EDO nu a returnat o hartă PNG validă")
+        return {
+            "png_base64": base64.b64encode(raw).decode("ascii"),
+            "data": observation_day,
+            "layer": layer["layer"],
+        }
+
+    return cached(f"edo:map:v1:{kind}:{observation_day}", 6 * 3600, fetch)
+
+
 # ------------------------------------------------------------- AFDJ RO -----
 # Administrația Fluvială a Dunării de Jos (Galați) — cotele oficiale ale
 # Dunării pe sectorul românesc, flux XML public, actualizat zilnic.
@@ -704,9 +1051,9 @@ def entsoe_irongates():
     token = os.environ.get("ENTSOE_TOKEN", "").strip()
     if not token:
         return {"activ": False,
-                "motiv": "Lipsește ENTSOE_TOKEN (cheie gratuită de la "
-                         "transparency.entsoe.eu). Fără ea, producția pe unități "
-                         "la PF I/II nu poate fi interogată."}
+                "motiv": "Integrarea ENTSO-E nu este activată pe această "
+                         "instanță; producția pe unități la PF I/II nu este "
+                         "disponibilă aici."}
 
     def fetch():
         now = datetime.now(timezone.utc)
@@ -970,6 +1317,111 @@ def _parse_hydroweb_txt(text):
     return out
 
 
+HYDROWEB_SEARCH_AREAS = (
+    ("superior", "8,47,17.5,50.5"),
+    ("mijlociu_vest", "16,46.2,20.5,49"),
+    ("mijlociu_est", "18,44,23.5,47.5"),
+    ("inferior", "21,43,30,46.5"),
+)
+HYDROWEB_MAINSTEM = {"DANUBE", "DONAU", "DUNAJ", "DUNA", "DUNAV", "DUNAREA"}
+HYDROWEB_MAX_AGE_DAYS = 35
+HYDROWEB_MAX_UNCERTAINTY_M = 0.25
+
+
+def _hydroweb_feature_km(feature):
+    """Întoarce kilometrul numai pentru Dunărea propriu-zisă, nu afluenți.
+
+    Catalogul folosește numele local al fluviului (Donau, Dunaj, Duna,
+    Dunav, Dunărea), deci filtrul vechi `_DUNAREA_` vedea doar cursul inferior.
+    """
+    sid = (feature.get("id") or "").split("@", 1)[0]
+    m = re.match(r"^R_DANUBE_([A-Z0-9-]+)_KM0*(\d+)$", sid.upper())
+    if not m or m.group(1) not in HYDROWEB_MAINSTEM:
+        return None
+    return int(m.group(2))
+
+
+def _select_hydroweb_features(features, max_statii):
+    """Selecție deterministă și spațial stratificată pe întregul fluviu."""
+    unique = {}
+    for feature in features:
+        km = _hydroweb_feature_km(feature)
+        assets = feature.get("assets") or {}
+        if km is None or not any(k.endswith(".txt") for k in assets):
+            continue
+        sid = (feature.get("id") or "").split("@", 1)[0]
+        unique[sid] = (km, feature)
+    candidates = sorted(unique.values(), key=lambda pair: pair[0])
+    if len(candidates) <= max_statii:
+        return [feature for _, feature in reversed(candidates)]
+
+    low, high = candidates[0][0], candidates[-1][0]
+    targets = [low + i * (high - low) / (max_statii - 1)
+               for i in range(max_statii)] if max_statii > 1 else [(low + high) / 2]
+    remaining = list(candidates)
+    selected = []
+    for target in targets:
+        km, feature = min(remaining, key=lambda pair: (abs(pair[0] - target), pair[0]))
+        selected.append((km, feature))
+        remaining.remove((km, feature))
+    return [feature for _, feature in sorted(selected, key=lambda pair: pair[0], reverse=True)]
+
+
+def _hydroweb_station_entry(feature, text, fetched_at=None, source_url=None):
+    sid = feature["id"].split("@", 1)[0]
+    coords = (feature.get("geometry") or {}).get("coordinates") or [None, None]
+    km = _hydroweb_feature_km(feature)
+    entry = {
+        "statie": sid,
+        "km": km,
+        "segment": "superior" if km is not None and km >= 1900 else
+                   "mijlociu" if km is not None and km >= 900 else "inferior",
+        "lon": coords[0],
+        "lat": coords[1],
+        "provider": "CNES/Theia",
+        "product_family": "altimetrie_satelitara_hydroweb",
+        "feature_id": feature.get("id"),
+        "source_url": source_url,
+        "parser_version": "hydroweb-series-v2",
+        "raw_sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest(),
+        "fetched_at": fetched_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    serie = _parse_hydroweb_txt(text)
+    flags = []
+    if serie:
+        d, v, sig = serie[-1]
+        try:
+            age = max(0, (date.today() - date.fromisoformat(d)).days)
+        except ValueError:
+            age = None
+        entry.update({"data": d, "observation_time": d, "nivel_m": v,
+                      "incertitudine_m": sig, "observatii": len(serie),
+                      "vechime_zile": age})
+        luna = d[5:7]
+        ref = [x[1] for x in serie[:-1] if x[0][5:7] == luna]
+        if len(ref) >= 5:
+            below = sum(1 for r in ref if r <= v)
+            entry["percentila_lunii"] = round(100 * below / len(ref), 1)
+            entry["ani_serie"] = len({x[0][:4] for x in serie})
+        else:
+            flags.append("istoric_lunar_insuficient")
+        if len(serie) >= 2:
+            entry["variatie_fata_de_precedenta_m"] = round(v - serie[-2][1], 2)
+        if age is None or age > HYDROWEB_MAX_AGE_DAYS:
+            flags.append("observatie_veche")
+        if sig is None:
+            flags.append("incertitudine_lipsa")
+        elif sig > HYDROWEB_MAX_UNCERTAINTY_M:
+            flags.append("incertitudine_ridicata")
+    else:
+        flags.append("serie_lipsa")
+    entry["quality_flags"] = flags
+    entry["eligibila_detector"] = bool(
+        entry.get("percentila_lunii") is not None and not flags
+    )
+    return entry
+
+
 def hydroweb_danube(max_statii=12):
     key = _hydroweb_key()
     if not key:
@@ -979,49 +1431,562 @@ def hydroweb_danube(max_statii=12):
                          "data/keys/hydroweb.key sau env HYDROWEB_KEY)."}
 
     def fetch():
-        res = _hydroweb_get(
-            f"{HYDROWEB_STAC}/search?collections=HYDROWEB_RIVERS_OPE"
-            "&bbox=20.4,43.5,29.9,48.6&limit=200", key)
-        feats = [f for f in res.get("features", [])
-                 if "_DUNAREA_" in (f.get("id") or "")]
-        feats.sort(key=lambda f: f.get("id", ""))
+        all_features = []
+        for _, bbox in HYDROWEB_SEARCH_AREAS:
+            res = _hydroweb_get(
+                f"{HYDROWEB_STAC}/search?collections=HYDROWEB_RIVERS_OPE"
+                f"&bbox={bbox}&limit=300", key)
+            all_features.extend(res.get("features", []))
+        feats = _select_hydroweb_features(all_features, max_statii)
         statii = []
-        for f in feats[:max_statii]:
-            sid = f["id"].split("@")[0]
-            coords = (f.get("geometry") or {}).get("coordinates") or [None, None]
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for f in feats:
             txt_asset = next((a for k, a in (f.get("assets") or {}).items()
                               if k.endswith(".txt")), None)
-            entry = {"statie": sid, "lon": coords[0], "lat": coords[1]}
             if txt_asset:
                 try:
                     text = _hydroweb_get(txt_asset["href"], key, raw=True) \
                         .decode("utf-8", "replace")
-                    serie = _parse_hydroweb_txt(text)
-                    if serie:
-                        d, v, sig = serie[-1]
-                        entry.update({"data": d, "nivel_m": v,
-                                      "incertitudine_m": sig,
-                                      "observatii": len(serie)})
-                        luna = d[5:7]
-                        ref = [x[1] for x in serie[:-1] if x[0][5:7] == luna]
-                        if len(ref) >= 5:
-                            below = sum(1 for r in ref if r <= v)
-                            entry["percentila_lunii"] = round(100 * below / len(ref), 1)
-                            entry["ani_serie"] = len({x[0][:4] for x in serie})
-                        if len(serie) >= 2:
-                            entry["variatie_fata_de_precedenta_m"] = round(
-                                v - serie[-2][1], 2)
+                    entry = _hydroweb_station_entry(
+                        f, text, fetched_at, source_url=txt_asset.get("href"))
                 except Exception as exc:
-                    entry["eroare"] = str(exc)[:60]
-            statii.append(entry)
+                    entry = {"statie": f["id"].split("@", 1)[0],
+                             "km": _hydroweb_feature_km(f),
+                             "eroare": str(exc)[:80],
+                             "quality_flags": ["eroare_citire"],
+                             "eligibila_detector": False}
+                statii.append(entry)
         if not statii:
-            raise RuntimeError("nicio stație virtuală _DUNAREA_ găsită")
-        return {"activ": True, "statii": statii,
-                "colectie": "HYDROWEB_RIVERS_OPE (Theia/CNES)",
-                "nota": "niveluri în metri față de geoid — se compară variația "
-                        "și percentila proprie, nu cu cota mirei"}
+            raise RuntimeError("nicio stație virtuală de pe cursul principal găsită")
+        eligible = [s for s in statii if s.get("eligibila_detector")]
+        payload = {
+            "activ": True,
+            "statii": statii,
+            "statii_eligibile": len(eligible),
+            "segmente_eligibile": sorted({s["segment"] for s in eligible}),
+            "acoperire_km": [min((s["km"] for s in statii if s.get("km") is not None), default=None),
+                             max((s["km"] for s in statii if s.get("km") is not None), default=None)],
+            "colectie": "HYDROWEB_RIVERS_OPE (Theia/CNES)",
+            "provider": "CNES/Theia",
+            "product_family": "altimetrie_satelitara_hydroweb",
+            "parser_version": "hydroweb-series-v2",
+            "fetched_at": fetched_at,
+            "praguri_calitate": {"vechime_max_zile": HYDROWEB_MAX_AGE_DAYS,
+                                  "incertitudine_max_m": HYDROWEB_MAX_UNCERTAINTY_M},
+            "nota": "selecție stratificată pe cursul principal; niveluri față de "
+                    "geoid. Detectorul folosește numai observații proaspete, cu "
+                    "incertitudine acceptabilă și istoric lunar suficient",
+            "independenta": "independent de mire ca instrument; stațiile apropiate "
+                             "și procesările DAHITI ale acelorași misiuni nu sunt voturi distincte",
+        }
+        daily_snapshot("hydroweb", payload)
+        return payload
 
-    return cached("hydroweb", 12 * 3600, fetch)
+    return cached("hydroweb:v3", 12 * 3600, fetch)
+
+
+# ---------------------- OPERA: întinderea apei, radar + optic (NASA/JPL) --
+# GIBS publică vizualizările analitice OPERA fără autentificare. Folosim
+# aceleași clase discrete din produs (nu clasificăm noi imagini SAR/optice).
+
+OPERA_GIBS_WMS = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
+OPERA_LAYERS = {
+    "sentinel1": {
+        "layer": "OPERA_L3_Dynamic_Surface_Water_Extent-Sentinel-1",
+        "title": "OPERA DSWx-S1",
+        "sensor": "Sentinel-1 SAR",
+        "product_family": "opera_dswx_sentinel1",
+        "lookback_days": 14,
+    },
+    "hls": {
+        "layer": "OPERA_L3_Dynamic_Surface_Water_Extent-HLS",
+        "title": "OPERA DSWx-HLS",
+        "sensor": "Harmonized Landsat + Sentinel-2",
+        "product_family": "opera_dswx_hls",
+        "lookback_days": 10,
+    },
+}
+OPERA_ZONES = {
+    "portile_fier": {"name": "Porțile de Fier", "bbox": [21.65, 44.1, 23.15, 45.1]},
+    "dunarea_de_jos": {"name": "Dunărea de Jos", "bbox": [25.6, 43.5, 28.45, 45.55]},
+    "delta": {"name": "Delta Dunării", "bbox": [28.1, 44.65, 29.9, 45.75]},
+}
+
+
+def _paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else b if pb <= pc else c
+
+
+def _png_rgba_stats(raw):
+    """Decodor PNG RGBA minim, stdlib-only, pentru clasele discrete GIBS."""
+    if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("răspunsul nu este PNG")
+    pos, width, height, color_type, interlace = 8, None, None, None, None
+    chunks = []
+    while pos + 12 <= len(raw):
+        size = struct.unpack(">I", raw[pos:pos + 4])[0]
+        kind = raw[pos + 4:pos + 8]
+        data = raw[pos + 8:pos + 8 + size]
+        pos += 12 + size
+        if kind == b"IHDR":
+            width, height, depth, color_type, _, _, interlace = struct.unpack(
+                ">IIBBBBB", data)
+            if depth != 8 or color_type != 6 or interlace != 0:
+                raise ValueError("PNG GIBS cu format neașteptat")
+        elif kind == b"IDAT":
+            chunks.append(data)
+        elif kind == b"IEND":
+            break
+    if not width or not height or not chunks:
+        raise ValueError("PNG incomplet")
+    decoded = zlib.decompress(b"".join(chunks))
+    bpp, stride = 4, width * 4
+    expected = height * (stride + 1)
+    if len(decoded) != expected:
+        raise ValueError("dimensiune PNG neașteptată")
+    previous = bytearray(stride)
+    pixels = []
+    offset = 0
+    for _ in range(height):
+        filter_type = decoded[offset]
+        offset += 1
+        source = decoded[offset:offset + stride]
+        offset += stride
+        row = bytearray(stride)
+        for i, value in enumerate(source):
+            left = row[i - bpp] if i >= bpp else 0
+            up = previous[i]
+            upper_left = previous[i - bpp] if i >= bpp else 0
+            if filter_type == 0:
+                reconstructed = value
+            elif filter_type == 1:
+                reconstructed = value + left
+            elif filter_type == 2:
+                reconstructed = value + up
+            elif filter_type == 3:
+                reconstructed = value + ((left + up) // 2)
+            elif filter_type == 4:
+                reconstructed = value + _paeth(left, up, upper_left)
+            else:
+                raise ValueError("filtru PNG necunoscut")
+            row[i] = reconstructed & 0xff
+        pixels.extend(tuple(row[i:i + 4]) for i in range(0, stride, 4))
+        previous = row
+
+    counts = {"no_data": 0, "not_water": 0, "open_water": 0,
+              "inundated_vegetation": 0, "partial_water": 0,
+              "masked": 0, "other": 0}
+    for r, g, b, a in pixels:
+        if a == 0:
+            counts["no_data"] += 1
+        elif (r, g, b) == (255, 255, 255):
+            counts["not_water"] += 1
+        elif (r, g, b) == (0, 0, 255):
+            counts["open_water"] += 1
+        elif (r, g, b) == (0, 255, 0):
+            counts["inundated_vegetation"] += 1
+        elif (r, g, b) in ((180, 213, 244), (0, 255, 255)):
+            counts["partial_water"] += 1
+        elif r == g == b:
+            counts["masked"] += 1
+        else:
+            counts["other"] += 1
+    total = width * height
+    coverage = total - counts["no_data"]
+    classified = (counts["not_water"] + counts["open_water"] +
+                  counts["inundated_vegetation"] + counts["partial_water"])
+    water_like = (counts["open_water"] + counts["inundated_vegetation"] +
+                  counts["partial_water"])
+    return {
+        "width": width, "height": height,
+        **counts,
+        "coverage_pct": round(100 * coverage / total, 2),
+        "classified_pixels": classified,
+        "water_like_pixels": water_like,
+        "water_like_pct": round(100 * water_like / classified, 2) if classified else None,
+    }
+
+
+def _opera_wms_url(layer, bbox, observation_day, width=512, height=512):
+    query = urllib.parse.urlencode({
+        "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": "1.1.1",
+        "LAYERS": layer, "STYLES": "", "SRS": "EPSG:4326",
+        "BBOX": ",".join(str(v) for v in bbox), "WIDTH": width,
+        "HEIGHT": height, "FORMAT": "image/png", "TRANSPARENT": "true",
+        "TIME": observation_day,
+    }, safe=",/")
+    return f"{OPERA_GIBS_WMS}?{query}"
+
+
+def _opera_latest_observation(kind, zone_id, zone):
+    spec = OPERA_LAYERS[kind]
+    for delta in range(spec["lookback_days"] + 1):
+        observation_day = (date.today() - timedelta(days=delta)).isoformat()
+        url = _opera_wms_url(spec["layer"], zone["bbox"], observation_day)
+        raw = http_get(url, timeout=45, binary=True)
+        try:
+            stats = _png_rgba_stats(raw)
+        except ValueError:
+            continue
+        # O fâșie minusculă poate fi doar marginea unei scene. Nu o prezentăm
+        # ca observație a întregii zone de control.
+        if stats["coverage_pct"] < 5 or stats["classified_pixels"] < 100:
+            continue
+        flags = []
+        if stats["coverage_pct"] < 25:
+            flags.append("acoperire_partiala")
+        if stats["masked"] > stats["classified_pixels"]:
+            flags.append("mascare_extinsa")
+        return {
+            "zone_id": zone_id, "zone": zone["name"], "bbox": zone["bbox"],
+            "data": observation_day, "observation_time": observation_day,
+            "vechime_zile": delta, "provider": "NASA/JPL via GIBS",
+            "product": spec["title"], "sensor": spec["sensor"],
+            "product_family": spec["product_family"],
+            "quality_flags": flags, "stats": stats,
+            "parser_version": "opera-gibs-rgba-v1",
+            "raw_sha256": hashlib.sha256(raw).hexdigest(),
+            "source_url": url,
+            "png_base64": base64.b64encode(raw).decode("ascii"),
+        }
+    return {"zone_id": zone_id, "zone": zone["name"], "bbox": zone["bbox"],
+            "product": spec["title"], "sensor": spec["sensor"],
+            "product_family": spec["product_family"],
+            "quality_flags": ["fara_acoperire_recenta"], "data": None}
+
+
+def _without_images(value):
+    if isinstance(value, dict):
+        return {k: _without_images(v) for k, v in value.items() if k != "png_base64"}
+    if isinstance(value, list):
+        return [_without_images(v) for v in value]
+    return value
+
+
+def opera_surface_water():
+    def fetch():
+        zones = {}
+        for zone_id, zone in OPERA_ZONES.items():
+            zones[zone_id] = {
+                "name": zone["name"], "bbox": zone["bbox"],
+                "sentinel1": _opera_latest_observation("sentinel1", zone_id, zone),
+                "hls": _opera_latest_observation("hls", zone_id, zone),
+            }
+        payload = {
+            "activ": True, "mode": "shadow", "zones": zones,
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "access": "public, fără cont, prin NASA GIBS",
+            "independenta": "radar și optic sunt senzori diferiți, dar ambele "
+                             "hărți folosesc familia de algoritmi OPERA DSWx",
+            "nota": "suprafața apei este context datat; nu intră în verdict "
+                    "până când arhiva locală permite un baseline sezonier",
+        }
+        daily_snapshot("opera", _without_images(payload))
+        return payload
+    return cached("opera:gibs:v2", 12 * 3600, fetch)
+
+
+def opera_surface_status():
+    result = opera_surface_water()
+    return {**result, "data": _without_images(result["data"])}
+
+
+def opera_surface_map(kind, zone_id):
+    if kind not in OPERA_LAYERS or zone_id not in OPERA_ZONES:
+        raise KeyError("strat sau zonă OPERA necunoscută")
+    result = opera_surface_water()
+    observation = result["data"]["zones"][zone_id][kind]
+    encoded = observation.get("png_base64")
+    if not encoded:
+        raise RuntimeError("OPERA nu are imagine recentă pentru această zonă")
+    return base64.b64decode(encoded)
+
+
+# ---------------- Copernicus Data Space: zăpadă și umiditatea solului ------
+
+CDSE_STAC = "https://stac.dataspace.copernicus.eu/v1"
+CDSE_BASIN_BBOX = [8, 42, 30, 50]
+CDSE_CONTEXT = {
+    "snow": {
+        "collection": "clms_sce_europe_500m_daily_v1_cog",
+        "title": "Snow Cover Extent Europe 500 m",
+        "product_family": "clms_snow_extent_modis_viirs",
+        "lookback_days": 30,
+        "role": "indicator fizic amonte; context, nu debit măsurat",
+    },
+    "soil": {
+        "collection": "clms_ssm_europe_1km_daily_v1_cog",
+        "title": "Surface Soil Moisture Europe 1 km",
+        "product_family": "clms_soil_moisture_sentinel1",
+        "lookback_days": 45,
+        "role": "starea antecedentă a solului; context, nu adevăr hidrologic",
+        "quality_notice": "https://land.copernicus.eu/en/production-updates/"
+                          "radio-frequency-interference-affecting-surface-soil-moisture-products",
+    },
+}
+
+
+def _cdse_latest_feature(kind, spec):
+    start = (date.today() - timedelta(days=spec["lookback_days"])).isoformat()
+    end = date.today().isoformat()
+    query = urllib.parse.urlencode({
+        "bbox": ",".join(str(v) for v in CDSE_BASIN_BBOX),
+        "datetime": f"{start}T00:00:00Z/{end}T23:59:59Z",
+        "limit": 20,
+    }, safe=",/:" )
+    response = http_json(
+        f"{CDSE_STAC}/collections/{spec['collection']}/items?{query}", timeout=45)
+    features = response.get("features") or []
+    if not features:
+        return {"activ": False, "motiv": "nicio observație recentă în catalog"}
+    feature = max(features, key=lambda f: (f.get("properties") or {}).get("datetime") or "")
+    props = feature.get("properties") or {}
+    assets = feature.get("assets") or {}
+    thumbnail = (assets.get("thumbnail") or {}).get("href")
+    observation_time = props.get("datetime")
+    observed_day = observation_time[:10] if observation_time else None
+    age = (date.today() - date.fromisoformat(observed_day)).days if observed_day else None
+    return {
+        "activ": True, "id": feature.get("id"), "data": observed_day,
+        "observation_time": observation_time, "vechime_zile": age,
+        "collection": spec["collection"], "title": spec["title"],
+        "product_family": spec["product_family"], "role": spec["role"],
+        "thumbnail_url": thumbnail,
+        "quality_notice": spec.get("quality_notice"),
+        "provider": "Copernicus Land Monitoring Service / CDSE",
+        "parser_version": "cdse-stac-v1",
+        "access": "catalog și vizualizare publice; descărcare completă cu cont CDSE gratuit",
+    }
+
+
+def copernicus_land_context():
+    def fetch():
+        layers = {}
+        for kind, spec in CDSE_CONTEXT.items():
+            try:
+                layers[kind] = _cdse_latest_feature(kind, spec)
+            except Exception as exc:
+                layers[kind] = {"activ": False, "motiv": str(exc)[:120],
+                                "collection": spec["collection"], "title": spec["title"]}
+        if not any(v.get("activ") for v in layers.values()):
+            raise RuntimeError("niciun strat Copernicus Land nu a răspuns")
+        return {
+            "activ": any(v.get("activ") for v in layers.values()),
+            "bbox": CDSE_BASIN_BBOX, "straturi": layers,
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "nota": "straturi satelitare de context; quality notice și data "
+                    "observației rămân atașate fiecărei imagini",
+        }
+    return cached("cdse:land-context:v3", 6 * 3600, fetch)
+
+
+def copernicus_land_map(kind):
+    if kind not in CDSE_CONTEXT:
+        raise KeyError("strat Copernicus necunoscut")
+    layer = copernicus_land_context()["data"]["straturi"][kind]
+    if not layer.get("activ") or not layer.get("thumbnail_url"):
+        raise RuntimeError("stratul Copernicus nu are vizualizare recentă")
+    # Serviciul public de thumbnails autorizează exact URL-ul publicat în STAC;
+    # modificarea BBOX-ului poate răspunde 403. Păstrăm imaginea europeană
+    # originală și nu pretindem că este un subset numeric al bazinului.
+    url = layer["thumbnail_url"]
+
+    def fetch():
+        raw = http_get(url, timeout=60, binary=True)
+        if not raw.startswith(b"\x89PNG\r\n\x1a\n") or len(raw) < 500:
+            raise RuntimeError("Copernicus nu a returnat o hartă PNG validă")
+        return {"png_base64": base64.b64encode(raw).decode("ascii"),
+                "data": layer.get("data"), "raw_sha256": hashlib.sha256(raw).hexdigest()}
+    result = cached(f"cdse:land-map:v1:{kind}:{layer.get('data')}", 12 * 3600, fetch)
+    return base64.b64decode(result["data"]["png_base64"])
+
+
+# --------------- NASA Earthdata CMR: catalogul misiunilor complementare ---
+
+CMR_GRANULES = "https://cmr.earthdata.nasa.gov/search/granules.json"
+CMR_SOURCES = {
+    "swot": {
+        "short_name": "SWOT_L2_HR_RiverSP_reach_D", "title": "SWOT RiverSP Version D",
+        "signal": "nivel, pantă, lățime, suprafață și debit derivat pe reach",
+        "product_family": "swot_karin_riversp", "lookback_days": 120,
+    },
+    "smap": {
+        "short_name": "SPL3SMP_E", "title": "SMAP Enhanced L3 9 km",
+        "signal": "umiditatea zilnică a solului, arhivă din 2015",
+        "product_family": "smap_lband_soil_moisture", "lookback_days": 30,
+    },
+    "icesat2": {
+        "short_name": "ATL13", "title": "ICESat-2 ATL13",
+        "signal": "nivel al apei măsurat cu laser, control punctual",
+        "product_family": "icesat2_atlas_altimetry", "lookback_days": 730,
+    },
+    "nisar": {
+        "short_name": "NISAR_L3_SME2_PROVISIONAL_V1", "title": "NISAR SME2 provisional",
+        "signal": "umiditatea solului la scară de câmp; produs nou, shadow only",
+        "product_family": "nisar_lband_soil_moisture", "lookback_days": 120,
+    },
+}
+
+
+def _earthdata_token_present():
+    if os.environ.get("EARTHDATA_TOKEN"):
+        return True
+    return os.path.isfile(os.path.join(BASE_DIR, "data", "keys", "earthdata.token"))
+
+
+def _cmr_source_status(source_id, spec):
+    start = (date.today() - timedelta(days=spec["lookback_days"])).isoformat()
+    query = urllib.parse.urlencode({
+        "short_name": spec["short_name"],
+        "bounding_box": ",".join(str(v) for v in CDSE_BASIN_BBOX),
+        "temporal": f"{start}T00:00:00Z,{date.today().isoformat()}T23:59:59Z",
+        "page_size": 3, "sort_key": "-start_date",
+    }, safe=",/:" )
+    response = http_json(f"{CMR_GRANULES}?{query}", timeout=45)
+    entries = (response.get("feed") or {}).get("entry") or []
+    if not entries:
+        return {"activ": False, "catalog_activ": True,
+                "motiv": f"fără granule în ultimele {spec['lookback_days']} zile"}
+    latest = max(entries, key=lambda e: e.get("time_start") or "")
+    observed = latest.get("time_start")
+    observed_day = observed[:10] if observed else None
+    age = (date.today() - date.fromisoformat(observed_day)).days if observed_day else None
+    return {
+        "activ": True, "catalog_activ": True, "id": source_id,
+        "title": spec["title"], "short_name": spec["short_name"],
+        "signal": spec["signal"], "product_family": spec["product_family"],
+        "ultima_granula": latest.get("producer_granule_id") or latest.get("title"),
+        "observation_time": observed, "data": observed_day, "vechime_zile": age,
+        "download_configurat": _earthdata_token_present(),
+        "access": "metadate publice; fișiere cu Earthdata Login gratuit",
+        "mode": "catalog_only",
+        "parser_version": "cmr-granules-v1",
+    }
+
+
+def earthdata_satellite_catalog():
+    def fetch():
+        sources = {}
+        for source_id, spec in CMR_SOURCES.items():
+            try:
+                sources[source_id] = _cmr_source_status(source_id, spec)
+            except Exception as exc:
+                sources[source_id] = {"activ": False, "catalog_activ": False,
+                                      "title": spec["title"], "motiv": str(exc)[:120]}
+        if not any(s.get("catalog_activ") for s in sources.values()):
+            raise RuntimeError("catalogul NASA CMR nu a răspuns pentru nicio misiune")
+        return {
+            "activ": any(s.get("catalog_activ") for s in sources.values()),
+            "sources": sources,
+            "download_configurat": _earthdata_token_present(),
+            "nota": "catalogul confirmă existența și prospețimea granulelor; "
+                    "nu pretinde că valorile protejate au fost încă ingerate",
+        }
+    return cached("earthdata:catalog:v3", 6 * 3600, fetch)
+
+
+# ---------------- registru de proveniență și dependență între toate sursele -
+
+EVIDENCE_SOURCES = {
+    "pegelonline": {"provider": "WSV / VIA DONAU", "kind": "masurat",
+                    "family": "gauge_de_at", "mode": "active"},
+    "inhga": {"provider": "INHGA", "kind": "masurat",
+              "family": "gauge_ro_inhga", "mode": "active"},
+    "afdj": {"provider": "AFDJ", "kind": "masurat",
+             "family": "gauge_ro_afdj", "mode": "active"},
+    "rhmz": {"provider": "RHMZ Serbia", "kind": "masurat",
+             "family": "gauge_rs_rhmz", "mode": "active"},
+    "hydroinfo": {"provider": "OVF Hungary", "kind": "masurat",
+                  "family": "gauge_hu_ovf", "mode": "active"},
+    "danubehis": {"provider": "ICPDR, valori OVF", "kind": "masurat_retransmis",
+                  "family": "gauge_hu_ovf", "mode": "active"},
+    "danubestream": {"provider": "FAIRway / administrații naționale", "kind": "masurat_agregat",
+                     "family": "navigation_gauge_aggregation", "mode": "active"},
+    "glofas": {"provider": "Copernicus CEMS / Open-Meteo delivery", "kind": "model",
+               "family": "lisflood_glofas", "mode": "active"},
+    "era5": {"provider": "Copernicus C3S / Open-Meteo delivery", "kind": "reanaliza",
+             "family": "era5_reanalysis", "mode": "active"},
+    "edo": {"provider": "Copernicus EDO", "kind": "model_compozit",
+            "family": "copernicus_drought_lisflood", "mode": "context"},
+    "hydroweb": {"provider": "CNES/Theia", "kind": "masurat_orbita",
+                 "family": "radar_altimetry_missions", "mode": "active_shadow"},
+    "dahiti": {"provider": "DGFI-TUM", "kind": "masurat_orbita_procesare_alternativa",
+               "family": "radar_altimetry_missions", "mode": "optional_free_key"},
+    "opera_s1": {"provider": "NASA/JPL OPERA", "kind": "clasificare_satelit",
+                 "family": "sentinel1_scene_opera", "mode": "active_shadow"},
+    "opera_hls": {"provider": "NASA/JPL OPERA", "kind": "clasificare_satelit",
+                  "family": "hls_scene_opera", "mode": "active_shadow"},
+    "clms_snow": {"provider": "Copernicus Land / CDSE", "kind": "observatie_satelit",
+                  "family": "modis_viirs_snow", "mode": "active_context"},
+    "clms_soil": {"provider": "Copernicus Land / CDSE", "kind": "observatie_satelit",
+                  "family": "sentinel1_soil_moisture", "mode": "active_context"},
+    "grace": {"provider": "GRACE/GRACE-FO, SAGSA/Theia", "kind": "masurat_orbita",
+              "family": "grace_gravimetry", "mode": "active_lagged"},
+    "swot_direct": {"provider": "NASA/JPL PO.DAAC", "kind": "produs_satelit",
+                    "family": "swot_karin_riversp", "mode": "catalog_only_free_account"},
+    "smap": {"provider": "NASA NSIDC", "kind": "produs_satelit",
+             "family": "smap_lband_soil", "mode": "catalog_only_free_account"},
+    "icesat2": {"provider": "NASA NSIDC", "kind": "masurat_laser",
+                "family": "icesat2_atlas", "mode": "catalog_only_free_account"},
+    "nisar": {"provider": "NASA/ISRO ASF", "kind": "produs_satelit_provisional",
+              "family": "nisar_lband_soil", "mode": "catalog_only_free_account"},
+    "jrc_global_surface_water": {"provider": "EC JRC", "kind": "baseline_satelit",
+                                 "family": "landsat_surface_water_history",
+                                 "mode": "documented_baseline",
+                                 "url": "https://global-surface-water.appspot.com/download"},
+    "clms_fsc_sws": {"provider": "Copernicus Land", "kind": "zapada_high_resolution",
+                     "family": "sentinel1_sentinel2_snow", "mode": "documented_free_account",
+                     "url": "https://land.copernicus.eu/en/products/snow"},
+    "grdc": {"provider": "Global Runoff Data Centre / WMO", "kind": "masurat_istoric",
+             "family": "grdc_in_situ_discharge", "mode": "optional_noncommercial_request",
+             "url": "https://portal.grdc.bafg.de",
+             "terms": "date brute numai pentru cercetare; fără redistribuire"},
+    "grdc_wmo_2024": {"provider": "GRDC / WMO via Zenodo", "kind": "masurat_istoric",
+                      "family": "grdc_in_situ_discharge", "mode": "documented_cc_by_nc_snapshot",
+                      "url": "https://doi.org/10.5281/zenodo.19126732",
+                      "coverage": "1991-2024; fără stație pe cursul principal al Dunării în ediția verificată"},
+}
+
+EVIDENCE_DEPENDENCIES = [
+    {"members": ["hydroinfo", "danubehis"],
+     "relationship": "aceleași măsurători OVF, două căi de livrare",
+     "count_as": 1},
+    {"members": ["afdj", "danubestream"],
+     "relationship": "posibilă retransmitere a aceleiași mire naționale; cross-check de livrare, nu independență garantată",
+     "count_as": 1},
+    {"members": ["hydroweb", "dahiti"],
+     "relationship": "procesări diferite pot folosi aceleași misiuni de altimetrie",
+     "count_as": 1},
+    {"members": ["hydroweb", "swot_direct"],
+     "relationship": "HydroWeb poate include SWOT; granula directă aduce flags/proveniență, nu un senzor nou",
+     "count_as": 1},
+    {"members": ["opera_s1", "clms_soil"],
+     "relationship": "produse diferite care pot porni din aceeași scenă Sentinel-1",
+     "count_as": 1},
+    {"members": ["glofas", "edo"],
+     "relationship": "produse Copernicus/LISFLOOD corelate; nu sunt două modele complet independente",
+     "count_as": 1},
+    {"members": ["grace"],
+     "relationship": "un al doilea procesor GRACE validează procesarea, nu adaugă o misiune independentă",
+     "count_as": 1},
+    {"members": ["grdc", "grdc_wmo_2024"],
+     "relationship": "același furnizor și aceleași observații in-situ pot apărea în produse cu licențe și intervale diferite",
+     "count_as": 1},
+]
+
+
+def evidence_source_registry():
+    modes = {}
+    for source in EVIDENCE_SOURCES.values():
+        modes[source["mode"]] = modes.get(source["mode"], 0) + 1
+    return {
+        "sources": EVIDENCE_SOURCES,
+        "dependencies": EVIDENCE_DEPENDENCIES,
+        "summary": {"sources": len(EVIDENCE_SOURCES), "by_mode": modes},
+        "rule": "membrii aceleiași dependențe nu se însumează ca voturi independente",
+    }
 
 
 # ---------------------------- gravimetrie GRACE (apa totală din bazin) -------
@@ -1133,45 +2098,92 @@ def hydroweb_gravimetry(luni=290):
     return cached("gravimetrie", 7 * 86400, fetch)
 
 
-# ---------------------------------------------------- GRDC (istoric secular) --
-# Global Runoff Data Centre (Koblenz): serii MĂSURATE lungi (Ceatal Izmail din
-# sec. XIX). Datele se cer gratuit pe portal.grdc.bafg.de; fișierul primit
-# (*_Q_Day.Cmd.txt sau similar) se pune în data/grdc/ și e citit de aici.
+# ------------------------------------------------ GRDC (istoric măsurat) --
+# Global Runoff Data Centre (Koblenz): serii MĂSURATE multidecenale. Pentru
+# comparația de la intrarea în deltă selectăm explicit Ceatal Izmail (6742900),
+# nu primul fișier alfabetic dintr-un pachet cu mai multe stații. Datele clasice
+# se cer gratuit, numai pentru uz necomercial, pe portal.grdc.bafg.de; fișierul
+# *_Q_Day.Cmd.txt primit se pune în data/grdc/ și rămâne local.
 
 GRDC_DIR = os.path.join(BASE_DIR, "data", "grdc")
+GRDC_CEATAL_ID = "6742900"
 
 
-def grdc_series():
+def _grdc_parse_file(path):
+    """Parsează exportul zilnic GRDC ASCII fără a pierde metadatele/proveniența."""
+    series = {}
+    metadata = {}
+    digest = hashlib.sha256()
+    with open(path, "rb") as raw:
+        payload = raw.read()
+    digest.update(payload)
+    text = payload.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        if line.startswith("#"):
+            if ":" in line:
+                key, value = line.lstrip("# ").split(":", 1)
+                metadata[key.strip().lower()] = value.strip()
+            continue
+        m = re.match(r"(\d{4}-\d{2}-\d{2});[^;]*;\s*(-?\d+(?:\.\d+)?)", line)
+        if m and float(m.group(2)) > -900:
+            series[m.group(1)] = float(m.group(2))
+    station_id = metadata.get("grdc-no.", "")
+    return {
+        "path": path,
+        "fisier": os.path.basename(path),
+        "station_id": station_id,
+        "statie": metadata.get("station", os.path.basename(path)),
+        "rau": metadata.get("river"),
+        "tara": metadata.get("country"),
+        "interval_declarat": metadata.get("time series"),
+        "ultima_actualizare": metadata.get("last update"),
+        "raw_sha256": digest.hexdigest(),
+        "_serie": series,
+    }
+
+
+def grdc_series(station_id=GRDC_CEATAL_ID):
     if not os.path.isdir(GRDC_DIR):
         return {"activ": False, "motiv": "director data/grdc/ inexistent"}
     files = [f for f in sorted(os.listdir(GRDC_DIR))
              if f.lower().endswith((".txt", ".csv", ".day"))]
     if not files:
         return {"activ": False,
-                "motiv": "Niciun fișier în data/grdc/. Cere gratuit seria zilnică "
-                         "(ex. stația Ceatal Izmail) pe portal.grdc.bafg.de și "
-                         "pune fișierul primit aici."}
-    path = os.path.join(GRDC_DIR, files[0])
-    series = {}
-    station = files[0]
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            if line.startswith("#"):
-                m = re.search(r"Station:\s*(.+)", line)
-                if m:
-                    station = m.group(1).strip()
-                continue
-            m = re.match(r"(\d{4}-\d{2}-\d{2});[^;]*;\s*(-?\d+(?:\.\d+)?)", line)
-            if m and float(m.group(2)) > -900:
-                series[m.group(1)] = float(m.group(2))
+                "motiv": "Niciun export zilnic GRDC în data/grdc/. Cere seria "
+                         "Ceatal Izmail (GRDC 6742900) în format GRDC ASCII și "
+                         "păstrează fișierul primit local."}
+
+    parsed = [_grdc_parse_file(os.path.join(GRDC_DIR, f)) for f in files]
+    selected = next((item for item in parsed if item["station_id"] == station_id), None)
+    if selected is None:
+        selected = next((item for item in parsed
+                         if station_id in item["fisier"]), None)
+    if selected is None:
+        found = [{"grdc_id": item["station_id"] or None, "statie": item["statie"],
+                  "fisier": item["fisier"]} for item in parsed]
+        return {"activ": False,
+                "motiv": f"Lipsește stația țintă Ceatal Izmail (GRDC {station_id}); "
+                         f"am găsit {len(found)} alte exporturi.",
+                "statii_gasite": found,
+                "termeni": "uz necomercial; datele brute nu se redistribuie"}
+
+    series = selected.pop("_serie")
     if len(series) < 3650:
         return {"activ": False,
-                "motiv": f"fișierul {files[0]} are doar {len(series)} zile valide "
-                         "— nu pare o serie GRDC zilnică"}
+                "motiv": f"fișierul {selected['fisier']} are doar {len(series)} zile valide "
+                         "— seria este prea scurtă sau formatul nu este cel zilnic GRDC",
+                "grdc_id": selected["station_id"] or station_id}
     dates = sorted(series)
-    return {"activ": True, "statie": station, "fisier": files[0],
+    return {"activ": True, "statie": selected["statie"],
+            "grdc_id": selected["station_id"] or station_id,
+            "rau": selected["rau"], "tara": selected["tara"],
+            "fisier": selected["fisier"], "raw_sha256": selected["raw_sha256"],
             "din": dates[0], "pana": dates[-1], "zile": len(series),
-            "_serie": series}
+            "interval_declarat": selected["interval_declarat"],
+            "ultima_actualizare": selected["ultima_actualizare"],
+            "termeni": "uz necomercial; datele brute rămân locale și nu se redistribuie",
+            "sursa": "The Global Runoff Data Centre, 56068 Koblenz, Germany",
+            "parser_version": "grdc_ascii_daily_v2", "_serie": series}
 
 
 # ------------------------------------------------------------- overview ----

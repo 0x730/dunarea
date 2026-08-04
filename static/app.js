@@ -7,6 +7,77 @@ const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });
 
+/* ---------------------------------------- vederi și navigație internă -- */
+const VIEW_LABELS = {
+  acum: "Acum",
+  context: "Bazin & istoric",
+  integritate: "Verificări & surse",
+  sectoare: "Porțile de Fier & Delta",
+  actiuni: "Opțiuni",
+};
+const VIEW_PATHS = {
+  acum: "/",
+  context: "/bazin",
+  integritate: "/integritate",
+  sectoare: "/sectoare",
+  actiuni: "/optiuni",
+};
+
+function requestedView() {
+  const hashTarget = location.hash ? document.getElementById(location.hash.slice(1)) : null;
+  if (hashTarget?.dataset.view) return hashTarget.dataset.view;
+  const pathView = Object.keys(VIEW_PATHS).find((key) => VIEW_PATHS[key] === location.pathname);
+  if (pathView) return pathView;
+  const candidate = new URLSearchParams(location.search).get("view");
+  return Object.hasOwn(VIEW_LABELS, candidate) ? candidate : "acum";
+}
+
+function showView(view, historyMode = null, scrollTop = false) {
+  if (!Object.hasOwn(VIEW_LABELS, view)) view = "acum";
+  document.querySelectorAll("section[data-view]").forEach((section) => {
+    section.hidden = section.dataset.view !== view;
+  });
+  document.querySelectorAll("[data-view-link]").forEach((link) => {
+    if (link.dataset.viewLink === view) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+
+  const toc = $("view-toc");
+  const headings = [...document.querySelectorAll(`section[data-view="${view}"] > h2`)];
+  toc.innerHTML = headings.map((heading) =>
+    `<a href="#${heading.parentElement.id}">${heading.textContent.trim()}</a>`).join("");
+  document.title = `Dunărea — ${VIEW_LABELS[view]}`;
+
+  if (historyMode) {
+    const url = new URL(location.href);
+    url.pathname = VIEW_PATHS[view];
+    url.search = "";
+    url.hash = "";
+    history[`${historyMode}State`]({ view }, "", url);
+  }
+  if (scrollTop) window.scrollTo({ top: 0, behavior: "smooth" });
+  requestAnimationFrame(() => CHARTS.forEach((chart) => chart.resize()));
+}
+
+function setupViewNavigation() {
+  showView(requestedView(), "replace");
+  document.querySelectorAll("[data-view-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      showView(link.dataset.viewLink, "push", true);
+    });
+  });
+  $("view-toc").addEventListener("click", (event) => {
+    const link = event.target.closest("a");
+    if (!link) return;
+    event.preventDefault();
+    const target = document.querySelector(link.getAttribute("href"));
+    history.replaceState({ view: target.dataset.view }, "", link.getAttribute("href"));
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  window.addEventListener("popstate", () => showView(requestedView()));
+}
+
 // Securitate: TOT ce vine din backend conține text din surse externe
 // (buletine, avize, nume de stații). Escapăm orice string la graniță, o
 // singură dată, aici — astfel niciun sink innerHTML nu poate executa HTML
@@ -117,7 +188,7 @@ const RS_KM = {
   "Tekija": 956, "Kladovo": 933, "Brza Palanka": 884, "Prahovo": 861,
 };
 
-function renderProfile(ov, afdj, hidmet, portal) {
+function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   const W = 1000, H = 250, X0 = 14, X1 = 990, Y0 = 196, YTOP = 30;
   const KM_MAX = 2500;
   const x = (km) => X0 + ((KM_MAX - km) / KM_MAX) * (X1 - X0);
@@ -144,6 +215,22 @@ function renderProfile(ov, afdj, hidmet, portal) {
       measured.push({ km, q: s.debit_m3s, name: s.statie + " (RS)", src: "RHMZ Serbia (zilnic)", extra: s.nivel_cm != null ? `nivel ${fmtN.format(s.nivel_cm)} cm` : "" });
     else if (s.nivel_cm != null)
       ticks.push({ km, name: s.statie + " (RS)", src: "RHMZ Serbia (zilnic)", info: `nivel ${fmtN.format(s.nivel_cm)} cm` });
+  });
+
+  // Hydroinfo/OVF completează golul de debite măsurate din Ungaria.
+  // Backendul atașează km doar stațiilor alese explicit pentru profil.
+  const directHu = new Set();
+  (hydroinfo?.statii || []).forEach((s) => {
+    if (s.km == null || s.debit_m3s == null) return;
+    directHu.add(s.statie);
+    measured.push({ km: s.km, q: s.debit_m3s, name: `${s.statie} (HU)`,
+      src: "Hydroinfo/OVF (zilnic)",
+      extra: s.nivel_cm != null ? `nivel ${fmtN.format(s.nivel_cm)} cm` : "" });
+  });
+  (danubehis?.statii || []).forEach((s) => {
+    if (s.km == null || s.debit_m3s == null || directHu.has(s.statie)) return;
+    measured.push({ km: s.km, q: s.debit_m3s, name: `${s.statie} (HU)`,
+      src: "OVF via ICPDR DanubeHIS", extra: "fallback normalizat" });
   });
 
   if (ov.inhga?.debit_bazias_m3s)
@@ -298,7 +385,7 @@ async function renderAvize() {
         <td class="num">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
         <td style="font-size:12.5px; color:var(--ink-2)">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
         <td class="num">${a.din || ""}</td></tr>`).join("");
-    $("tabel-avize").innerHTML = `<div style="overflow-x:auto"><table class="data">
+    $("tabel-avize").innerHTML = `<div class="table-scroll"><table class="data">
       <thead><tr><th>Aviz</th><th class="num">sector</th><th>conținut</th><th class="num">din</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="name">niciun aviz prioritar activ pe sectorul RO/BG</td></tr>`}</tbody></table>
       <p class="sub" style="margin:8px 0 0">${d.active} avize active pe tot fluviul ·
@@ -508,9 +595,8 @@ async function renderEntsoe() {
       rows.push(li("debit turbinat", `estimabil cu Q≈P/(ρ·g·H·η) <span class="prov prov-calculat">calculat</span>`));
       pill("ENTSO-E", "ok");
     } else {
-      rows.push(li("producție pe unități", `disponibilă prin ENTSO-E pentru agregatele ≥100 MW (PF I are 6×194 MW pe partea RO). ${d.motiv || ""}`));
-      rows.push(li("activare", `cont gratuit pe transparency.entsoe.eu → token → porniți serverul cu <code>ENTSOE_TOKEN=…</code>`));
-      pill("ENTSO-E", "err");
+      rows.push(li("producție pe unități", `<span class="prov prov-lipsa">indisponibilă aici</span> — integrarea opțională ENTSO-E nu este activată pe această instanță`));
+      pill("ENTSO-E", "off");
     }
     rows.push(li("deversoare", `<span class="prov prov-lipsa">nepublicat</span> — cere pozițiile vanelor și curbele de descărcare`));
     rows.push(li("ecluzări", `<span class="prov prov-lipsa">nepublicat</span> — jurnalele de manevră nu sunt flux public`));
@@ -588,30 +674,46 @@ async function renderAnomalii() {
   // verdictele
   const cards = [];
 
-  // 1. climatologie — sinteză
-  const worst = (d.climatologie || []).reduce((w, c) => {
-    const p = c.azi?.pct; return p != null && (w == null || p < w.p) ? { p, c } : w;
-  }, null);
-  if (worst) {
-    const maxStreak = Math.max(0, ...d.climatologie.map((c) => c.streak_sub_p10 || 0));
-    const subP10 = d.climatologie.filter((c) => c.azi?.pct != null && c.azi.pct < 10);
-    const amonte = d.climatologie.filter((c) => (c.km || 0) > 1100 && c.azi?.pct != null);
-    const amonteLow = amonte.filter((c) => c.azi.pct < 10);
-    const origine = amonteLow.length >= Math.max(1, amonte.length - 1)
-      ? `Percentilele sunt la fel de joase din amonte (${amonteLow[0]?.name || "Germania"} → Baziaș),
-         deci <b>deficitul intră în România pe fluviu</b> — nu apare la graniță.`
-      : amonteLow.length === 0 && amonte.length > 0
-        ? `În amonte valorile sunt aproape normale — <b>deficitul se accentuează pe parcurs</b>, de investigat unde.`
-        : `Deficitul e mixt pe transect — vezi banda de mai sus, secțiune cu secțiune.`;
+  // 1. climatologie — sinteză valabilă la ape mici, normale sau mari
+  const clim = (d.climatologie || []).filter((c) => c.azi?.pct != null);
+  if (clim.length) {
+    const ordered = [...clim].sort((a, b) => a.azi.pct - b.azi.pct);
+    const medPct = ordered[Math.floor(ordered.length / 2)].azi.pct;
+    const subP10 = clim.filter((c) => c.azi.pct < 10);
+    const pesteP90 = clim.filter((c) => c.azi.pct > 90);
+    const maxStreak = Math.max(0, ...clim.map((c) => c.streak_sub_p10 || 0));
+    let titlu, sev, mesaj, probe;
+    if (medPct < 25) {
+      const worst = ordered[0];
+      const amonte = clim.filter((c) => (c.km || 0) > 1100);
+      const amonteLow = amonte.filter((c) => c.azi.pct < 10);
+      const origine = amonteLow.length >= Math.ceil(amonte.length * 0.6)
+        ? `Semnalul este deja prezent în majoritatea secțiunilor amonte; deficitul nu începe la granița României.`
+        : `Distribuția pe transect este mixtă; localizarea cauzelor cere mai mult decât aceste percentile.`;
+      titlu = "Debite sub normalul sezonului";
+      sev = worst.severitate;
+      mesaj = `Cea mai joasă secțiune este ${worst.name}, la P${fmt1.format(worst.azi.pct)}.
+        ${origine}`;
+      probe = `${subP10.length} din ${clim.length} secțiuni sub P10 · mediană P${fmt1.format(medPct)} ·
+        serie maximă ${maxStreak} zile sub P10`;
+    } else if (medPct > 75) {
+      const highest = ordered.at(-1);
+      titlu = "Debite peste normalul sezonului";
+      sev = highest.severitate;
+      mesaj = `Cea mai ridicată secțiune este ${highest.name}, la P${fmt1.format(highest.azi.pct)}.`;
+      probe = `${pesteP90.length} din ${clim.length} secțiuni peste P90 · mediană P${fmt1.format(medPct)}`;
+    } else {
+      titlu = "Debite în intervalul sezonier obișnuit";
+      sev = "normal";
+      mesaj = `Mediana transectului este P${fmt1.format(medPct)}; nu domină nici semnalul de ape mici, nici cel de ape mari.`;
+      probe = `${subP10.length} secțiuni sub P10 · ${pesteP90.length} peste P90 · ${clim.length} evaluate`;
+    }
     cards.push(`<div class="card verdict">
-      <h3>Secetă hidrologică ${sevChip(worst.c.severitate)}</h3>
-      <p class="v">Debitul e <b>istoric de mic</b> pe cursul monitorizat — la ${worst.c.name}
-        doar ${worst.c.ani_mai_mici} din ${worst.c.ani_referinta} ani au avut valori mai mici în această zi a anului.
-        ${origine}</p>
-      <div class="evi">${subP10.length} din ${d.climatologie.length} secțiuni (DE → deltă) sub percentila 10<br>
-        serie maximă: ${maxStreak} zile consecutive sub percentila 10</div>
-      <p class="met">Metodă: percentila empirică a zilei calendaristice (±7 zile), GloFAS 1991–2025.
-        Anormal ≠ inexplicabil — vezi verdictul despre precipitații.</p>
+      <h3>${titlu} ${sevChip(sev)}</h3>
+      <p class="v">${mesaj}</p>
+      <div class="evi">${probe}</div>
+      <p class="met">Metodă: percentila empirică a zilei calendaristice (±7 zile), GloFAS 1991–${new Date().getFullYear() - 1}.
+        Este un reper de model, nu o clasificare oficială INHGA.</p>
     </div>`);
   }
 
@@ -620,7 +722,7 @@ async function renderAnomalii() {
   if (b) {
     const sev = Math.abs(b.z) > 2.5 ? "sever" : Math.abs(b.z) > 1.5 ? "atentie" : "normal";
     const msg = sev === "normal"
-      ? `Bilanțul intrare→ieșire la Porțile de Fier este <b>în limitele istorice</b> — în datele publice nu se vede „apă lipsă".`
+      ? `Reziduul modelat intrare→ieșire la Porțile de Fier este <b>în limitele istorice</b>; nu apare o divergență neobișnuită în acest test.`
       : sev === "atentie"
         ? `Reziduul bilanțului e <b>ușor în afara tiparului</b> lunii — de urmărit în zilele următoare.`
         : `Reziduul bilanțului e <b>persistent în afara tiparului istoric</b> — exact genul de divergență care merită investigată și cerută oficial.`;
@@ -648,12 +750,12 @@ async function renderAnomalii() {
     } else {
       const sev = Math.abs(m.z) > 2.5 ? "sever" : Math.abs(m.z) > 1.5 ? "atentie" : "normal";
       const msg = sev === "normal"
-        ? `Cifra oficială românească se mișcă <b>consecvent</b> cu modelul independent Copernicus — nicio ruptură suspectă în relația dintre ele.`
+        ? `Cifra oficială românească se mișcă <b>consecvent</b> cu modelul Copernicus; relația dintre serii nu s-a rupt în fereastra testată.`
         : `Relația dintre cifra oficială și modelul independent <b>s-a schimbat recent</b> — de verificat ce s-a modificat (metodă, stație sau râu).`;
       cards.push(`<div class="card verdict">
-        <h3>INHGA vs. model independent ${sevChip(sev)}</h3>
+      <h3>INHGA vs. model separat ${sevChip(sev)}</h3>
         <p class="v">${msg}</p>
-        <div class="evi">raport oficial/model: ${m.raport_mediu} ± ${m.sd} (${m.n} zile)<br>
+        <div class="evi">raport oficial/model: ${m.raport_mediu} ± ${m.sd} (${m.n_etalon || m.n} zile-etalon)<br>
           ultimele 7 zile: ${m.raport_ultimele7} · abatere: z = ${m.z}</div>
         <p class="met">Modelul supraestimează sistematic la Baziaș (raport ~${m.raport_mediu}) —
           bias-ul stabil e normal la modele; ruptura bruscă ar fi semnalul.</p>
@@ -666,7 +768,7 @@ async function renderAnomalii() {
   if (mc) {
     const sev = mc.mediana_abatere_cm <= 10 ? "normal" : mc.mediana_abatere_cm <= 25 ? "atentie" : "sever";
     const msg = sev === "normal"
-      ? `Două sisteme independente (AFDJ și rețeaua de navigație DanubeSTREAM) raportează <b>aceleași cote</b> pe stațiile comune — mirele românești nu „mint".`
+      ? `AFDJ și rețeaua de navigație DanubeSTREAM raportează cote <b>apropiate</b> pe stațiile și momentele comparate.`
       : `Cele două sisteme diferă mai mult decât ar explica ora citirii — <b>de investigat stațiile din listă</b>.`;
     cards.push(`<div class="card verdict">
       <h3>Mire încrucișate: AFDJ ↔ navigație ${sevChip(sev)}</h3>
@@ -677,53 +779,64 @@ async function renderAnomalii() {
     </div>`);
   }
 
-  // 6. satelitul confirmă?
+  // 6. altimetria este o probă secundară, nu un vot de adevăr
   if (d.satelit) {
     const s = d.satelit;
-    const sev = s.mediana_pct <= 15 ? "normal" : s.mediana_pct <= 40 ? "atentie" : "info";
+    const usable = s.poate_sustine_context && s.mediana_pct != null;
+    const sev = usable ? "info" : "atentie";
     cards.push(`<div class="card verdict">
-      <h3>Satelit ↔ râu ${sevChip(sev)}</h3>
-      <p class="v">${s.mediana_pct <= 15
-        ? `Altimetria satelitară spune <b>aceeași poveste</b> ca mirele și modelul: niveluri la minimul propriei istorii.`
-        : `Satelitul vede altceva decât mirele — <b>de investigat</b>.`}</p>
-      <div class="evi">${s.statii} stații virtuale · percentila mediană P${fmt1.format(s.mediana_pct)} · ${s.sub_p10} sub P10</div>
-      <p class="met">${s.metoda}.</p>
+      <h3>Altimetrie satelitară — shadow ${sevChip(sev)}</h3>
+      <p class="v">${usable
+        ? (s.mediana_pct <= 15
+          ? `Observațiile eligibile indică niveluri joase în propriile serii, ca <b>probă secundară datată</b>.`
+          : `Observațiile eligibile nu indică un semnal generalizat de niveluri foarte joase.`)
+        : `Acoperirea sau calitatea nu sunt suficiente pentru un context satelitar distribuit pe întregul curs.`}</p>
+      <div class="evi">${s.statii}/${s.statii_total} stații eligibile · ${s.statii_excluse} excluse ·
+        ${s.segmente?.length || 0}/3 segmente${s.mediana_pct != null ? ` · mediană P${fmt1.format(s.mediana_pct)} · ${s.sub_p10} sub P10` : ""}</div>
+      <p class="met">${s.metoda}. ${s.limita || ""}</p>
     </div>`);
   }
 
-  // 7/8. perechi măsurat↔model pe alte teritorii
+  // perechi măsurat↔model pe alte teritorii
   [["germania", "Germania: miră ↔ model", "WSV (federal german)"],
-   ["serbia", "Serbia: miră ↔ model", "RHMZ (Serbia)"]].forEach(([key, titlu, cine]) => {
+   ["ungaria", "Ungaria: miră ↔ model", "OVF (Hydroinfo/DanubeHIS)"],
+   ["serbia", "Serbia: miră ↔ model", "RHMZ/Hydroinfo"]].forEach(([key, titlu, cine]) => {
     const g = d[key];
     if (!g) return;
     const sev = g.coerent ? "normal" : "sever";
+    const delivery = key === "ungaria"
+      ? `<br>livrări OVF: Hydroinfo ${g.hydroinfo_m3s != null ? fmtN.format(g.hydroinfo_m3s) + " m³/s" : "–"} ·
+         DanubeHIS ${g.danubehis_m3s != null ? fmtN.format(g.danubehis_m3s) + " m³/s" : "–"}${g.diferenta_livrari_pct != null
+           ? ` · diferență ${g.diferenta_livrari_pct > 0 ? "+" : ""}${fmt1.format(g.diferenta_livrari_pct)}%` : ""}`
+      : "";
     cards.push(`<div class="card verdict">
       <h3>${titlu} ${sevChip(sev)}</h3>
       <p class="v">${g.coerent
-        ? `Măsurătoarea ${cine} și modelul independent sunt <b>coerente</b> — încă o pereche care se confirmă reciproc.`
+        ? `Măsurătoarea ${cine} și modelul sunt <b>compatibile cu banda largă de control</b>.`
         : `Raport măsurat/model în afara plauzibilului — <b>de investigat</b>.`}</p>
-      <div class="evi">măsurat ${fmtN.format(g.masurat_m3s)} m³/s · model ${fmtN.format(g.model_m3s)} m³/s · raport ${g.raport}</div>
+      <div class="evi">măsurat ${fmtN.format(g.masurat_m3s)} m³/s · model ${fmtN.format(g.model_m3s)} m³/s · raport ${g.raport}${delivery}</div>
       <p class="met">${g.metoda}.</p>
     </div>`);
   });
 
-  // 9. Austria sub lupă — testul retenției
+  // Austria — screening de nivel, nu verdict de retenție
   if (d.austria) {
     const a = d.austria;
     const sev = a.suspiciune_retentie ? "sever" : "normal";
     const scad = a.statii.filter((s) => s.trend_cm_30z < 0).length;
     cards.push(`<div class="card verdict">
-      <h3>Austria sub lupă: rețin barajele apa? ${sevChip(sev)}</h3>
+      <h3>Austria: trendul nivelurilor ${sevChip(sev)}</h3>
       <p class="v">${a.suspiciune_retentie
-        ? `Nivelurile din lacurile austriece <b>cresc</b> pe fond de intrare în scădere — tiparul retenției; <b>de investigat</b>.`
-        : `<b>Nu.</b> ${scad} din ${a.statii.length} mire austriece sunt în scădere sau stabile pe ultimele 30 de zile — barajele nu acumulează, apa pur și simplu nu vine.`}</p>
+        ? `Nivelurile austriece cresc pe fond de intrare în scădere — un semnal de <b>investigat</b> cu debite și curbe cotă–volum.`
+        : `${scad} din ${a.statii.length} mire austriece sunt în scădere pe ultimele 30 de zile. Screeningul nu arată o creștere generalizată a cotelor, dar <b>nu poate exclude retenția</b>.`}</p>
       <div class="evi">trend median mire AT: ${a.mediana_trend_cm > 0 ? "+" : ""}${fmt1.format(a.mediana_trend_cm)} cm/30 zile ·
         intrare Germania (Hofkirchen): ${a.intrare_trend_pct != null ? (a.intrare_trend_pct > 0 ? "+" : "") + fmt1.format(a.intrare_trend_pct) + "%" : "–"}<br>
         ${a.statii.slice(0, 5).map((s) => `${s.statie} ${s.trend_cm_30z > 0 ? "+" : ""}${fmt1.format(s.trend_cm_30z)}`).join(" · ")}</div>
       <p class="met">${a.metoda} Surse oficiale austriece pentru verificare fină:
         <a href="https://ehyd.gv.at" target="_blank" rel="noopener">eHYD</a> ·
         <a href="https://www.doris.bmk.gv.at" target="_blank" rel="noopener">DoRIS</a> ·
-        <a href="https://www.verbund.com" target="_blank" rel="noopener">VERBUND</a> (raportare oficială H1 2026: disponibilitate apă −32%, minimul secolului).</p>
+        <a href="https://www.verbund.com/en/group/news-press/press-releases/2026/5/13/corporate-news-results-quarter-12026" target="_blank" rel="noopener">VERBUND, T1 2026</a>
+        (coeficient hidro 0,78, cu 22 puncte procentuale sub media multianuală).</p>
     </div>`);
   }
 
@@ -735,7 +848,7 @@ async function renderAnomalii() {
     const consistent = debitLow ? minP <= 20 : true;
     const sev = consistent ? "normal" : "atentie";
     const msg = consistent
-      ? `Ploile din bazinul amonte sunt la fel de rare ca debitul — seceta <b>e explicată meteorologic</b>, nu de captări invizibile.`
+      ? `Debitul mic este <b>compatibil</b> cu precipitații rare în cel puțin o zonă amonte. Această euristică nu separă efectele solului, zăpezii, stocării sau captărilor.`
       : `Debitul e mai scăzut decât ar sugera precipitațiile din amonte — <b>necorelare de investigat</b> (sol, zăpadă, gestiune sau captări; nedeterminabil doar din date publice).`;
     cards.push(`<div class="card verdict">
       <h3>Precipitații ↔ debit ${sevChip(sev)}</h3>
@@ -786,7 +899,7 @@ async function renderStatistici() {
     <thead><tr><th>Zonă</th><th class="num">ian→azi mm</th><th class="num">mediană</th>
       <th class="num">abatere</th><th class="num">ani mai uscați</th>
       <th class="num">iarnă mm</th><th class="num">mediană</th><th class="num">abatere</th>
-      <th class="num">zăpadă iarnă</th>
+      <th class="num">ninsoare cumulată</th>
       <th class="num">ult. 90 zile</th></tr></thead>
     <tbody>${(d.precipitatii || []).map((r) => `
       <tr><td class="name">${r.zona}</td>
@@ -801,7 +914,8 @@ async function renderStatistici() {
         <td class="num">${b(r.ultimele90).pct != null ? "P" + fmt1.format(r.ultimele90.pct) : "–"}</td></tr>`).join("")}
     </tbody></table>
     <p class="sub" style="margin:8px 0 0">date până la ${d.precipitatii[0]?.pana_la || "–"} (ERA5 are câteva zile întârziere) ·
-      „ani mai uscați" = câți ani din referință au avut mai puțină apă în aceeași fereastră</p></div>`;
+      „ani mai uscați" = câți ani din referință au avut mai puțină apă în aceeași fereastră ·
+      ninsoare = suma ERA5 în cm de zăpadă proaspătă, nu stratul rămas pe sol și nu rezerva de apă din zăpadă</p></div>`;
 }
 
 /* ------------------------------------------------------------ unde e apa -- */
@@ -832,36 +946,44 @@ async function renderBilantApa() {
         <td class="num">${fmt1.format(normal)} km³</td>
         <td class="num">${pctSign(Math.round(1000 * (val - normal) / normal) / 10)}</td></tr>`;
 
-  const lipsaPct = Math.round(100 * bz.lipsa_km3 / bz.normal_km3);
+  const abaterePct = Math.round(100 * (bz.volum_km3 - bz.normal_km3) / bz.normal_km3);
+  const analysisYear = Number(d.pana_la.slice(0, 4));
+  const volumStatus = abaterePct < 0
+    ? `<b style="color:var(--serious)">deficit ${fmt1.format(bz.lipsa_km3)} km³ (${Math.abs(abaterePct)}%)</b>`
+    : abaterePct > 0
+      ? `<b style="color:var(--good)">surplus ${fmt1.format(-bz.lipsa_km3)} km³ (${abaterePct}%)</b>`
+      : `<b>la nivelul medianei</b>`;
   const fereastra = `1 ian – ${d.pana_la.slice(8)}.${d.pana_la.slice(5, 7)}`;
   $("bilant-card").innerHTML = `
     <p style="margin:4px 0 16px;font-size:15px;color:var(--ink)">
       Prin Baziaș au trecut, în intervalul <b>${fereastra}</b>, <b>${fmt1.format(bz.volum_km3)} km³</b>,
-      față de <b>${fmt1.format(bz.normal_km3)} km³</b> — mediana <b>exact aceluiași interval</b> din anii 1991–${new Date().getFullYear() - 1} —
-      <b style="color:var(--serious)">lipsesc ${fmt1.format(bz.lipsa_km3)} km³ (${lipsaPct}%)</b>.
-      Mai jos, de unde lipsesc, în bazinul superior (aceeași fereastră pentru toți anii):</p>
+      față de <b>${fmt1.format(bz.normal_km3)} km³</b> — mediana <b>exact aceluiași interval</b> din anii 1991–${analysisYear - 1} —
+      ${volumStatus}. Mai jos este screeningul P−Q pentru bazinul superior
+      (aceeași fereastră pentru toți anii):</p>
     <div style="overflow-x:auto"><table class="data">
-      <thead><tr><th>Rând din bilanț</th><th>normal (gri) vs. ${new Date().getFullYear()}</th>
-        <th class="num">${new Date().getFullYear()} (${fereastra})</th><th class="num">normal (${fereastra})</th><th class="num">abatere</th></tr></thead>
+      <thead><tr><th>Rând din bilanț</th><th>normal (gri) vs. ${analysisYear}</th>
+        <th class="num">${analysisYear} (${fereastra})</th><th class="num">normal (${fereastra})</th><th class="num">abatere</th></tr></thead>
       <tbody>
-        ${row("① Ploaie + zăpadă căzute", b.ploaie_km3, b.ploaie_normal_km3, "#3987e5",
-              "ERA5 × aria bazinului")}
-        ${row("② Scurs prin râu (Passau)", b.rau_passau_km3, b.rau_normal_km3, "#6da7ec",
+        ${row("① Precipitații estimate", b.ploaie_km3, b.ploaie_normal_km3, "#3987e5",
+              "6 puncte ERA5 × aria bazinului")}
+        ${row("② Debit modelat la Passau", b.rau_passau_km3, b.rau_normal_km3, "#6da7ec",
               "GloFAS, cumulat")}
-        ${row("③ Luat de atmosferă + sol", b.atmosfera_sol_km3, b.atmosfera_sol_normal_km3, "#898781",
-              "rezidualul ① − ②")}
+        ${row("③ Rezidual P−Q", b.atmosfera_sol_km3, b.atmosfera_sol_normal_km3, "#898781",
+              "ET + stocuri + schimburi + erori")}
       </tbody></table></div>
     <p class="sub" style="margin:12px 0 0">${(() => {
-      const dP = b.ploaie_normal_km3 - b.ploaie_km3;
-      const dQ = b.rau_normal_km3 - b.rau_passau_km3;
-      const dR = b.atmosfera_sol_normal_km3 - b.atmosfera_sol_km3;
-      return `Bilanțul se închide fără rest: din <b>${fmt1.format(dP)} km³ de ploaie lipsă</b>,
-        <b>${fmt1.format(dQ)} km³</b> lipsesc din râu și <b>${fmt1.format(dR)} km³</b> din partea
-        atmosferei și solului (mai puțină evaporare și reîncărcare, pentru că n-a avut ce evapora și reîncărca).
-        Niciun rând nedistribuit — <b>apa care lipsește din Dunăre e apa care n-a căzut din cer</b>.`;
+      const dP = b.ploaie_km3 - b.ploaie_normal_km3;
+      const dQ = b.rau_passau_km3 - b.rau_normal_km3;
+      const dR = b.atmosfera_sol_km3 - b.atmosfera_sol_normal_km3;
+      return `Față de mediană: precipitații ${dP >= 0 ? "+" : ""}<b>${fmt1.format(dP)} km³</b>,
+        debit la Passau ${dQ >= 0 ? "+" : ""}<b>${fmt1.format(dQ)} km³</b>, rezidual
+        ${dR >= 0 ? "+" : ""}<b>${fmt1.format(dR)} km³</b>. Identitatea P = Q + rezidual se închide
+        prin definiție; <b>nu demonstrează cauza</b>. Cele șase puncte nu sunt o medie areală,
+        debitul este modelat, iar rezidualul amestecă evapotranspirația, zăpada și celelalte
+        stocuri, captările/transferurile și erorile de estimare.`;
     })()}
-      ${d.grace ? `Rezerva subterană (GRACE, ${d.grace.luna}): anomalie ${fmt1.format(d.grace.anomalie_km3)} km³ —
-      pornim din deficit acumulat.` : ""}
+      ${d.grace ? `Rezerva subterană (GRACE, ${d.grace.luna}): anomalie ${fmt1.format(d.grace.anomalie_km3)} km³;
+      context separat de screeningul P−Q.` : ""}
       ${d.consum_uman_nota}. <span class="prov prov-calculat">calculat</span> · ${d.metoda} · date până la ${d.pana_la}</p>`;
 }
 
@@ -930,30 +1052,110 @@ async function renderContraProbe(afdj, portal) {
       const ok = h.statii.filter((s) => s.nivel_m != null);
       const rows = ok.map((s) => {
         const p = s.percentila_lunii;
-        return `<tr><td class="name">${s.statie.replace("R_DANUBE_DUNAREA_KM0*", "").replace("R_DANUBE_DUNAREA_KM", "Dunărea · km ")}</td>
+        const quality = s.eligibila_detector
+          ? `<span class="prov prov-masurat">eligibil</span>`
+          : `<span class="prov prov-lipsa">${(s.quality_flags || ["incomplet"])[0].replaceAll("_", " ")}</span>`;
+        return `<tr><td class="name">Dunărea · km ${s.km ?? "–"}</td>
           <td class="num">${fmt1.format(s.nivel_m)}${s.incertitudine_m != null ? " ± " + fmt1.format(s.incertitudine_m) : ""} m</td>
           <td class="num">${s.variatie_fata_de_precedenta_m != null ? arrow(s.variatie_fata_de_precedenta_m * 100) : ""}</td>
           <td class="num">${p != null ? "P" + fmt1.format(p) : "·"}</td>
-          <td class="num">${(s.data || "").slice(5)}</td></tr>`;
+          <td class="num">${(s.data || "").slice(5)} · ${quality}</td></tr>`;
       }).join("");
-      $("cp-dahiti").innerHTML = `<table class="data">
-        <thead><tr><th>Stație virtuală</th><th class="num">nivel</th><th class="num">Δ cm</th><th class="num">percentila lunii</th><th class="num">data</th></tr></thead>
+      $("cp-dahiti").innerHTML = `<div class="table-scroll"><table class="data">
+        <thead><tr><th>Stație virtuală</th><th class="num">nivel</th><th class="num">Δ cm</th><th class="num">percentila lunii</th><th class="num">data · calitate</th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="sub" style="margin:8px 0 0">${ok.length} stații virtuale hydroweb.next (CNES) pe Dunărea propriu-zisă ·
+        <p class="sub" style="margin:8px 0 0"><b>${h.statii_eligibile}/${ok.length}</b> observații eligibile ·
+        ${h.segmente_eligibile?.length || 0}/3 segmente · acoperire km ${h.acoperire_km?.[0] ?? "–"}–${h.acoperire_km?.[1] ?? "–"}.<br>
         nivelurile sunt față de geoid (alt reper decât mirele) — relevante sunt <b>variația și percentila proprie</b>, care pot fi
-        comparate cu mirele oficiale · Δ = față de trecerea anterioară a satelitului</p>`;
-      pill("Satelit", h.stale ? "stale" : "ok");
+        comparate cu mirele oficiale · Δ = față de trecerea anterioară · stațiile excluse nu intră în detector.</p></div>`;
+      pill("Satelit", h.stale || h.statii_eligibile < 6 ? "stale" : "ok");
     } else {
       const d = await jget("/api/dahiti");
-      $("cp-dahiti").innerHTML = [
+      $("cp-dahiti").innerHTML = `<ul class="facts">${[
         li("hydroweb.next", `<span class="prov prov-lipsa">inactiv</span> ${h.motiv || ""}`),
-        li("DAHITI", d.activ ? `${d.tinte.length} ținte` : `<span class="prov prov-lipsa">inactiv</span> ${d.motiv || ""}`),
-      ].join("");
+        li("DAHITI", d.activ ? `${d.tinte.length} ținte · procesare alternativă, nu misiune independentă` : `<span class="prov prov-lipsa">inactiv</span> ${d.motiv || ""}`),
+      ].join("")}</ul>`;
       pill("Satelit", "err");
     }
   } catch (e) {
-    $("cp-dahiti").innerHTML = li("stare", "eroare la interogarea surselor satelitare");
+    $("cp-dahiti").innerHTML = `<ul class="facts">${li("stare", "eroare la interogarea surselor satelitare")}</ul>`;
     pill("Satelit", "err");
+  }
+
+  // 3b. NASA OPERA — întinderea apei, shadow mode
+  try {
+    const o = await jget("/api/opera");
+    const zoneRows = Object.values(o.zones || {}).map((z) => {
+      const s1 = z.sentinel1 || {};
+      const hls = z.hls || {};
+      const describe = (x) => x.data
+        ? `${x.data} · acoperire ${fmt1.format(x.stats?.coverage_pct || 0)}% · apă ${x.stats?.water_like_pct != null ? fmt1.format(x.stats.water_like_pct) + "% din pixeli clasificați" : "–"}`
+        : "fără acoperire recentă";
+      return li(z.name, `SAR: ${describe(s1)}<br>optic: ${describe(hls)}`);
+    });
+    $("cp-opera").innerHTML = [
+      ...zoneRows,
+      li("statut", `<span class="prov prov-calculat">shadow</span> ${o.nota}`),
+      li("independență", o.independenta),
+    ].join("");
+    const lower = o.zones?.dunarea_de_jos;
+    [["sentinel1", "opera-s1-meta", "opera-s1-map"],
+     ["hls", "opera-hls-meta", "opera-hls-map"]].forEach(([kind, metaId, imageId]) => {
+      const obs = lower?.[kind];
+      if (!obs?.data) return;
+      $(metaId).textContent = `${obs.product} · ${obs.data} · ${obs.quality_flags?.length ? obs.quality_flags.join(", ") : "quality flags: none"}`;
+      $(imageId).src = `/api/opera/map?layer=${kind}&zone=dunarea_de_jos`;
+    });
+  } catch (e) {
+    $("cp-opera").innerHTML = li("stare", "NASA OPERA/GIBS nu a răspuns acum; sursa nu intră în verdict.");
+  }
+
+  // 3c. Copernicus Land — zăpadă și umiditatea solului
+  try {
+    const c = await jget("/api/copernicus-land");
+    const layers = c.straturi || {};
+    $("cp-copernicus-land").innerHTML = Object.entries(layers).map(([kind, x]) =>
+      li(kind === "snow" ? "zăpadă" : "sol", x.activ
+        ? `<b>${x.data}</b> · ${x.title} · vechime ${x.vechime_zile} zile${x.quality_notice ? ` · <a href="${x.quality_notice}" target="_blank" rel="noopener">buletin calitate</a>` : ""}`
+        : `<span class="prov prov-lipsa">indisponibil</span> ${x.motiv || ""}`)).join("") +
+      li("rol", c.nota);
+    [["snow", "clms-snow-meta", "clms-snow-map"],
+     ["soil", "clms-soil-meta", "clms-soil-map"]].forEach(([kind, metaId, imageId]) => {
+      const x = layers[kind];
+      if (!x?.activ) return;
+      $(metaId).textContent = `${x.title} · ${x.data} · thumbnail european public`;
+      $(imageId).src = `/api/copernicus-land/map?layer=${kind}`;
+    });
+  } catch (e) {
+    $("cp-copernicus-land").innerHTML = li("stare", "Catalogul public Copernicus nu a răspuns acum.");
+  }
+
+  // 3d. Catalogul misiunilor NASA — metadata-only până la ingestie
+  try {
+    const c = await jget("/api/satellite-catalog");
+    $("cp-satellite-catalog").innerHTML = Object.values(c.sources || {}).map((s) =>
+      li(s.title || "sursă", s.activ
+        ? `<b>${s.data}</b> · ${s.signal} · <span class="prov prov-calculat">catalog only</span>`
+        : `<span class="prov prov-lipsa">fără granule recente</span> ${s.motiv || ""}`)).join("") +
+      li("descărcare", c.download_configurat
+        ? "Earthdata token detectat; ingestia valorilor rămâne separată și testată per produs"
+        : "opțional: cont Earthdata gratuit; catalogul și prospețimea sunt deja active fără cont") +
+      li("integritate", c.nota);
+  } catch (e) {
+    $("cp-satellite-catalog").innerHTML = li("stare", "NASA CMR nu a răspuns acum.");
+  }
+
+  // 3e. dependențe între surse — nu dublăm aceeași probă
+  try {
+    const r = await jget("/api/evidence-sources");
+    $("cp-source-lineage").innerHTML = [
+      li("registru", `<b>${r.summary.sources} surse</b> · active, context, opționale și baseline documentat`),
+      ...r.dependencies.map((d) => li(d.members.join(" + "),
+        `${d.relationship} · <b>se numără ca ${d.count_as} familie</b>`)),
+      li("regulă", r.rule),
+    ].join("");
+  } catch (e) {
+    $("cp-source-lineage").innerHTML = li("stare", "registrul de proveniență nu a putut fi afișat");
   }
 
   // 4b. gravimetrie GRACE
@@ -986,7 +1188,7 @@ async function renderContraProbe(afdj, portal) {
     if (!g.activ) {
       $("cp-grdc").innerHTML = [
         li("stare", `<span class="prov prov-lipsa">inactiv</span> ${g.motiv}`),
-        li("ce aduce", `seria măsurată de la Ceatal Izmail începe în sec. XIX — „minim din 29 de ani (model)" ar deveni „minim din ~180 de ani (măsurat)"`),
+        li("ce aduce", `seria zilnică măsurată de la Ceatal Izmail (GRDC 6742900) oferă o referință in-situ independentă de istoricul modelat; intervalul exact este afișat numai după import`),
       ].join("");
     } else {
       $("cp-grdc").innerHTML = [
@@ -1109,12 +1311,12 @@ async function renderSinteza(inhga) {
       față de ${fmt1.format(bi.bazias.normal_km3)} — mediana aceluiași interval`;
     let bilTxt;
     if (pct >= 5) {
-      bilTxt = `Cauza se vede în cifre, nu în teorii: ${volTxt} —
-        <b>lipsesc ${fmt1.format(lipsa)} km³ (${pct}%)</b>${dP > 0
-          ? `, iar în bazinul superior n-au căzut din cer <b>${fmt1.format(dP)} km³ de ploaie</b>: bilanțul se închide fără rest` : ""}.`;
+      bilTxt = `${volTxt} — <b>deficit ${fmt1.format(lipsa)} km³ (${pct}%)</b>${dP > 0
+          ? `. Screeningul cu șase puncte ERA5 estimează și un deficit de precipitații de <b>${fmt1.format(dP)} km³</b> în bazinul superior` : ""}.
+        Cele două semnale sunt compatibile, dar această aproximație nu atribuie singură cauza.`;
     } else if (pct <= -5) {
       bilTxt = `Volumele: ${volTxt} — <b>un plus de ${fmt1.format(-lipsa)} km³ (${-pct}%)</b>${dP < 0
-          ? `, susținut de precipitații peste medie în bazinul superior (+${fmt1.format(-dP)} km³)` : ""}.`;
+          ? `; proxy-ul de precipitații este și el peste mediană (+${fmt1.format(-dP)} km³)` : ""}.`;
     } else {
       bilTxt = `Volumele: ${volTxt} — abatere de doar ${pct}%, în marja normală.`;
     }
@@ -1122,10 +1324,10 @@ async function renderSinteza(inhga) {
     if (bi.grace && bi.grace.ani_comparati > 3) {
       const g = bi.grace;
       graceTxt = g.ani_mai_seci <= 2
-        ? ` Rezerva totală a bazinului (gravimetrie satelitară) e <b>aproape de minimul măsurătorilor din 2002 încoace</b> (mai secetoși doar ${g.ani_mai_seci}/${g.ani_comparati} ani).`
+        ? ` Gravimetria satelitară indică pentru caseta orientativă a bazinului o rezervă totală <b>aproape de minimul seriei din 2002 încoace</b> (mai secetoși doar ${g.ani_mai_seci}/${g.ani_comparati} ani).`
         : g.ani_mai_seci <= g.ani_comparati / 2
-          ? ` Rezerva totală a bazinului (gravimetrie satelitară) rămâne sub media istorică (${g.ani_mai_seci}/${g.ani_comparati} ani mai secetoși).`
-          : ` Rezerva totală a bazinului (gravimetrie satelitară) e peste media istorică — în refacere.`;
+          ? ` Gravimetria satelitară a casetei bazinului rămâne sub media istorică (${g.ani_mai_seci}/${g.ani_comparati} ani mai secetoși).`
+          : ` Gravimetria satelitară a casetei bazinului este peste mediana istorică a aceleiași luni.`;
     }
     parts.push(bilTxt + graceTxt);
   }
@@ -1138,17 +1340,18 @@ async function renderSinteza(inhga) {
     add("mire încrucișate", an.mire_crosscheck ? an.mire_crosscheck.mediana_abatere_cm <= 10 : null);
     add("ploi↔debit", an.precipitatii?.zone?.length
       ? !(an.precipitatii.debit_pct <= 10 && Math.min(...an.precipitatii.zone.map((z) => z.pct ?? 100)) > 20) : null);
-    add("satelit↔râu", an.satelit ? an.satelit.mediana_pct <= 15 : null);
+    // satelitul rămâne shadow: un nivel mic nu este o verificare de integritate „trecută”
     add("Germania măsurat↔model", an.germania ? an.germania.coerent : null);
+    add("Ungaria măsurat↔model", an.ungaria ? an.ungaria.coerent : null);
     add("Serbia măsurat↔model", an.serbia ? an.serbia.coerent : null);
     add("retenție Austria", an.austria ? !an.austria.suspiciune_retentie : null);
     const rele = checks.filter((c) => !c.ok);
     if (rele.length === 0 && checks.length) {
       chips.push(`<span class="sev sev-normal">verificări încrucișate: ${checks.length}/${checks.length} în limite</span>`);
-      parts.push(`Integritatea datelor: toate cele <b>${checks.length} verificări încrucișate</b> —
-        bilanțul Porților de Fier, perechile măsurat↔model din trei țări, mirele a șase state,
-        satelitul și testul de retenție din Austria — ies <b>în limite</b>: în datele publice nu se
-        vede apă reținută, deviată sau raportată fals, nicăieri pe fluviu.`);
+      parts.push(`Integritatea datelor: toate cele <b>${checks.length} verificări disponibile</b>
+        sunt în limitele lor de toleranță; nu apare o incompatibilitate evidentă între sursele
+        comparate. Acest rezultat <b>nu exclude</b> manevre locale, captări, transferuri ori erori
+        comune surselor — arată doar ce poate testa setul public actual.`);
     } else if (checks.length) {
       chips.push(`<span class="sev sev-atentie">de investigat: ${rele.map((c) => c.nume).join(", ")}</span>`);
       parts.push(`Atenție: <b>${rele.length} verificări în afara limitelor</b> —
@@ -1177,17 +1380,40 @@ async function renderAnalizaAI() {
     if (!d.activ) { card.style.display = "none"; return; }
     card.style.display = "block";
     // d.text e deja escapat global în jget(); aici doar formatăm
+    const citations = new Map((d.citari_web || []).map((source) =>
+      [String(source.id), source]));
     const text = d.text
-      .replace(/^(SITUAȚIA|CAUZE PROBABILE|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMBA CONCLUZIA)\s*:?\s*/gmi,
+      .replace(/^(SITUAȚIA|CAUZE PROBABILE|ANOMALII DE DATE ȘI CONTRADICȚII|VERIFICARE EXTERNĂ|CE NU SE POATE CONCLUZIONA[^\n]*|CE AR SCHIMB[ĂA] CONCLUZIA)\s*:?\s*/gmi,
                '<b style="color:var(--ink)">$1</b> ')
+      .replace(/⟦WEB:(\d+)⟧/g, (_, id) => {
+        const source = citations.get(id);
+        return source?.url?.startsWith("https://")
+          ? `<sup><a href="${source.url}" target="_blank" rel="noopener" title="${source.title}">[${id}]</a></sup>`
+          : "";
+      })
       .replace(/\n/g, "<br>");
+    const sources = [...citations.values()].filter((source) =>
+      source.url?.startsWith("https://"));
+    const sourcesHtml = sources.length ? `
+      <div class="ai-web-sources">
+        <p class="sub"><b>Surse consultate de model:</b></p>
+        <ol>${sources.map((source) =>
+          `<li><a href="${source.url}" target="_blank" rel="noopener">${source.title}</a></li>`).join("")}</ol>
+      </div>` : "";
+    const mode = d.mod === "web_cu_citari"
+      ? "comparație web activă · surse oficiale cu citări"
+      : "doar datele monitorului · fără căutare web";
+    const formatWarning = d.sectiuni_lipsa?.length
+      ? ` · <span style="color:var(--warning)">format incomplet: lipsesc ${d.sectiuni_lipsa.join(", ")}</span>`
+      : "";
     card.innerHTML = `
       <h3>Analiză narativă <span class="prov prov-model">interpretare AI · ${d.model}</span></h3>
       <p class="sub">strat interpretativ, separat de sinteza deterministă de mai sus — poate greși;
-        promptul și datele de intrare sunt publice mai jos · generat ${d.generat} ·
+        ${mode}${formatWarning} · promptul și datele de intrare sunt publice mai jos · generat ${d.generat} ·
         declanșator: <b>${d.declansator || "–"}</b> · se regenerează doar la schimbări reale de stare
         (severități, verificări, bilanț, GRACE) sau după 7 zile</p>
       <div style="font-size:14px; line-height:1.65; max-width:90ch">${text}</div>
+      ${sourcesHtml}
       <details style="margin-top:14px">
         <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">promptul exact + datele de intrare (auditabil)</summary>
         <pre style="white-space:pre-wrap; font-size:11.5px; color:var(--muted); background:var(--surface-2); padding:10px; border-radius:6px; margin-top:8px">${d.prompt_sistem}</pre>
@@ -1197,8 +1423,37 @@ async function renderAnalizaAI() {
   } catch (e) { card.style.display = "none"; }
 }
 
+/* ---------------------------------------------------- Copernicus EDO -- */
+async function renderEdo() {
+  try {
+    const d = await jget("/api/edo");
+    const attach = (kind, metaId, imageId) => {
+      const layer = d.straturi?.[kind];
+      if (!layer?.data) return;
+      $(metaId).textContent = `${layer.title} · date ${layer.data} · decupaj 8–30°E / 42–50°N`;
+      const img = $(imageId);
+      if (img.dataset.date !== layer.data) {
+        img.dataset.date = layer.data;
+        img.src = `/api/edo/map?layer=${kind}`;
+      }
+      img.onerror = () => {
+        $(metaId).textContent = `${layer.title} · harta nu a răspuns acum`;
+      };
+    };
+    attach("cdi", "edo-cdi-meta", "edo-cdi-map");
+    attach("soil", "edo-soil-meta", "edo-soil-map");
+    $("edo-note").innerHTML = `Sursă: <a href="${d.url}" target="_blank" rel="noopener">Copernicus Emergency Management Service — EDO WMS</a>.
+      Hărțile sunt context spațial datat și nu intră în verdictele automate.`;
+    pill("EDO", d.stale ? "stale" : "ok");
+  } catch (e) {
+    $("edo-note").textContent = "Copernicus EDO nu a răspuns acum; celelalte verificări rămân independente.";
+    pill("EDO", "err");
+  }
+}
+
 /* ---------------------------------------------------------------- main -- */
 async function main() {
+  setupViewNavigation();
   // selectoarele pentru comparația multianuală
   jget("/api/points").then((pts) => {
     const selP = $("sel-punct");
@@ -1216,6 +1471,7 @@ async function main() {
   }).catch(() => {});
 
   refreshData();
+  safeRun(renderEdo);
   // fluxul continuu: zona de date se recompune singură la 5 minute
   setInterval(refreshData, 5 * 60 * 1000);
 }
@@ -1232,22 +1488,26 @@ async function refreshData() {
   [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
    renderBilantApa, renderMvMChart, renderIstoric].forEach(safeRun);
 
-  const [ovR, afdjR, hidmetR, portalR] = await Promise.allSettled([
+  const [ovR, afdjR, hidmetR, portalR, hydroinfoR, danubehisR] = await Promise.allSettled([
     jget("/api/overview"), jget("/api/afdj"), jget("/api/hidmet"),
-    jget("/api/danubeportal"),
+    jget("/api/danubeportal"), jget("/api/hydroinfo"), jget("/api/danubehis"),
   ]);
   const ov = ovR.status === "fulfilled" ? ovR.value : { glofas: [], errors: {} };
   const afdj = afdjR.status === "fulfilled" ? afdjR.value : null;
   const hidmet = hidmetR.status === "fulfilled" ? hidmetR.value : null;
   const portal = portalR.status === "fulfilled" ? portalR.value : null;
+  const hydroinfo = hydroinfoR.status === "fulfilled" ? hydroinfoR.value : null;
+  const danubehis = danubehisR.status === "fulfilled" ? danubehisR.value : null;
 
   pill("INHGA", ov.inhga ? (ov.inhga.stale ? "stale" : "ok") : "err");
   pill("AFDJ", afdj ? (afdj.stale ? "stale" : "ok") : "err");
   pill("PEGELONLINE", ov.pegelonline ? (ov.pegelonline.stale ? "stale" : "ok") : "err");
   pill("RHMZ", hidmet ? (hidmet.stale ? "stale" : "ok") : "err");
+  pill("Hydroinfo", hydroinfo ? (hydroinfo.stale ? "stale" : "ok") : "err");
+  pill("DanubeHIS", danubehis ? (danubehis.stale ? "stale" : "ok") : "err");
 
   [() => renderHero(ov.inhga),
-   () => renderProfile(ov, afdj, hidmet, portal),
+   () => renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis),
    () => renderAfdjTable(afdj),
    () => renderHidmetTable(hidmet),
    renderAvize,
