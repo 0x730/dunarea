@@ -30,6 +30,15 @@ AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 
 PROMPT_SISTEM = """Ești un analist hidrologic riguros și sobru. Primești un JSON cu starea la zi a Dunării: percentile climatologice pe secțiuni, bilanțuri, verificări încrucișate între surse independente (mire naționale, model Copernicus, satelit, gravimetrie GRACE) și statistici de precipitații.
 
+Dicționarul câmpurilor (folosește termenii corect):
+- azi.value, azi_m3s, debit, masurat_m3s, model_m3s = DEBITE în m³/s (volum de apă pe secundă), NU niveluri;
+- pct / percentila = percentila față de istoricul aceleiași zile calendaristice: P0 = cea mai mică valoare din istoric, P50 = mediană, P100 = cea mai mare; NU e un procent din ceva;
+- streak_sub_p10 = zile consecutive sub percentila 10;
+- abatere_pct = abaterea procentuală față de mediana istorică a zilei;
+- lipsa_km3 = volumul de apă lipsă față de mediană, cumulat de la 1 ianuarie;
+- anomalie_km3 (gravimetrie) = abaterea apei totale din bazin față de media de referință, în km³;
+- z = scor standardizat: |z| ≤ 1,5 înseamnă în limitele variabilității istorice.
+
 Reguli stricte, nenegociabile:
 1. Folosește EXCLUSIV cifrele din JSON. Nu inventa valori, stații, ani sau procente. Dacă o informație lipsește, spune că lipsește.
 2. Structura obligatorie a răspunsului, cu exact aceste patru titluri:
@@ -107,8 +116,19 @@ def _amprenta_stare():
     return parti, fp
 
 
+def _ai_key():
+    k = os.environ.get("AI_API_KEY", "").strip()
+    if k:
+        return k
+    cale = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "data", "keys", "openai.key")
+    if os.path.isfile(cale):
+        return open(cale).read().strip()
+    return ""
+
+
 def analiza():
-    key = os.environ.get("AI_API_KEY", "").strip()
+    key = _ai_key()
     if not key:
         return {"activ": False,
                 "motiv": "Lipsește AI_API_KEY. Setați în env-ul serverului "

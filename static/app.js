@@ -233,9 +233,23 @@ function renderAfdjTable(afdj) {
         <td class="num">${s.cota_cm != null ? fmtN.format(s.cota_cm) : "–"}</td>
         <td class="num">${arrow(s.variatie_cm)}</td>
         <td class="num">${s.temp_apa_c != null ? fmt1.format(s.temp_apa_c) + "°" : ""}</td></tr>`).join("");
+  // punctele critice: cele mai adânci cote sub zero-ul mirei — exact zonele
+  // din fotografiile cu bancuri de nisip și nave pe uscat
+  const critice = afdj.statii
+    .filter((s) => s.cota_cm != null && s.cota_cm < 0)
+    .sort((a, b) => a.cota_cm - b.cota_cm)
+    .slice(0, 5);
+  const criticeHtml = critice.length
+    ? `<p class="sub" style="margin:10px 0 0"><b style="color:var(--serious)">Punctele critice azi</b>
+        (cele mai adânci sub zero-ul mirei — zonele din fotografiile cu albia dezvelită):
+        ${critice.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
+        Cota sub zero = apa sub nivelul convențional al apelor mici; nu albie secată,
+        dar bancurile și epavele ies la vedere. ${critice.some((s) => s.statie === "Cernavoda")
+          ? "La Cernavodă, nivelul e influențat și de lucrările oficiale de la brațul Bala." : ""}</p>`
+    : "";
   $("tabel-afdj").innerHTML = `<table class="data">
     <thead><tr><th>Stație</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">24 h</th><th class="num">apă</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <tbody>${rows}</tbody></table>${criticeHtml}`;
 }
 
 function renderHidmetTable(h) {
