@@ -86,6 +86,7 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn('id="ro-historical-thresholds"', page)
         self.assertIn('id="ro-parameter-coverage"', page)
         self.assertNotIn("1.450 m³/s", page.split('data-view="romania"', 1)[1])
+        self.assertNotIn("-214 cm", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("U1 oprită", page.split('data-view="romania"', 1)[1])
 
 
@@ -195,10 +196,26 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(operational[3]["model_context"]["minimum"],
                          {"date": "2022-08-26", "value_m3s": 3434.6})
         self.assertEqual(operational[3]["model_context"]["end_value_m3s"], 3853.8)
+        self.assertEqual(operational[0]["gauge_context"]["facts"][0], {
+            "label": "minim în fereastră", "value": -237, "unit": "cm",
+            "date": "2003-09-10",
+        })
+        self.assertEqual(operational[1]["gauge_context"]["facts"][0]["value"], -138)
+        self.assertEqual(operational[1]["gauge_context"]["facts"][0]["dates"],
+                         ["2011-09-26", "2011-09-27"])
+        self.assertEqual(operational[2]["gauge_context"]["facts"][0]["value"], -119)
+        self.assertEqual(operational[3]["gauge_context"]["facts"][1], {
+            "label": "zile sub LNWL în august", "value": 31, "unit": "zile",
+        })
+        self.assertIn("Comisia Dunării", operational[0]["gauge_context"]["source"]["label"])
+        self.assertIn("nu se convertește", operational[0]["gauge_context"]["limit"])
         self.assertEqual(operational[-1]["classification"], "current_water_shutdown")
         self.assertIn("Baziaș 1450", operational[-1]["hydrology"])
         self.assertEqual(operational[-1]["model_context"]["start_value_m3s"], 2665.9)
         self.assertEqual(operational[-1]["model_context"]["percentile"], 0.5)
+        self.assertEqual(operational[-1]["gauge_context"]["facts"][0]["value"], -214)
+        self.assertEqual(operational[-1]["gauge_context"]["facts"][0]["date"],
+                         "2026-08-04T03:00:00+03:00")
 
         transparency = out["cernavoda"]["parameter_transparency"]
         self.assertFalse(transparency["decision_reproducible"])
@@ -254,6 +271,25 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(current["classification"], "current_official")
         self.assertIn("U1: conectată la SEN", current["plant_action"])
         self.assertNotIn("oprirea U1 asociată apei", current["interpretation"])
+
+    def test_current_measured_gauge_context_reacts_to_new_afdj_value(self):
+        afdj, inhga, sen = self.inputs()
+        afdj["statii"][0].update({
+            "cota_cm": 87,
+            "actualizat": "2026-08-05T03:00:00+03:00",
+        })
+
+        out = romania.build_report(self.stats(), self.archive(), afdj, inhga,
+                                   sen, self.snn(), "2026-08-05")
+        gauge = out["cernavoda"]["operational_history"][-1]["gauge_context"]
+
+        self.assertTrue(gauge["available"])
+        self.assertEqual(gauge["facts"], [{
+            "label": "ultima citire", "value": 87, "unit": "cm",
+            "date": "2026-08-05T03:00:00+03:00",
+        }])
+        self.assertIn("se schimbă odată cu sursa", gauge["source_scope"])
+        self.assertNotIn("-214", str(gauge))
 
     def test_day_rollover_keeps_previous_model_date_and_does_not_relabel_value(self):
         afdj, inhga, sen = self.inputs()

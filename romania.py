@@ -21,6 +21,92 @@ SNN_2015_LOW_WATER_URL = (
 SNN_2022_ANNUAL_REPORT_URL = (
     "https://nuclearelectrica.ro/ir/wp-content/uploads/sites/9/2023/03/"
     "SNN_RO_Raport-Anual-CA-2022.pdf")
+DC_2003_HYDRO_YEARBOOK_URL = (
+    "https://www.danubecommission.org/uploads/doc/Library_scan/"
+    "hydro_yearbooks/5.1.51_fr_ru_de.pdf")
+DC_2011_WATERWAY_REPORT_URL = (
+    "https://www.danubecommission.org/uploads/doc/2017/"
+    "EG_Hydro_5_6_09_2017/yearbook_2011.pdf")
+DC_2015_WATERWAY_REPORT_URL = (
+    "https://www.danubecommission.org/uploads/doc/2021/yearbook_2015.pdf")
+AFDJ_2020_2025_LEVELS_URL = (
+    "https://www.danubecommission.org/uploads/doc/2026/"
+    "20260305_EG_HYDRO/01_RO_AFDJ.pdf")
+AFDJ_CURRENT_LEVELS_URL = "https://www.afdj.ro/ro/cotele-dunarii"
+
+
+# Rezumate factuale, nu copii ale tabelelor zilnice. Cotele sunt observații la
+# mira hidrometrică/de navigație Cernavodă și rămân în centimetri față de zero-ul
+# local al mirei. Nu sunt convertite în mdMB și nu sunt prezentate ca nivel al
+# bazinului de aspirație al centralei.
+HISTORICAL_CERNAVODA_GAUGE_CONTEXT = {
+    2003: {
+        "available": True,
+        "station": "Cernavodă",
+        "period": "aug.–sept. 2003",
+        "facts": [
+            {"label": "minim în fereastră", "value": -237, "unit": "cm",
+             "date": "2003-09-10"},
+            {"label": "minim în august", "value": -213, "unit": "cm",
+             "date": "2003-08-31"},
+        ],
+        "source": {
+            "label": "Comisia Dunării — Anuar hidrologic 2003, p. 39",
+            "url": DC_2003_HYDRO_YEARBOOK_URL,
+        },
+        "source_scope": "rezumat derivat din cotele zilnice măsurate publicate pentru Cernavodă",
+    },
+    2011: {
+        "available": True,
+        "station": "Cernavodă",
+        "period": "15–30 sept. 2011",
+        "facts": [
+            {"label": "minim în fereastră", "value": -138, "unit": "cm",
+             "dates": ["2011-09-26", "2011-09-27"]},
+            {"label": "media lunii septembrie", "value": -101, "unit": "cm"},
+        ],
+        "source": {
+            "label": "Comisia Dunării — Raport anual 2011, p. 190",
+            "url": DC_2011_WATERWAY_REPORT_URL,
+        },
+        "source_scope": "minimul ferestrei și media lunară din cotele zilnice măsurate",
+    },
+    2015: {
+        "available": True,
+        "station": "Cernavodă",
+        "period": "22 iul.–30 sept. 2015",
+        "facts": [
+            {"label": "minim în fereastră", "value": -119, "unit": "cm",
+             "date": "2015-09-12"},
+            {"label": "minim august", "value": -98, "unit": "cm",
+             "date": "2015-08-27"},
+        ],
+        "source": {
+            "label": "Comisia Dunării — Raport anual 2015, p. 190",
+            "url": DC_2015_WATERWAY_REPORT_URL,
+        },
+        "source_scope": "rezumat derivat din cotele zilnice măsurate publicate pentru Cernavodă",
+    },
+    2022: {
+        "available": True,
+        "station": "Cernavodă",
+        "period": "anul 2022; context august",
+        "facts": [
+            {"label": "minim anual", "value": -195, "unit": "cm"},
+            {"label": "zile sub LNWL în august", "value": 31, "unit": "zile"},
+            {"label": "LNWL publicat pentru 2022", "value": -71, "unit": "cm"},
+        ],
+        "source": {
+            "label": "AFDJ / Comisia Dunării — prezentare 2020–2025, slide 15–16",
+            "url": AFDJ_2020_2025_LEVELS_URL,
+        },
+        "source_scope": "minim anual și numărul lunar de zile sub LNWL; nu o serie zilnică",
+    },
+}
+
+GAUGE_CONTEXT_LIMIT = (
+    "cotă la mira Cernavodă, în cm față de zero-ul local; nu este debit și nu se "
+    "convertește aici în nivelul bazinului de aspirație exprimat în mdMB")
 
 
 HISTORICAL_CNE_OPERATIONS = (
@@ -264,6 +350,14 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
     rows = [dict(row) for row in HISTORICAL_CNE_OPERATIONS]
     for row in rows:
         row["model_context"] = _model_window_context(archive, row["model_window"])
+        gauge_context = HISTORICAL_CERNAVODA_GAUGE_CONTEXT.get(row["year"])
+        row["gauge_context"] = ({**gauge_context, "limit": GAUGE_CONTEXT_LIMIT}
+                                if gauge_context else {
+                                    "available": False,
+                                    "period": row["model_window"]["label"],
+                                    "facts": [],
+                                    "limit": GAUGE_CONTEXT_LIMIT,
+                                })
     report = snn_status.get("latest_report") or {}
     source = ({"label": report.get("title") or "SNN — raport operațional curent",
                "url": report.get("url")} if report.get("url") else None)
@@ -328,6 +422,20 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
             "complete": True,
         })
 
+    current_gauge_value = _number((cern_gauge or {}).get("cota_cm"))
+    current_gauge = {
+        "available": current_gauge_value is not None,
+        "station": "Cernavodă",
+        "period": ((cern_gauge or {}).get("actualizat") or "data citirii indisponibilă"),
+        "facts": ([{"label": "ultima citire", "value": current_gauge_value,
+                    "unit": "cm", "date": (cern_gauge or {}).get("actualizat")}]
+                  if current_gauge_value is not None else []),
+        "source": {"label": "AFDJ — cotele Dunării",
+                   "url": AFDJ_CURRENT_LEVELS_URL},
+        "source_scope": "ultima cotă publicată în fluxul AFDJ; valoarea se schimbă odată cu sursa",
+        "limit": GAUGE_CONTEXT_LIMIT,
+    }
+
     rows.append({
         "year": generated_on.year,
         "current": True,
@@ -343,6 +451,7 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
                           "end": model_as_of.isoformat()}
                          if model_as_of is not None else None),
         "model_context": current_model,
+        "gauge_context": current_gauge,
     })
     return rows
 

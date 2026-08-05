@@ -1563,9 +1563,24 @@ async function renderRomania() {
             flowSummary = `${startValue} · ${minimum} · ${endValue}`;
           }
         }
+        const gauge = row.gauge_context || {};
+        const gaugeSource = gauge.source?.url
+          ? `<a href="${gauge.source.url}" target="_blank" rel="noopener">${gauge.source.label || "sursa cotei"}</a>`
+          : "sursă măsurată indisponibilă";
+        const gaugeFacts = (gauge.facts || []).map((fact) => {
+          const factDates = fact.dates?.length ? fact.dates.join(", ") : fact.date;
+          const date = factDates ? ` · ${factDates}` : "";
+          return `${fact.label}: <b>${fmtN.format(fact.value)} ${fact.unit || ""}</b>${date}`;
+        }).join(" · ");
+        const gaugeSummary = gauge.available && gaugeFacts
+          ? gaugeFacts
+          : `<span class="prov prov-lipsa">cotă măsurată indisponibilă pentru această fereastră</span>`;
         return `<tr${row.current ? ` class="current-year"` : ""}>
           <td class="name">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
           <td>${row.hydrology}
+            <div class="episode-gauge"><span class="prov prov-masurat">miră măsurată · ${gauge.period || "perioadă neprecizată"}</span><br>
+              ${gaugeSummary}<br><span class="table-detail">${gaugeSource}<br>${gauge.source_scope || "acoperire neprecizată"}<br>${gauge.limit || "cotă locală; nu este nivelul bazinului CNE"}</span>
+            </div>
             <div class="episode-flow"><span class="prov prov-model">GloFAS · ${flow.label || "fereastră neprecizată"}</span><br>
               ${flowSummary}<br><span class="table-detail">${flow.basis || ""}${flow.complete === false ? ` · acoperire ${flow.days_available || 0}/${flow.days_expected || "?"} zile` : ""}<br>${flow.limit || "debit modelat, nu măsurare la priza CNE"}</span>
             </div>

@@ -13,7 +13,9 @@ istoric al bazinului de aspirație al centralei. Separat, o matrice operațional
 leagă episoadele 2003, 2011, 2015 și 2022 de acțiunea publicată de SNN, iar
 starea anului curent este acceptată numai din raportul proaspăt verificat.
 Pentru fiecare episod, monitorul calculează separat debitul GloFAS la începutul
-ferestrei și minimul din intervalul documentat; ferestrele diferite sunt context
+ferestrei și minimul din intervalul documentat. Adaugă și rezumate factuale ale
+cotelor măsurate la mira Cernavodă din anuarele Comisiei Dunării și prezentarea
+AFDJ, fără a redistribui tabelele zilnice. Ferestrele diferite sunt context
 operațional, nu un clasament direct și nu măsurători la priza CNE.
 Data generării raportului este separată de data fiecărei probe: după schimbarea
 zilei, ultima valoare GloFAS își păstrează data reală până când sosește proba nouă
@@ -93,6 +95,7 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [DanubeSTREAM](https://www.danubeportal.com) (FAIRway) | mirele de navigație din toate țările riverane (~100 stații AT/SK/HU/RS/RO/BG) + cross-check automat cu AFDJ | cvasi-orar | măsurat |
 | [Transelectrica SEN](https://www.transelectrica.ro/sen-grafic) | producția pe surse (hidro, nuclear/CNE), linia Djerdap, sold | timp real | măsurat |
 | [SNN — rapoarte curente](https://nuclearelectrica.ro/ir/rapoarte-curente/) | starea oficială a unităților CNE și cauza declarată de operator | la eveniment | oficial; rezumat auditat și datat |
+| Comisia Dunării — [2003](https://www.danubecommission.org/uploads/doc/Library_scan/hydro_yearbooks/5.1.51_fr_ru_de.pdf), [2011](https://www.danubecommission.org/uploads/doc/2017/EG_Hydro_5_6_09_2017/yearbook_2011.pdf), [2015](https://www.danubecommission.org/uploads/doc/2021/yearbook_2015.pdf) + [AFDJ 2020–2025](https://www.danubecommission.org/uploads/doc/2026/20260305_EG_HYDRO/01_RO_AFDJ.pdf) | context măsurat la mira Cernavodă pentru episoadele 2003, 2011, 2015 și 2022 | istoric | rezumate factuale cu perioadă/pagină; fără redistribuirea tabelelor brute |
 | [hydroweb.next](https://hydroweb.next.theia-land.fr) (cheie în `data/keys/hydroweb.key`) | niveluri din altimetrie satelitară (Sentinel-3/6, SWOT) pe stații virtuale Dunăre, cu percentila proprie | la trecerea satelitului | măsurat din orbită |
 | [DAHITI](https://dahiti.dgfi.tum.de) (opțional, `DAHITI_KEY=`) | rezervă la hydroweb.next, aceleași tipuri de date | la trecerea satelitului | măsurat din orbită |
 | [NASA OPERA DSWx-S1/HLS](https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1) via GIBS | întinderea apei din radar Sentinel-1 și optic Landsat/Sentinel-2, pe trei zone de control | la trecerea satelitului | observație clasificată, **shadow** |
