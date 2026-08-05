@@ -15,6 +15,9 @@ starea anului curent este acceptată numai din raportul proaspăt verificat.
 Pentru fiecare episod, monitorul calculează separat debitul GloFAS la începutul
 ferestrei și minimul din intervalul documentat; ferestrele diferite sunt context
 operațional, nu un clasament direct și nu măsurători la priza CNE.
+Data generării raportului este separată de data fiecărei probe: după schimbarea
+zilei, ultima valoare GloFAS își păstrează data reală până când sosește proba nouă
+și nu este mutată artificial pe data curentă.
 Pragurile în mdMB publicate de SNN în 2011 sunt marcate exclusiv drept reper
 istoric; monitorul arată explicit că debitul Baziaș, mira AFDJ, GloFAS și
 producția SEN nu reproduc nivelul și limitele curente ale bazinului de aspirație.

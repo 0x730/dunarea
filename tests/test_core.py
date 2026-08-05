@@ -255,6 +255,59 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertIn("U1: conectată la SEN", current["plant_action"])
         self.assertNotIn("oprirea U1 asociată apei", current["interpretation"])
 
+    def test_day_rollover_keeps_previous_model_date_and_does_not_relabel_value(self):
+        afdj, inhga, sen = self.inputs()
+        stats = self.stats()
+        stats["generat"] = "2026-08-05"
+        cern = next(row for row in stats["debit"] if "Cernavod" in row["name"])
+        cern["data"] = "2026-08-04"
+
+        out = romania.build_report(stats, self.archive(), afdj, inhga,
+                                   sen, self.snn())
+        current = out["cernavoda"]["operational_history"][-1]
+
+        self.assertEqual(out["generated"], "2026-08-05")
+        self.assertEqual(out["data_as_of"]["glofas"], "2026-08-04")
+        self.assertEqual(out["data_as_of"]["glofas_lag_days"], 1)
+        self.assertEqual(out["cernavoda"]["history"]["as_of"], "2026-08-04")
+        self.assertEqual(out["cernavoda"]["history"]["rank_low_to_high"], 2)
+        self.assertEqual(current["model_context"]["start"], "2026-08-04")
+        self.assertEqual(current["model_context"]["minimum"]["date"], "2026-08-04")
+        self.assertNotIn("2026-08-05", str(current["model_context"]))
+
+    def test_model_rollover_uses_new_date_only_after_dated_evidence_arrives(self):
+        afdj, inhga, sen = self.inputs()
+        stats = self.stats()
+        stats["generat"] = "2026-08-05"
+        cern = next(row for row in stats["debit"] if "Cernavod" in row["name"])
+        cern.update({"data": "2026-08-05", "azi_m3s": 2700.0})
+        archive = self.archive()
+        archive["time"].append("2026-08-05")
+        archive["discharge"].append(2700.0)
+
+        out = romania.build_report(stats, archive, afdj, inhga, sen, self.snn())
+        current = out["cernavoda"]["operational_history"][-1]
+
+        self.assertEqual(out["data_as_of"]["glofas"], "2026-08-05")
+        self.assertEqual(out["data_as_of"]["glofas_lag_days"], 0)
+        self.assertEqual(current["model_context"]["minimum"],
+                         {"date": "2026-08-05", "value_m3s": 2700.0})
+
+    def test_undated_model_value_is_not_assigned_the_generation_date(self):
+        afdj, inhga, sen = self.inputs()
+        stats = self.stats()
+        stats["generat"] = "2026-08-05"
+
+        out = romania.build_report(stats, {"time": [], "discharge": []},
+                                   afdj, inhga, sen, self.snn())
+        claims = {claim["key"]: claim for claim in out["claims"]}
+        current = out["cernavoda"]["operational_history"][-1]
+
+        self.assertIsNone(out["data_as_of"]["glofas"])
+        self.assertEqual(claims["physical"]["status"], "insufficient")
+        self.assertFalse(current["model_context"]["available"])
+        self.assertIsNone(current["model_context"]["start"])
+
     def test_new_operational_snn_pdf_is_not_silently_treated_as_audited(self):
         page = (
             '<a href="https://nuclearelectrica.ro/ir/wp-content/uploads/sites/3/2026/08/new.pdf">'

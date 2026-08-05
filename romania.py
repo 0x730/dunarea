@@ -119,6 +119,26 @@ def _series_map(archive):
     }
 
 
+def _iso_date(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def _model_evidence_date(cern, archive, generated_on):
+    """Data reală a probei GloFAS, niciodată data ceasului prin presupunere."""
+    stated = _iso_date(cern.get("data"))
+    if stated is not None:
+        return stated
+    archive_dates = [_iso_date(stamp) for stamp in (archive.get("time") or [])]
+    available = [stamp for stamp in archive_dates
+                 if stamp is not None and stamp <= generated_on]
+    return max(available) if available else None
+
+
 def historical_cernavoda(archive, as_of):
     """Comparație echitabilă pe aceeași zi și aceeași fereastră sezonieră.
 
@@ -126,6 +146,14 @@ def historical_cernavoda(archive, as_of):
     calendaristică pentru fiecare an. Pentru anii încheiați adăugăm separat
     minimul întregii luni august; anul curent rămâne explicit parțial.
     """
+    if as_of is None:
+        return {
+            "as_of": None, "same_calendar_day": None, "current_m3s": None,
+            "rank_low_to_high": None, "years_compared": 0,
+            "lower_years": [], "rows": [],
+            "method": ("Comparația nu rulează fără data reală a probei GloFAS; "
+                       "data generării nu este folosită ca substitut."),
+        }
     if isinstance(as_of, str):
         as_of = date.fromisoformat(as_of)
     values = _series_map(archive)
@@ -226,8 +254,8 @@ def _model_window_context(archive, window):
     }
 
 
-def _operational_history(as_of, archive, snn_status, snn_stale, cern,
-                         cern_gauge, measured, monthly_mean):
+def _operational_history(generated_on, model_as_of, archive, snn_status,
+                         snn_stale, cern, cern_gauge, measured, monthly_mean):
     """Leagă anii hidrologici de acțiunea publicată de operator.
 
     Intrările istorice sunt constatări datate, nu stări curente. Ultimul rând
@@ -272,28 +300,38 @@ def _operational_history(as_of, archive, snn_status, snn_stale, cern,
             bazias += f" ({100 * measured / monthly_mean:.1f}% din media lunii)"
         current_hydrology.append(bazias)
 
-    current_model = _model_window_context(archive, {
-        "start": as_of.isoformat(), "end": as_of.isoformat(),
-        "label": as_of.strftime("%d.%m.%Y"),
-        "basis": "ziua curentă a analizei",
-    })
+    if model_as_of is not None:
+        current_model = _model_window_context(archive, {
+            "start": model_as_of.isoformat(), "end": model_as_of.isoformat(),
+            "label": model_as_of.strftime("%d.%m.%Y"),
+            "basis": "data reală a ultimei probe GloFAS folosite",
+        })
+    else:
+        current_model = {
+            "start": None, "end": None, "label": "dată GloFAS indisponibilă",
+            "basis": "nicio dată a probei nu a putut fi stabilită",
+            "available": False, "days_available": 0, "days_expected": 0,
+            "complete": False,
+            "method": "GloFAS/Copernicus · aceeași celulă Cernavodă",
+        }
     current_model["percentile"] = _number(cern.get("percentila"))
     current_model["days_below_p10"] = cern.get("zile_sub_p10")
-    if not current_model["available"] and _number(cern.get("azi_m3s")) is not None:
+    if (model_as_of is not None and not current_model["available"]
+            and _number(cern.get("azi_m3s")) is not None):
         current_model.update({
             "available": True,
             "start_value_m3s": round(cern["azi_m3s"], 1),
             "end_value_m3s": round(cern["azi_m3s"], 1),
-            "minimum": {"date": as_of.isoformat(),
+            "minimum": {"date": model_as_of.isoformat(),
                         "value_m3s": round(cern["azi_m3s"], 1)},
             "days_available": 1,
             "complete": True,
         })
 
     rows.append({
-        "year": as_of.year,
+        "year": generated_on.year,
         "current": True,
-        "reference_date": snn_status.get("date") or as_of.isoformat(),
+        "reference_date": snn_status.get("date") or generated_on.isoformat(),
         "hydrology": ("; ".join(current_hydrology) if current_hydrology else
                       "valorile hidrologice curente nu sunt disponibile"),
         "plant_action": plant_action,
@@ -301,7 +339,9 @@ def _operational_history(as_of, archive, snn_status, snn_stale, cern,
         "interpretation": interpretation,
         "source": source,
         "source_scope": "starea CNE; contextul hidrologic vine din fluxurile curente ale monitorului",
-        "model_window": {"start": as_of.isoformat(), "end": as_of.isoformat()},
+        "model_window": ({"start": model_as_of.isoformat(),
+                          "end": model_as_of.isoformat()}
+                         if model_as_of is not None else None),
         "model_context": current_model,
     })
     return rows
@@ -405,20 +445,24 @@ def _parameter_transparency(cern, cern_gauge, measured, monthly_mean,
 
 
 def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
-    as_of = date.fromisoformat(as_of or stats.get("generat") or date.today().isoformat())
-    hist = historical_cernavoda(archive, as_of)
+    generated_on = date.fromisoformat(
+        as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
     cern = next((row for row in debit_rows if "Cernavod" in row.get("name", "")), {})
     bazias_model = next((row for row in debit_rows if "Bazia" in row.get("name", "")), {})
+    model_as_of = _model_evidence_date(cern, archive, generated_on)
+    hist = historical_cernavoda(archive, model_as_of)
     cern_gauge = _find_station(afdj, "cernavoda")
 
     measured = _number(inhga.get("debit_bazias_m3s"))
     monthly_mean = _number(inhga.get("media_multianuala_m3s"))
     measured_ratio = measured / monthly_mean if measured is not None and monthly_mean else None
-    cern_pct = _number(cern.get("percentila"))
+    cern_pct = (_number(cern.get("percentila"))
+                if model_as_of is not None else None)
 
     claims = []
     physical_evidence = {
+        "cernavoda_model_date": model_as_of.isoformat() if model_as_of else None,
         "cernavoda_model_percentile": cern_pct,
         "cernavoda_model_m3s": _number(cern.get("azi_m3s")),
         "model_days_below_p10": cern.get("zile_sub_p10"),
@@ -458,12 +502,12 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
         rarity_text = "Comparația istorică pe aceeași dată nu este disponibilă."
     elif hist["rank_low_to_high"] == 1:
         rarity_status = "model_record"
-        rarity_text = (f"Este cea mai mică valoare GloFAS pentru {as_of.strftime('%d.%m')} "
+        rarity_text = (f"Este cea mai mică valoare GloFAS pentru {model_as_of.strftime('%d.%m')} "
                        f"în cei {hist['years_compared']} ani disponibili ai modelului.")
     elif hist["rank_low_to_high"] <= 3:
         rarity_status = "rare_not_unprecedented"
         rarity_text = (f"Este a {hist['rank_low_to_high']}-a cea mai mică valoare GloFAS "
-                       f"pentru {as_of.strftime('%d.%m')}; există {len(hist['lower_years'])} "
+                       f"pentru {model_as_of.strftime('%d.%m')}; există {len(hist['lower_years'])} "
                        "an(i) mai jos în aceeași comparație.")
     else:
         rarity_status = "not_exceptional"
@@ -582,13 +626,23 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
         headline = "Datele curente nu permit validarea simultană a fenomenului, impactului CNE și criticității naționale."
 
     operational_history = _operational_history(
-        as_of, archive, snn_status, snn_stale, cern, cern_gauge, measured, monthly_mean)
+        generated_on, model_as_of, archive, snn_status, snn_stale, cern,
+        cern_gauge, measured, monthly_mean)
     parameter_transparency = _parameter_transparency(
         cern, cern_gauge, measured, monthly_mean, nuclear, snn_status)
     current_intake_level = _number(snn_status.get("intake_basin_level_mdmb"))
 
     return {
-        "generated": as_of.isoformat(),
+        "generated": generated_on.isoformat(),
+        "data_as_of": {
+            "glofas": model_as_of.isoformat() if model_as_of else None,
+            "glofas_lag_days": ((generated_on - model_as_of).days
+                                if model_as_of is not None else None),
+            "inhga": inhga.get("data_buletin"),
+            "afdj": (cern_gauge or {}).get("actualizat"),
+            "snn": snn_status.get("date"),
+            "sen": sen.get("actualizat"),
+        },
         "headline": headline,
         "claims": claims,
         "cernavoda": {

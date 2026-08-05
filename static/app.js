@@ -1473,9 +1473,13 @@ async function renderRomania() {
     return;
   }
 
+  const sourceDates = d.data_as_of || {};
+  const modelFreshness = sourceDates.glofas
+    ? `GloFAS ${sourceDates.glofas}${sourceDates.glofas_lag_days > 0 ? ` · decalaj ${sourceDates.glofas_lag_days} zi${sourceDates.glofas_lag_days === 1 ? "" : "le"}` : ""}`
+    : "GloFAS fără dată verificabilă";
   $("ro-headline").innerHTML = `
     <p class="proportionality-title">${d.headline}</p>
-    <div class="cine">reguli deterministe · date ${d.generated} · ${d.stale ? "cache vechi" : "recompus din sursele curente"} · fără analiză AI</div>`;
+    <div class="cine">reguli deterministe · generat ${d.generated} · ${modelFreshness} · INHGA ${sourceDates.inhga || "fără dată"} · ${d.stale ? "cache vechi" : "datele păstrează data sursei"} · fără analiză AI</div>`;
 
   $("ro-claims").innerHTML = (d.claims || []).map((claim) => `
     <article class="card ro-claim">
@@ -1490,7 +1494,7 @@ async function renderRomania() {
   const history = d.cernavoda?.history || {};
   $("ro-cernavoda-facts").innerHTML = [
     li("debit în celula GloFAS", model.azi_m3s != null
-      ? `<b>${fmtN.format(model.azi_m3s)} m³/s</b> · P${fmtV(model.percentila, fmt1)} · ${fmtV(model.zile_sub_p10)} zile sub P10 <span class="prov prov-model">model</span>`
+      ? `<b>${fmtN.format(model.azi_m3s)} m³/s</b> · P${fmtV(model.percentila, fmt1)} · ${fmtV(model.zile_sub_p10)} zile sub P10 · ${model.data || sourceDates.glofas || "dată lipsă"} <span class="prov prov-model">model</span>`
       : `<span class="prov prov-lipsa">indisponibil</span>`),
     li("cotă miră AFDJ", gauge?.cota_cm != null
       ? `<b>${fmtN.format(gauge.cota_cm)} cm</b> · variație ${fmtV(gauge.variatie_cm)} cm · ${gauge.actualizat || "dată lipsă"} <span class="prov prov-masurat">măsurat</span>`
