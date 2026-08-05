@@ -85,6 +85,9 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn('data-view="lipsa"', page)
         self.assertIn("/api/romania", app)
         self.assertIn("/api/date-lipsa", app)
+        self.assertIn("consum DAMAS", app)
+        self.assertIn("capacitate de echilibrare contractată", app)
+        self.assertIn("PZU · ziua următoare", app)
         self.assertIn("rare_not_unprecedented", app)
         self.assertIn("nicio concluzie veche nu este păstrată", app)
         self.assertIn('id="ro-operational-history"', page)
@@ -120,10 +123,24 @@ class MissingDataRegistryTests(unittest.TestCase):
                 "selected_systems": 9,
                 "observed_sections": {"sections_available": 9, "sections": []},
             },
-            "energy": {"history": {
-                "available": True, "enough_for_comparison": True,
-                "days": 14, "minimum_days": 14,
-            }},
+            "energy": {
+                "hydro_mw": 1200,
+                "history": {
+                    "available": True, "enough_for_comparison": True,
+                    "days": 14, "minimum_days": 14,
+                },
+                "market": {
+                    "available_components": 4,
+                    "consumption": {"available": True, "delivery_date": "2026-08-05"},
+                    "reserve_procurement": {"available": True, "delivery_date": "2026-08-05"},
+                    "balancing": {"available": True, "delivery_date": "2026-08-05"},
+                    "day_ahead": {"available": True, "delivery_date": "2026-08-06"},
+                },
+            },
+            "official_danube_bulletin": {
+                "date": "2026-08-05", "url": "https://www.hidro.ro/current/",
+                "cernavoda_bala_caveat": True,
+            },
             "cernavoda": {"parameter_transparency": {
                 "decision_reproducible": True, "decision_parameters": [],
                 "public_signals": [],
@@ -143,10 +160,12 @@ class MissingDataRegistryTests(unittest.TestCase):
         self.assertEqual(statuses["cernavoda_decision"], "available")
         self.assertEqual(statuses["tributary_gauges"], "available")
         self.assertEqual(statuses["sen_history"], "partial")
+        self.assertEqual(statuses["cernavoda_bala"], "partial")
+        self.assertEqual(statuses["irongates_operations"], "partial")
         self.assertEqual(statuses["soil_moisture"], "missing")
         self.assertEqual(statuses["optional_backfill"], "partial")
         self.assertEqual(result["summary"], {
-            "available": 3, "partial": 2, "missing": 1,
+            "available": 3, "partial": 4, "missing": 1,
         })
 
 
@@ -334,18 +353,28 @@ class RomaniaProportionalityTests(unittest.TestCase):
         }
         history = {"available": True, "enough_for_comparison": True,
                    "days": 14, "minimum_days": 14, "metrics": {}}
+        market = {
+            "available_components": 4, "component_count": 4,
+            "consumption": {"available": True, "delivery_date": "2026-08-04"},
+            "reserve_procurement": {"available": True, "delivery_date": "2026-08-04"},
+            "balancing": {"available": True, "delivery_date": "2026-08-04"},
+            "day_ahead": {"available": True, "delivery_date": "2026-08-05"},
+        }
 
         out = romania.build_report(
             self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
-            "2026-08-04", water_resources=water, sen_history=history)
+            "2026-08-04", water_resources=water, sen_history=history,
+            energy_market=market)
 
         missing = " ".join(out["missing_for_national_verdict"])
         rain_claim = next(c for c in out["claims"] if c["key"] == "romania_scope")
         self.assertNotIn("gradul curent de umplere", missing)
         self.assertNotIn("arhiva locală acumulează", missing)
-        self.assertIn("rezerve SEN", missing)
+        self.assertNotIn("rezervele și prețurile rămân neintegrate", missing)
+        self.assertIn("marja operațională de rezervă rămasă", missing)
         self.assertIn("nicio restricție", rain_claim["conclusion"])
         self.assertTrue(out["energy"]["history"]["enough_for_comparison"])
+        self.assertEqual(out["energy"]["market"]["available_components"], 4)
         self.assertIn("nu este demonstrată", out["headline"])
         self.assertIn("snn_pdf_sha256", out["energy"])
 
@@ -795,6 +824,90 @@ class ConnectorTests(unittest.TestCase):
         self.assertTrue(current["current"])
         self.assertFalse(old["current"])
         self.assertEqual(old["status"], "historical_only")
+
+    def test_opcom_parser_reacts_to_delivery_prices_volume_and_month_reference(self):
+        page = """
+          Prețul mediu ponderat pe PZU pentru Iulie 2026:
+          <span>636,46 lei/MWh</span>
+          <div>Piata pentru ziua urmatoare - Ziua de livrare 6/8/2026 [lei/MWh]</div>
+          <table>
+            <tr><td>ROPEX_DAM [lei/MWh]</td><td>960,17</td><td>867,53</td><td>1.052,80</td></tr>
+            <tr><td>Volum [MWh]</td><td>38.621,8</td><td>20.416,5</td><td>18.205,3</td></tr>
+          </table>
+        """
+
+        out = C._parse_opcom_market_html(page)
+
+        self.assertEqual(out["delivery_date"], "2026-08-06")
+        self.assertEqual(out["base_lei_mwh"], 960.17)
+        self.assertEqual(out["off_peak_lei_mwh"], 1052.8)
+        self.assertEqual(out["volume_total_mwh"], 38621.8)
+        self.assertEqual(out["previous_month"], {
+            "month": "2026-07", "weighted_average_lei_mwh": 636.46,
+            "is_previous_to_delivery": True,
+        })
+        self.assertEqual(out["base_vs_previous_month_pct"], 50.9)
+
+        stale_reference = C._parse_opcom_market_html(
+            page.replace("Iulie 2026", "Iunie 2026"))
+        self.assertFalse(stale_reference["previous_month"]["is_previous_to_delivery"])
+        self.assertIsNone(stale_reference["base_vs_previous_month_pct"])
+
+    def test_damas_summaries_keep_contract_activation_and_consumption_separate(self):
+        interval = {"from": "2026-08-04T21:00:00.000Z",
+                    "to": "2026-08-04T21:15:00.000Z"}
+        consumption = C._summarize_damas_consumption({"itemList": [
+            {"timeInterval": interval, "grossForecastConsumption": 6000,
+             "grossRealizedConsumption": 6150},
+            {"timeInterval": {"from": "2026-08-04T21:15:00.000Z",
+                              "to": "2026-08-04T21:30:00.000Z"},
+             "grossForecastConsumption": 6200,
+             "grossRealizedConsumption": "N/A"},
+        ]}, "2026-08-05")
+        reserves = C._summarize_damas_reserves({"itemList": [{
+            "timeInterval": {"from": "2026-08-04T21:00:00.000Z",
+                             "to": "2026-08-05T21:00:00.000Z"},
+            "businessState": "tenderResultsPublished",
+            "tenderServiceList": [{
+                "serviceCode": "FCR",
+                "tenderStatistics": {"timeIntervalList": [
+                    {"tenderDemand": 128, "tenderSatisfiedDemand": 0.703},
+                    {"tenderDemand": 128, "tenderSatisfiedDemand": 1.0},
+                ]},
+            }],
+        }]}, "2026-08-05")
+        later_interval = {"from": "2026-08-04T21:15:00.000Z",
+                          "to": "2026-08-04T21:30:00.000Z"}
+        balancing = C._summarize_damas_balancing(
+            {"itemList": [{"timeInterval": interval, "type": "Deficit",
+                            "estimatedSystemImbalance": -100.0,
+                            "activatedReserve": 98.0},
+                           {"timeInterval": later_interval, "type": "Deficit",
+                            "estimatedSystemImbalance": -120.0,
+                            "activatedReserve": 119.0}]},
+            {"itemList": [{"timeInterval": interval,
+                            "estimatedPriceNegativeImbalance": 3000.0,
+                            "estimatedPricePositiveImbalance": 2800.0}]},
+            "2026-08-05")
+
+        self.assertEqual(consumption["realized_intervals"], 1)
+        self.assertEqual(consumption["forecast_intervals"], 2)
+        self.assertFalse(consumption["complete"])
+        self.assertEqual(reserves["minimum_satisfaction_pct"], 70.3)
+        self.assertEqual(reserves["minimum_satisfaction_service"], "FCR")
+        self.assertFalse(reserves["all_reported_intervals_fully_satisfied"])
+        self.assertIn("nu rezerva operațională", reserves["limit"])
+        self.assertEqual(balancing["latest"]["activated_reserve_mw"], 119.0)
+        self.assertIsNone(
+            balancing["latest"]["estimated_negative_imbalance_price_lei_mwh"])
+        self.assertEqual(balancing["estimated_negative_price_lei_mwh"]["max"],
+                         3000.0)
+        self.assertIn("nu arată marja", balancing["limit"])
+
+    def test_romania_market_day_preserves_dst_length(self):
+        start, end = C._romania_day(date(2026, 10, 25))
+        self.assertEqual((end.astimezone(timezone.utc) -
+                          start.astimezone(timezone.utc)).total_seconds(), 25 * 3600)
 
     def test_hydroinfo_parser_extracts_daily_danube_measurement(self):
         def row(values):
@@ -1328,6 +1441,9 @@ class AiAnalysisAuditTests(unittest.TestCase):
                                                 "stale": False, "cache_age_s": 10}), \
                 mock.patch.object(C, "sen_history_context",
                                   return_value={"tip": "sen_history"}), \
+                mock.patch.object(C, "sen_market_context",
+                                  return_value={"tip": "energy_market",
+                                                "available_components": 4}), \
                 mock.patch.object(C, "edo_status", return_value=fresh_context), \
                 mock.patch.object(C, "opera_surface_status", return_value=fresh_context), \
                 mock.patch.object(C, "copernicus_land_context", return_value=fresh_context), \
@@ -1355,6 +1471,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertEqual(digest["stare_cne_snn"]["date"]["tip"], "snn")
         self.assertEqual(digest["stare_sen"]["date"]["tip"], "sen")
         self.assertEqual(digest["istoric_sen_local"]["date"]["tip"], "sen_history")
+        self.assertEqual(digest["context_piata_energie"]["date"]["tip"],
+                         "energy_market")
         bazias = digest["reconciliere_bazias"]
         self.assertEqual(bazias["valoare_oficiala_curenta"]["debit_m3s"], 900)
         self.assertEqual(bazias["reper_modelat_climatologic"]["debit_m3s"], 1200)
@@ -1433,6 +1551,9 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("context_resurse_apa_anar", prompt)
         self.assertIn("stare_cne_snn", prompt)
         self.assertIn("istoric_sen_local", prompt)
+        self.assertIn("context_piata_energie", prompt)
+        self.assertIn("Nu numi rezervele contractate „disponibile”", prompt)
+        self.assertIn("nu atribui un preț PZU", prompt)
 
     def test_response_heading_normalization_is_narrow_and_auditable(self):
         text = "## SITUAȚIA\nFapt.\n\n**CE AR SCHIMBĂ CONCLUZIA:**\nAlt fapt."

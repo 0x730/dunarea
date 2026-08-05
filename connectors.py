@@ -23,6 +23,7 @@ import unicodedata
 import zlib
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
+from zoneinfo import ZoneInfo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "cache.db")
@@ -1898,6 +1899,11 @@ def sen_live():
 SEN_DAILY_REPORTS_URL = "https://www.transelectrica.ro/web/tel/rapoarte-zilnice"
 SEN_DAMAS_REPORTS_URL = ("https://newmarkets.transelectrica.ro/uu-webkit-maing02/"
                          "00121011300000000000000000000100/publicReports")
+DAMAS_PUBLIC_REPORT_BASE = (
+    "https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/"
+    "00121002500000000000000000000100/publicReport")
+OPCOM_URL = "https://www.opcom.ro/acasa/ro"
+ROMANIA_TZ = ZoneInfo("Europe/Bucharest")
 
 
 def sen_history_context(min_days=14):
@@ -1905,7 +1911,8 @@ def sen_history_context(min_days=14):
 
     Nu îl numim climatologie și nu îl folosim pentru comparații până când nu
     există suficiente zile distincte. Sursele oficiale de backfill sunt
-    publicate ca legături, dar interfața DAMAS nu este încă ingerată automat.
+    publicate ca legături. Seriile DAMAS integrate separat nu sunt amestecate
+    cu aceste fotografii punctuale.
     """
     snapshots = history_snapshots("sen")
     rows = [{"date": item["date"], **(item["data"] or {})} for item in snapshots]
@@ -1940,8 +1947,369 @@ def sen_history_context(min_days=14):
         ],
         "method": "o fotografie locală pe zi din endpointul SEN live",
         "limit": ("Comparația este dezactivată până la minimum "
-                  f"{min_days} zile; nu este o arhivă oficială completă și nu include încă rezerve sau prețuri."),
+                  f"{min_days} zile; nu este o arhivă oficială completă. "
+                  "Consumul zilnic, rezervele contractate și prețurile sunt "
+                  "ingerate separat, cu propriul lor sens și interval."),
     }
+
+
+def _iso_z(value):
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z")
+
+
+def _romania_day(day=None):
+    """Fereastra zilei civile românești, exprimată exact în UTC."""
+    day = day or date.today()
+    start = datetime.combine(day, datetime.min.time(), tzinfo=ROMANIA_TZ)
+    return start, start + timedelta(days=1)
+
+
+def _damas_url(endpoint, start, end):
+    interval = json.dumps({"from": _iso_z(start), "to": _iso_z(end)},
+                          separators=(",", ":"))
+    return f"{DAMAS_PUBLIC_REPORT_BASE}/{endpoint}?" + urllib.parse.urlencode(
+        {"timeInterval": interval})
+
+
+def _payload_rows(payload):
+    return payload.get("itemList") or [] if isinstance(payload, dict) else []
+
+
+def _local_delivery_date(interval):
+    value = (interval or {}).get("from")
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return stamp.astimezone(ROMANIA_TZ).date().isoformat()
+    except ValueError:
+        return None
+
+
+def _summary(values, digits=1):
+    values = [float(value) for value in values
+              if isinstance(value, (int, float))]
+    if not values:
+        return {"samples": 0, "min": None, "median": None, "max": None}
+    return {"samples": len(values), "min": round(min(values), digits),
+            "median": round(median(values), digits),
+            "max": round(max(values), digits)}
+
+
+def _summarize_damas_consumption(payload, delivery_date):
+    rows = sorted(
+        (row for row in _payload_rows(payload)
+         if _local_delivery_date(row.get("timeInterval")) == delivery_date),
+        key=lambda row: (row.get("timeInterval") or {}).get("from") or "")
+    forecast = [row.get("grossForecastConsumption") for row in rows]
+    realized = [row.get("grossRealizedConsumption") for row in rows]
+    forecast_values = [float(value) for value in forecast
+                       if isinstance(value, (int, float))]
+    realized_values = [float(value) for value in realized
+                       if isinstance(value, (int, float))]
+    paired = [(float(row["grossForecastConsumption"]),
+               float(row["grossRealizedConsumption"]))
+              for row in rows
+              if isinstance(row.get("grossForecastConsumption"), (int, float))
+              and isinstance(row.get("grossRealizedConsumption"), (int, float))]
+    latest = next((row for row in reversed(rows)
+                   if isinstance(row.get("grossRealizedConsumption"), (int, float))), None)
+    expected = len(forecast_values)
+    observed = len(realized_values)
+    return {
+        "available": bool(forecast_values or realized_values),
+        "delivery_date": delivery_date,
+        "interval_minutes": 15,
+        "forecast_intervals": expected,
+        "realized_intervals": observed,
+        "coverage_pct": round(100 * observed / expected, 1) if expected else None,
+        "complete": bool(expected and observed == expected),
+        "forecast_mw": _summary(forecast_values),
+        "realized_mw": _summary(realized_values),
+        "forecast_energy_gwh": (round(sum(forecast_values) * 0.25 / 1000, 3)
+                                  if forecast_values else None),
+        "realized_energy_gwh": (round(sum(realized_values) * 0.25 / 1000, 3)
+                                  if realized_values else None),
+        "mean_forecast_error_pct": (round(100 * sum(actual - planned
+                                             for planned, actual in paired)
+                                            / sum(planned for planned, _ in paired), 2)
+                                    if paired and sum(planned for planned, _ in paired) else None),
+        "latest_realized_interval": ((latest.get("timeInterval") or {}).get("to")
+                                     if latest else None),
+        "source_url": SEN_DAMAS_REPORTS_URL,
+        "kind": "consum brut realizat și prognozat",
+        "limit": ("media și energia zilei sunt parțiale până când toate intervalele "
+                  "de 15 minute au valori realizate"),
+    }
+
+
+def damas_daily_consumption(day=None):
+    day = day or date.today()
+    start, end = _romania_day(day)
+
+    def fetch():
+        payload = http_json(_damas_url("dailyConsumptionOverview", start, end),
+                            timeout=30)
+        summary = _summarize_damas_consumption(payload, day.isoformat())
+        if not summary["available"]:
+            raise RuntimeError("DAMAS nu a returnat consum pentru ziua cerută")
+        daily_snapshot("damas_consumption", summary)
+        return summary
+
+    return cached(f"damas:consumption:v1:{day.isoformat()}", 10 * 60, fetch)
+
+
+def _summarize_damas_reserves(payload, delivery_date):
+    services = []
+    business_states = set()
+    for tender in _payload_rows(payload):
+        if _local_delivery_date(tender.get("timeInterval")) != delivery_date:
+            continue
+        if tender.get("businessState"):
+            business_states.add(tender["businessState"])
+        for service in tender.get("tenderServiceList") or []:
+            rows = ((service.get("tenderStatistics") or {})
+                    .get("timeIntervalList") or [])
+            demand = [row.get("tenderDemand") for row in rows]
+            satisfied = [row.get("tenderSatisfiedDemand") for row in rows]
+            satisfaction = [float(value) for value in satisfied
+                            if isinstance(value, (int, float))]
+            if not rows or not satisfaction:
+                continue
+            services.append({
+                "service": service.get("serviceCode"),
+                "intervals": len(satisfaction),
+                "demand_mw": _summary(demand),
+                "satisfaction_pct": _summary(
+                    [100 * value for value in satisfaction]),
+                "intervals_below_reported_demand": sum(
+                    1 for value in satisfaction if value < 0.9995),
+            })
+    minimum = min(
+        ((row["satisfaction_pct"]["min"], row.get("service"))
+         for row in services if row["satisfaction_pct"]["min"] is not None),
+        default=(None, None), key=lambda item: item[0] if item[0] is not None else 1e9)
+    return {
+        "available": bool(services),
+        "delivery_date": delivery_date,
+        "business_states": sorted(business_states),
+        "services": services,
+        "minimum_satisfaction_pct": minimum[0],
+        "minimum_satisfaction_service": minimum[1],
+        "all_reported_intervals_fully_satisfied": bool(services) and all(
+            row["intervals_below_reported_demand"] == 0 for row in services),
+        "source_url": SEN_DAMAS_REPORTS_URL,
+        "kind": "rezultate ale achiziției de capacitate de echilibrare",
+        "limit": ("cerere și capacitate contractată, nu rezerva operațională "
+                  "disponibilă în timp real; un raport sub 100% nu demonstrează "
+                  "singur insuficiența sistemului"),
+    }
+
+
+def damas_reserve_procurement(day=None):
+    day = day or date.today()
+    start, _ = _romania_day(day)
+    # O oră din interiorul zilei selectează numai licitațiile acelei zile și
+    # evită descărcarea rezultatelor detaliate pentru zilele vecine.
+    query_start = start + timedelta(hours=12)
+    query_end = query_start + timedelta(hours=1)
+
+    def fetch():
+        payload = http_json(_damas_url("tenderStatistics", query_start, query_end),
+                            timeout=45)
+        summary = _summarize_damas_reserves(payload, day.isoformat())
+        if not summary["available"]:
+            raise RuntimeError("DAMAS nu a returnat rezultate de rezervă pentru ziua cerută")
+        daily_snapshot("damas_reserves", summary)
+        return summary
+
+    return cached(f"damas:reserves:v1:{day.isoformat()}", 30 * 60, fetch)
+
+
+def _summarize_damas_balancing(system_payload, price_payload, delivery_date):
+    system_rows = sorted(
+        (row for row in _payload_rows(system_payload)
+         if _local_delivery_date(row.get("timeInterval")) == delivery_date),
+        key=lambda row: (row.get("timeInterval") or {}).get("from") or "")
+    price_rows = sorted(
+        (row for row in _payload_rows(price_payload)
+         if _local_delivery_date(row.get("timeInterval")) == delivery_date),
+        key=lambda row: (row.get("timeInterval") or {}).get("from") or "")
+    prices_by_from = {
+        (row.get("timeInterval") or {}).get("from"): row for row in price_rows
+    }
+    usable = [row for row in system_rows
+              if isinstance(row.get("estimatedSystemImbalance"), (int, float))]
+    latest = usable[-1] if usable else None
+    latest_from = ((latest.get("timeInterval") or {}).get("from") if latest else None)
+    latest_price = prices_by_from.get(latest_from, {})
+    latest_negative_price = latest_price.get("estimatedPriceNegativeImbalance")
+    latest_positive_price = latest_price.get("estimatedPricePositiveImbalance")
+    negative_prices = [row.get("estimatedPriceNegativeImbalance")
+                       for row in price_rows]
+    positive_prices = [row.get("estimatedPricePositiveImbalance")
+                       for row in price_rows]
+    activated = [row.get("activatedReserve") for row in usable]
+    imbalance = [abs(row["estimatedSystemImbalance"]) for row in usable]
+    return {
+        "available": bool(usable),
+        "delivery_date": delivery_date,
+        "intervals": len(usable),
+        "latest_interval": latest.get("timeInterval") if latest else None,
+        "latest": ({
+            "type": latest.get("type"),
+            "estimated_system_imbalance_mw": latest.get("estimatedSystemImbalance"),
+            "activated_reserve_mw": latest.get("activatedReserve"),
+            "estimated_negative_imbalance_price_lei_mwh": (
+                latest_negative_price if isinstance(latest_negative_price, (int, float))
+                else None),
+            "estimated_positive_imbalance_price_lei_mwh": (
+                latest_positive_price if isinstance(latest_positive_price, (int, float))
+                else None),
+        } if latest else None),
+        "max_absolute_imbalance_mw": max(imbalance) if imbalance else None,
+        "max_activated_reserve_mw": max(
+            (value for value in activated if isinstance(value, (int, float))),
+            default=None),
+        "estimated_negative_price_lei_mwh": _summary(negative_prices, 2),
+        "estimated_positive_price_lei_mwh": _summary(positive_prices, 2),
+        "source_url": SEN_DAMAS_REPORTS_URL,
+        "kind": "dezechilibru și prețuri estimate; rezervă activată",
+        "limit": ("valori operative estimate pe 15 minute, volatile și revizuibile; "
+                  "rezerva activată nu arată marja de rezervă rămasă"),
+    }
+
+
+def damas_balancing_context(day=None):
+    day = day or date.today()
+    start, end = _romania_day(day)
+
+    def fetch():
+        system = http_json(_damas_url("estimatedPowerSystemImbalance", start, end),
+                           timeout=30)
+        prices = http_json(_damas_url("estimatedImbalancePrices", start, end),
+                           timeout=30)
+        summary = _summarize_damas_balancing(system, prices, day.isoformat())
+        if not summary["available"]:
+            raise RuntimeError("DAMAS nu a returnat intervale de echilibrare")
+        return summary
+
+    return cached(f"damas:balancing:v2:{day.isoformat()}", 5 * 60, fetch)
+
+
+_RO_MONTHS = {
+    "ianuarie": 1, "februarie": 2, "martie": 3, "aprilie": 4,
+    "mai": 5, "iunie": 6, "iulie": 7, "august": 8,
+    "septembrie": 9, "octombrie": 10, "noiembrie": 11, "decembrie": 12,
+}
+
+
+def _parse_opcom_market_html(html):
+    delivery = re.search(
+        r"Ziua\s+de\s+livrare.*?(\d{1,2})/(\d{1,2})/(\d{4})\s*\[lei/MWh\]",
+        html, re.I | re.S)
+    price_row = re.search(
+        r"<td[^>]*>\s*ROPEX_DAM\s*\[lei/MWh\]\s*</td>(.*?)</tr>",
+        html, re.I | re.S)
+    volume_row = re.search(
+        r"<td[^>]*>\s*Volum\s*\[MWh\]\s*</td>(.*?)</tr>",
+        html, re.I | re.S)
+    if not delivery or not price_row:
+        raise RuntimeError("pagina OPCOM nu conține rezumatul PZU așteptat")
+
+    def cells(fragment):
+        return [_num(_strip_tags(cell).strip()) for cell in
+                re.findall(r"<td[^>]*>(.*?)</td>", fragment, re.I | re.S)]
+
+    prices = cells(price_row.group(1))
+    volumes = cells(volume_row.group(1)) if volume_row else []
+    if len(prices) < 3 or any(value is None for value in prices[:3]):
+        raise RuntimeError("valorile Base/Peak/Off-Peak OPCOM nu pot fi parsate")
+    dd, mm, yyyy = map(int, delivery.groups())
+    delivery_date = date(yyyy, mm, dd).isoformat()
+
+    text = _strip_tags(html)
+    monthly = re.search(
+        r"Prețul\s+mediu\s+ponderat\s+pe\s+PZU\s+pentru\s+"
+        r"([A-Za-zĂÂÎȘŞȚŢăâîșşțţ]+)\s+(\d{4})\s*:\s*([\d.,]+)\s*lei/MWh",
+        text, re.I)
+    month_reference = None
+    if monthly:
+        month_name = unicodedata.normalize("NFKD", monthly.group(1)).encode(
+            "ascii", "ignore").decode().lower()
+        month_number = _RO_MONTHS.get(month_name)
+        month_value = _num(monthly.group(3))
+        if month_number and month_value is not None:
+            month_reference = {
+                "month": f"{int(monthly.group(2)):04d}-{month_number:02d}",
+                "weighted_average_lei_mwh": month_value,
+            }
+    comparison = None
+    delivery_day = date.fromisoformat(delivery_date)
+    previous_month_end = delivery_day.replace(day=1) - timedelta(days=1)
+    expected_reference = previous_month_end.strftime("%Y-%m")
+    reference_is_previous = bool(
+        month_reference and month_reference.get("month") == expected_reference)
+    if month_reference:
+        month_reference["is_previous_to_delivery"] = reference_is_previous
+    if (reference_is_previous and
+            month_reference["weighted_average_lei_mwh"]):
+        comparison = round(100 * (prices[0] /
+                           month_reference["weighted_average_lei_mwh"] - 1), 1)
+    return {
+        "available": True,
+        "delivery_date": delivery_date,
+        "base_lei_mwh": prices[0],
+        "peak_lei_mwh": prices[1],
+        "off_peak_lei_mwh": prices[2],
+        "volume_total_mwh": volumes[0] if volumes else None,
+        "volume_peak_mwh": volumes[1] if len(volumes) > 1 else None,
+        "volume_off_peak_mwh": volumes[2] if len(volumes) > 2 else None,
+        "previous_month": month_reference,
+        "base_vs_previous_month_pct": comparison,
+        "source_url": OPCOM_URL,
+        "kind": "rezultat PZU pentru ziua următoare",
+        "limit": ("preț angro al pieței pentru ziua următoare; comparația cu "
+                  "media lunii precedente are perioade diferite și nu atribuie cauza"),
+    }
+
+
+def opcom_day_ahead():
+    def fetch():
+        parsed = _parse_opcom_market_html(http_get(OPCOM_URL, timeout=30))
+        try:
+            delivery = date.fromisoformat(parsed["delivery_date"])
+        except (TypeError, ValueError):
+            raise RuntimeError("data livrării OPCOM este invalidă")
+        if not date.today() <= delivery <= date.today() + timedelta(days=2):
+            raise RuntimeError("rezumatul OPCOM nu este pentru ziua următoare")
+        daily_snapshot("opcom_pzu", parsed)
+        return parsed
+
+    return cached("opcom:pzu:v2", 3 * 3600, fetch)
+
+
+def sen_market_context():
+    """Pachet fail-soft: căderea unei piețe nu ascunde celelalte probe."""
+    out = {}
+    for key, fetch_fn in (
+        ("consumption", damas_daily_consumption),
+        ("reserve_procurement", damas_reserve_procurement),
+        ("balancing", damas_balancing_context),
+        ("day_ahead", opcom_day_ahead),
+    ):
+        try:
+            result = fetch_fn()
+            out[key] = {**result["data"], "stale": bool(result.get("stale")),
+                        "cache_age_s": result.get("cache_age_s")}
+        except Exception as exc:
+            out[key] = {"available": False, "error": str(exc)[:240]}
+    out["available_components"] = sum(
+        1 for value in out.values()
+        if isinstance(value, dict) and value.get("available"))
+    out["component_count"] = 4
+    return out
 
 
 # ------------------------- CNE Cernavodă: rapoarte curente oficiale SNN ----
@@ -2800,6 +3168,16 @@ EVIDENCE_SOURCES = {
     "sen_history_local": {"provider": "Transelectrica", "kind": "istoric_auto_acumulat",
                            "family": "transelectrica_sen", "mode": "accumulating",
                            "url": SEN_DAMAS_REPORTS_URL},
+    "sen_damas_market": {
+        "provider": "Transelectrica DAMAS II",
+        "kind": "consum_rezerve_contractate_echilibrare",
+        "family": "transelectrica_market_operation",
+        "mode": "active",
+        "url": SEN_DAMAS_REPORTS_URL,
+    },
+    "opcom_pzu": {"provider": "OPCOM", "kind": "pret_piata_ziua_urmatoare",
+                   "family": "opcom_day_ahead_market", "mode": "active_context",
+                   "url": OPCOM_URL},
     "swot_direct": {"provider": "NASA/JPL PO.DAAC", "kind": "produs_satelit",
                     "family": "swot_karin_riversp", "mode": "catalog_only_free_account"},
     "smap": {"provider": "NASA NSIDC", "kind": "produs_satelit",
@@ -2829,8 +3207,8 @@ EVIDENCE_DEPENDENCIES = [
     {"members": ["inhga", "inhga_tributaries", "danubehis_ro_tributaries"],
      "relationship": "același furnizor național NIHWM/INHGA; produse și căi diferite, nu confirmări instituționale independente",
      "count_as": 1},
-    {"members": ["sen", "sen_history_local"],
-     "relationship": "aceeași familie Transelectrica; istoricul local acumulează endpointul live și nu este o confirmare independentă",
+    {"members": ["sen", "sen_history_local", "sen_damas_market"],
+     "relationship": "aceeași instituție Transelectrica; fluxuri operaționale diferite, dar nu confirmări instituționale independente",
      "count_as": 1},
     {"members": ["hydroinfo", "danubehis"],
      "relationship": "aceleași măsurători OVF, două căi de livrare",

@@ -710,7 +710,7 @@ def _tributary_model_context(source, generated_on):
 def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                  tributaries=None, tributary_observations=None,
                  tributary_model_climatology=None, water_resources=None,
-                 sen_history=None):
+                 sen_history=None, energy_market=None):
     generated_on = date.fromisoformat(
         as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
@@ -733,6 +733,9 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     sen_history = sen_history if isinstance(sen_history, dict) else {
         "available": False, "enough_for_comparison": False,
         "days": 0, "minimum_days": 14,
+    }
+    energy_market = energy_market if isinstance(energy_market, dict) else {
+        "available_components": 0, "component_count": 4,
     }
 
     measured = _number(inhga.get("debit_bazias_m3s"))
@@ -907,6 +910,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                                            if imports is not None and imports > 0 and consumption else None),
         "hydro_mw": _number(sen.get("hidro_mw")),
         "history": sen_history,
+        "market": energy_market,
     }
     stopped_for_water = (snn_status.get("status_available")
                          and snn_status.get("status_fresh")
@@ -943,10 +947,17 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                      f"{history_days}/{history_minimum} zile și încă nu este folosit comparativ. "
                      if not sen_history.get("enough_for_comparison") else
                      f"Istoricul local are {history_days} zile, dar fotografiile nu sunt medii zilnice. ")
+    market_components = int(energy_market.get("available_components") or 0)
+    market_limit = (
+        f"Sunt disponibile {market_components}/4 componente oficiale de piață și echilibrare. "
+        if market_components else
+        "Fluxurile oficiale de piață și echilibrare nu sunt disponibile acum. ")
     claims.append(_claim(
         "national_energy_crisis", "Criză energetică națională critică?", "not_demonstrated",
         crisis_text, energy_evidence,
-        history_limit + "Lipsesc încă rezervele, prețurile și eventualele măsuri de urgență; un instantaneu SEN nu este un test de criză."))
+        history_limit + market_limit +
+        "Capacitatea contractată și rezerva activată nu arată marja operațională rămasă; "
+        "lipsesc și eventualele măsuri de urgență. Un instantaneu SEN sau un preț mare nu este singur un test de criză."))
 
     physical_confirmed = claims[0]["status"] == "confirmed"
     cne_confirmed = cne_status == "confirmed"
@@ -965,6 +976,9 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     parameter_transparency = _parameter_transparency(
         cern, cern_gauge, measured, monthly_mean, nuclear, snn_status)
     current_intake_level = _number(snn_status.get("intake_basin_level_mdmb"))
+    official_bulletin_text = [str(item) for item in inhga.get("text_oficial") or []]
+    bala_caveat = any("bala" in item.lower() and "cernavod" in item.lower()
+                       for item in official_bulletin_text)
 
     missing = []
     reservoir_complete = (anar_current and
@@ -981,12 +995,18 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "debite măsurate aproape de confluență pentru toate cele nouă sisteme; cele cinci secțiuni DanubeHIS integrate au acoperire parțială")
     missing.append(
         "umiditate a solului și secetă agricolă validate spațial pentru România")
+    available_market = [key for key in ("consumption", "reserve_procurement",
+                                        "balancing", "day_ahead")
+                        if (energy_market.get(key) or {}).get("available")]
     if not sen_history.get("enough_for_comparison"):
         missing.append(
-            f"istoric SEN comparabil: arhiva locală acumulează {history_days}/{history_minimum} zile; rezervele și prețurile rămân neintegrate")
-    else:
+            f"baseline SEN comparabil: arhiva locală acumulează {history_days}/{history_minimum} zile; "
+            f"fluxuri oficiale curente disponibile {len(available_market)}/4")
+    elif len(available_market) < 4:
         missing.append(
-            "rezerve SEN, prețuri și măsuri de urgență comparabile cu istoricul deja acumulat")
+            f"acoperire incompletă a fluxurilor oficiale de piață și echilibrare: {len(available_market)}/4 disponibile")
+    missing.append(
+        "marja operațională de rezervă rămasă și eventualele măsuri de urgență; rezervele contractate și activate nu o reproduc")
     if not parameter_transparency.get("decision_reproducible"):
         missing.append(
             "nivelul bazinului de aspirație CNE, aceeași cotă de referință și pragurile operaționale curente")
@@ -1004,6 +1024,10 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
             "afdj": (cern_gauge or {}).get("actualizat"),
             "snn": snn_status.get("date"),
             "sen": sen.get("actualizat"),
+            "damas_consumption": (energy_market.get("consumption") or {}).get("delivery_date"),
+            "damas_reserves": (energy_market.get("reserve_procurement") or {}).get("delivery_date"),
+            "damas_balancing": (energy_market.get("balancing") or {}).get("delivery_date"),
+            "opcom_delivery": (energy_market.get("day_ahead") or {}).get("delivery_date"),
         },
         "headline": headline,
         "claims": claims,
@@ -1024,6 +1048,13 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         },
         "energy": energy_evidence,
         "water_resources": water_resources,
+        "official_danube_bulletin": {
+            "date": inhga.get("data_buletin"),
+            "url": inhga.get("url"),
+            "cernavoda_bala_caveat": bala_caveat,
+            "scope": ("INHGA marchează prognoza Cernavodă drept orientativă din cauza "
+                      "intervențiilor din zona brațului Bala" if bala_caveat else None),
+        },
         "romanian_tributaries": tributary_context,
         "missing_for_national_verdict": missing,
         "method": ("Reguli deterministe; nicio afirmație despre cauză sau criticitate nu este "

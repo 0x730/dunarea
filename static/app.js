@@ -1644,6 +1644,13 @@ async function renderRomania() {
     </li>`).join("")}</ul>`;
 
   const energyHistory = en.history || {};
+  const market = en.market || {};
+  const consumptionDay = market.consumption || {};
+  const reserveDay = market.reserve_procurement || {};
+  const balancing = market.balancing || {};
+  const balancingLatest = balancing.latest || {};
+  const pzu = market.day_ahead || {};
+  const previousMonth = pzu.previous_month || {};
   $("ro-sen-facts").innerHTML = [
     li("nuclear", `<b>${fmtV(en.nuclear_mw)} MW</b> · ${en.nuclear_unit_equivalent || "stare neclară"}`),
     li("hidro", `<b>${fmtV(en.hydro_mw)} MW</b> · toate centralele hidro din SEN`),
@@ -1651,8 +1658,12 @@ async function renderRomania() {
       ? `<b>${fmtN.format(en.imports_mw)} MW</b> ${en.imports_mw >= 0 ? "import" : "export"}${en.imports_share_consumption_pct != null ? ` · ${fmt1.format(en.imports_share_consumption_pct)}% din consum` : ""}`
       : "–"),
     li("actualizat", `${en.sen_updated || "–"} <span class="prov prov-masurat">măsurat</span>`),
+    consumptionDay.available ? li("consum DAMAS", `<b>${fmtV(consumptionDay.realized_mw?.median, fmt1)} MW</b> mediană · vârf ${fmtV(consumptionDay.realized_mw?.max, fmt1)} MW · ${fmtV(consumptionDay.realized_intervals)}/${fmtV(consumptionDay.forecast_intervals)} intervale realizate · ${consumptionDay.delivery_date || "dată lipsă"}<br><span class="table-detail">${consumptionDay.limit || "ziua poate fi incompletă"}</span>`) : null,
+    reserveDay.available ? li("capacitate de echilibrare contractată", `minimul raportului publicat cerere satisfăcută/cerere: <b>${fmtV(reserveDay.minimum_satisfaction_pct, fmt1)}%</b>${reserveDay.minimum_satisfaction_service ? ` · ${reserveDay.minimum_satisfaction_service}` : ""} · ${reserveDay.delivery_date || "dată lipsă"}<br><span class="table-detail">${reserveDay.limit || "nu este rezerva disponibilă în timp real"}</span>`) : null,
+    balancing.available ? li("echilibrare DAMAS", `ultimul interval: dezechilibru estimat <b>${fmtV(balancingLatest.estimated_system_imbalance_mw, fmt1)} MW</b> · rezervă activată ${fmtV(balancingLatest.activated_reserve_mw, fmt1)} MW${balancingLatest.estimated_negative_imbalance_price_lei_mwh != null ? ` · preț estimat deficit ${fmtN.format(balancingLatest.estimated_negative_imbalance_price_lei_mwh)} lei/MWh` : ""}<br><span class="table-detail">${balancing.latest_interval?.to || balancing.delivery_date || "dată lipsă"} · ${balancing.limit || "valori operative revizuibile"}</span>`) : null,
+    pzu.available ? li("PZU · ziua următoare", `<b>${fmtN.format(pzu.base_lei_mwh)} lei/MWh</b> Base · ${pzu.delivery_date || "dată lipsă"}${previousMonth.is_previous_to_delivery && pzu.base_vs_previous_month_pct != null ? ` · ${pzu.base_vs_previous_month_pct >= 0 ? "+" : ""}${fmt1.format(pzu.base_vs_previous_month_pct)}% față de media ponderată ${previousMonth.month} (${fmtN.format(previousMonth.weighted_average_lei_mwh)} lei/MWh)` : ""}<br><span class="table-detail">${pzu.limit || "prețul nu atribuie cauza"}</span>`) : null,
     li("istoric local", `<b>${fmtV(energyHistory.days)} zile</b> din minimum ${fmtV(energyHistory.minimum_days)} pentru comparație · ${energyHistory.from || "–"} → ${energyHistory.to || "–"}`),
-  ].join("");
+  ].filter(Boolean).join("");
 
   const energyClaim = (d.claims || []).find((claim) => claim.key === "national_energy_crisis");
   $("ro-energy-test").innerHTML = energyClaim ? `
@@ -1662,8 +1673,11 @@ async function renderRomania() {
     <ul class="check-list">
       <li class="ok">starea unităților: verificată separat prin SNN, dacă raportul este proaspăt</li>
       <li class="${energyHistory.enough_for_comparison ? "ok" : "missing"}">istoric din același endpoint: ${fmtV(energyHistory.days)} / ${fmtV(energyHistory.minimum_days)} zile${energyHistory.enough_for_comparison ? " · prag minim atins, cu limita fotografiilor zilnice" : " · încă se acumulează"}</li>
-      <li class="missing">rezerve și adecvanță SEN: identificate în rapoartele oficiale, încă neingerate</li>
-      <li class="missing">prețuri și medii zilnice comparabile: încă neingerate din DAMAS II</li>
+      <li class="${consumptionDay.available ? "ok" : "missing"}">consum realizat/prognozat DAMAS: ${consumptionDay.available ? `${fmtV(consumptionDay.realized_intervals)}/${fmtV(consumptionDay.forecast_intervals)} intervale pentru ${consumptionDay.delivery_date}` : "indisponibil acum"}</li>
+      <li class="${reserveDay.available ? "ok" : "missing"}">rezerve contractate: ${reserveDay.available ? `rezultate de achiziție integrate pentru ${reserveDay.delivery_date}; nu reprezintă marja rămasă` : "indisponibile acum"}</li>
+      <li class="${balancing.available ? "ok" : "missing"}">echilibrare: ${balancing.available ? `dezechilibru estimat și rezervă activată integrate; valori volatile` : "indisponibilă acum"}</li>
+      <li class="${pzu.available ? "ok" : "missing"}">preț PZU: ${pzu.available ? `${fmtN.format(pzu.base_lei_mwh)} lei/MWh Base pentru ${pzu.delivery_date}; context, nu cauză` : "indisponibil acum"}</li>
+      <li class="missing">marja operațională de rezervă rămasă: nu rezultă din capacitatea contractată sau activată</li>
       <li class="missing">măsuri oficiale de urgență sau consum întrerupt: neidentificate în datele ingerate</li>
     </ul>` : `<div class="err-box">test indisponibil</div>`;
 

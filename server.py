@@ -243,6 +243,10 @@ def api_sen_history(q):
     return C.sen_history_context()
 
 
+def api_sen_market(q):
+    return C.sen_market_context()
+
+
 def api_anar_resources(q):
     r = C.anar_water_resources()
     return {**r["data"], "stale": r["stale"]}
@@ -280,6 +284,9 @@ def api_romania(q):
             "available": False, "enough_for_comparison": False,
             "days": 0, "minimum_days": 14,
         })
+        energy_market = optional(C.sen_market_context, {
+            "available_components": 0, "component_count": 4,
+        })
         water_resources = optional(lambda: C.anar_water_resources()["data"], {
             "available": False, "current": False,
             "reason": "comunicatul național ANAR nu a putut fi verificat",
@@ -295,11 +302,12 @@ def api_romania(q):
                                     tributary_observations=tributary_observations,
                                     tributary_model_climatology=tributary_model_climatology,
                                     water_resources=water_resources,
-                                    sen_history=sen_history)
+                                    sen_history=sen_history,
+                                    energy_market=energy_market)
 
     # Versiunea cheii urmărește schema payloadului; schimbarea ei împiedică un
     # răspuns vechi din cache să mascheze câmpuri noi după repornire.
-    result = C.cached("romania_proportionality:v12", 5 * 60, build)
+    result = C.cached("romania_proportionality:v14", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
 
@@ -316,6 +324,9 @@ def api_missing_data(q):
     tributaries = report.get("romanian_tributaries") or {}
     observed = tributaries.get("observed_sections") or {}
     energy_history = (report.get("energy") or {}).get("history") or {}
+    energy_market = (report.get("energy") or {}).get("market") or {}
+    energy = report.get("energy") or {}
+    bulletin = report.get("official_danube_bulletin") or {}
     transparency = ((report.get("cernavoda") or {})
                     .get("parameter_transparency") or {})
 
@@ -388,9 +399,30 @@ def api_missing_data(q):
             ],
         },
         {
+            "id": "cernavoda_bala", "category": "Cernavodă · hidraulică locală",
+            "title": "Împărțirea debitului și intervențiile din zona Bala",
+            "status": "partial" if (bulletin.get("date") or
+                                      (report.get("cernavoda") or {}).get("gauge")) else "missing",
+            "need": "debite sincronizate pe Dunărea Veche/Borcea/Bala, geometria secțiunilor și starea intervențiilor",
+            "why": "INHGA avertizează că intervențiile pot modifica prognoza de nivel la Cernavodă, exact secțiunea relevantă pentru contextul CNE",
+            "what_we_have": {
+                "bulletin_date": bulletin.get("date"),
+                "official_caveat_detected": bool(bulletin.get("cernavoda_bala_caveat")),
+                "cernavoda_gauge_date": (((report.get("cernavoda") or {}).get("gauge") or {})
+                                         .get("actualizat")),
+            },
+            "gap": ("avertismentul oficial și cota la miră nu cuantifică distribuția "
+                    "debitului, efectul lucrărilor sau nivelul bazinului de aspirație"),
+            "sources_checked": [
+                {"label": "INHGA — buletinul curent al Dunării", "url": bulletin.get("url")},
+                {"label": "AFDJ — cotele Dunării", "url": romania.AFDJ_CURRENT_LEVELS_URL},
+            ],
+        },
+        {
             "id": "sen_history", "category": "Energie · proporționalitate",
-            "title": "Istoric SEN, rezerve și prețuri",
-            "status": ("partial" if energy_history.get("available") else "missing"),
+            "title": "Consum, rezerve contractate, echilibrare și prețuri",
+            "status": ("partial" if (energy_history.get("available") or
+                                      energy_market.get("available_components")) else "missing"),
             "need": "cerere, import/export, producție, rezerve și prețuri înainte și după episod",
             "why": "o unitate nucleară oprită este materială, dar nu dovedește singură o criză energetică națională",
             "what_we_have": {
@@ -398,11 +430,38 @@ def api_missing_data(q):
                 "minimum_days": energy_history.get("minimum_days", 14),
                 "enough_for_comparison": bool(energy_history.get("enough_for_comparison")),
                 "from": energy_history.get("from"), "to": energy_history.get("to"),
+                "official_components": energy_market.get("available_components", 0),
+                "consumption_date": (energy_market.get("consumption") or {}).get("delivery_date"),
+                "reserve_date": (energy_market.get("reserve_procurement") or {}).get("delivery_date"),
+                "day_ahead_delivery": (energy_market.get("day_ahead") or {}).get("delivery_date"),
             },
-            "gap": "fotografiile locale se acumulează automat; mediile zilnice, rezervele și prețurile DAMAS nu sunt încă ingerate",
-            "sources_checked": energy_history.get("sources") or [
+            "gap": ("consumul zilnic DAMAS, rezultatele achiziției de capacitate, "
+                    "echilibrarea și PZU sunt ingerate când sursele răspund; lipsesc "
+                    "încă marja operațională de rezervă rămasă, un baseline istoric "
+                    "comparabil și eventualele măsuri de urgență"),
+            "sources_checked": (energy_history.get("sources") or [
                 {"label": "Transelectrica — Rapoarte zilnice", "url": C.SEN_DAILY_REPORTS_URL},
                 {"label": "Transelectrica — DAMAS II Public Reports", "url": C.SEN_DAMAS_REPORTS_URL},
+            ]) + [{"label": "OPCOM — rezultate PZU", "url": C.OPCOM_URL}],
+        },
+        {
+            "id": "irongates_operations", "category": "Porțile de Fier · operare",
+            "title": "Debite intrare/ieșire, stocare, turbinare și deversare",
+            "status": "partial" if (entsoe.get("activ") or
+                                      energy.get("hydro_mw") is not None) else "missing",
+            "need": "serii sincronizate de intrare/ieșire, nivel sau volum al lacului, turbinare, deversare și manevre",
+            "why": "separă efectul natural al aportului de operarea amenajării și permite verificarea bilanțului fizic",
+            "what_we_have": {
+                "national_hydro_mw": energy.get("hydro_mw"),
+                "entsoe_unit_generation_active": bool(entsoe.get("activ")),
+                "glofas_balance_is_model_only": True,
+            },
+            "gap": ("producția energetică este doar proxy; nu avem fluxul hidrologic "
+                    "operațional, stocarea și jurnalele de manevră ale operatorilor român și sârb"),
+            "sources_checked": [
+                {"label": "Hidroelectrica", "url": "https://www.hidroelectrica.ro/"},
+                {"label": "EPS Serbia", "url": "https://www.eps.rs/eng/"},
+                {"label": "ENTSO-E Transparency", "url": "https://transparency.entsoe.eu"},
             ],
         },
         {
@@ -438,17 +497,15 @@ def api_missing_data(q):
         },
         {
             "id": "optional_backfill", "category": "Istoric · verificare secundară",
-            "title": "GRDC, ENTSO-E și produse orbitale directe",
-            "status": "partial" if grdc.get("activ") or entsoe.get("activ") else "missing",
+            "title": "GRDC și produse orbitale directe",
+            "status": "partial" if grdc.get("activ") or satellite.get("download_configurat") else "missing",
             "need": "backfill măsurat sau operațional care aduce o familie de probă nouă",
             "why": "poate calibra modelul și reconstrui episoade vechi, dar nu înlocuiește datele CNE lipsă",
             "what_we_have": {"grdc_active": bool(grdc.get("activ")),
-                             "entsoe_active": bool(entsoe.get("activ")),
                              "satellite_downloads_configured": bool(satellite.get("download_configurat"))},
-            "gap": "se activează numai după obținerea legală a exportului/tokenului și după un test de valoare informațională",
+            "gap": "se activează numai după obținerea legală a exportului sau configurarea descărcării și după un test de valoare informațională",
             "sources_checked": [
                 {"label": "GRDC — portal date", "url": "https://portal.grdc.bafg.de"},
-                {"label": "ENTSO-E Transparency", "url": "https://transparency.entsoe.eu"},
                 {"label": "NASA Earthdata", "url": "https://search.earthdata.nasa.gov"},
             ],
         },
@@ -593,6 +650,7 @@ ROUTES = {
     "/api/statistici.csv": api_statistici_csv,
     "/api/sen": api_sen,
     "/api/sen/istoric": api_sen_history,
+    "/api/sen/piata": api_sen_market,
     "/api/anar/resurse-apa": api_anar_resources,
     "/api/romania": api_romania,
     "/api/date-lipsa": api_missing_data,

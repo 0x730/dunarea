@@ -48,7 +48,12 @@ comunicat relevant ANAR. El expiră automat după 14 zile și nu completează di
 comunicate vechi un coeficient sau un volum nepublicat. Pentru energie,
 aplicația păstrează o fotografie SEN pe zi și activează comparația locală numai
 după minimum 14 zile distincte; aceste fotografii nu sunt medii zilnice și nu
-înlocuiesc rezervele sau prețurile DAMAS II.
+înlocuiesc seria oficială. Separat, DAMAS II furnizează consumul realizat și
+prognozat la 15 minute, rezultatele achiziției capacității de echilibrare,
+dezechilibrul estimat și rezerva activată. OPCOM furnizează rezultatul PZU și
+media ponderată a lunii precedente. Capacitatea contractată nu este etichetată
+drept rezervă disponibilă, rezerva activată nu este marja rămasă, iar un preț
+mare nu este folosit singur ca probă de criză sau de cauzalitate.
 
 Vederea `/date-lipsa` este registrul auto-actualizat al verigilor care ar putea
 schimba concluzia: ce valoare este necesară, de ce ajută, ce există deja, ce
@@ -127,7 +132,8 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [ENTSO-E Transparency](https://transparency.entsoe.eu) (opțional) | producție pe unități ≥100 MW (PF I) | orar, cu întârziere | măsurat |
 | [DanubeSTREAM](https://www.danubeportal.com) (FAIRway) | mirele de navigație din toate țările riverane (~100 stații AT/SK/HU/RS/RO/BG) + cross-check automat cu AFDJ | cvasi-orar | măsurat |
 | [Transelectrica SEN](https://www.transelectrica.ro/sen-grafic) | producția pe surse (hidro, nuclear/CNE), linia Djerdap, sold | timp real | măsurat |
-| [Transelectrica — rapoarte zilnice / DAMAS II](https://newmarkets.transelectrica.ro/uu-webkit-maing02/00121011300000000000000000000100/publicReports) | destinațiile oficiale pentru consum, rezerve și rapoarte ale pieței; istoricul local SEN se acumulează separat | zilnic | identificat; comparația locală folosește fotografii, nu medii zilnice |
+| [Transelectrica — rapoarte zilnice / DAMAS II](https://newmarkets.transelectrica.ro/uu-webkit-maing02/00121011300000000000000000000100/publicReports) | consum realizat/prognozat la 15 minute, achiziția capacității de echilibrare, dezechilibru/preț estimat și rezervă activată | 5–30 min | oficial, ingerat; nu reproduce marja operațională rămasă |
+| [OPCOM](https://www.opcom.ro/acasa/ro) | rezultat PZU Base/Peak/Off-Peak, volum și media ponderată a lunii precedente | zilnic | oficial, ingerat; context de piață, nu atribuire cauzală |
 | [SNN — rapoarte curente](https://nuclearelectrica.ro/ir/rapoarte-curente/) | starea oficială a unităților CNE și cauza declarată de operator | la eveniment | oficial; rezumat auditat și datat |
 | Comisia Dunării — [2003](https://www.danubecommission.org/uploads/doc/Library_scan/hydro_yearbooks/5.1.51_fr_ru_de.pdf), [2011](https://www.danubecommission.org/uploads/doc/2017/EG_Hydro_5_6_09_2017/yearbook_2011.pdf), [2015](https://www.danubecommission.org/uploads/doc/2021/yearbook_2015.pdf) + [AFDJ 2020–2025](https://www.danubecommission.org/uploads/doc/2026/20260305_EG_HYDRO/01_RO_AFDJ.pdf) | context măsurat la mira Cernavodă pentru episoadele 2003, 2011, 2015 și 2022 | istoric | rezumate factuale cu perioadă/pagină; fără redistribuirea tabelelor brute |
 | [hydroweb.next](https://hydroweb.next.theia-land.fr) (cheie în `data/keys/hydroweb.key`) | niveluri din altimetrie satelitară (Sentinel-3/6, SWOT) pe stații virtuale Dunăre, cu percentila proprie | la trecerea satelitului | măsurat din orbită |
@@ -240,5 +246,5 @@ cache.db         cache local (generat la rulare)
 `/api/glofas/recent?point=&days=` · `/api/glofas/years?point=&start=` ·
 `/api/precip?point=&start=` · `/api/delta` · `/api/entsoe` · `/api/points` ·
 `/api/anomalii` · `/api/romania` · `/api/inhga/serie?days=` ·
-`/api/anar/resurse-apa` · `/api/sen/istoric` · `/api/date-lipsa` ·
+`/api/anar/resurse-apa` · `/api/sen/istoric` · `/api/sen/piata` · `/api/date-lipsa` ·
 `/api/statistici` (+`.csv` pentru export)
