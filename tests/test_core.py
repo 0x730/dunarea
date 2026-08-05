@@ -80,14 +80,19 @@ class StaticOptionsPageTests(unittest.TestCase):
         app = root.joinpath("static/app.js").read_text()
 
         self.assertIn('href="/romania"', page)
+        self.assertIn('href="/date-lipsa"', page)
         self.assertIn('data-view="romania"', page)
+        self.assertIn('data-view="lipsa"', page)
         self.assertIn("/api/romania", app)
+        self.assertIn("/api/date-lipsa", app)
         self.assertIn("rare_not_unprecedented", app)
         self.assertIn("nicio concluzie veche nu este păstrată", app)
         self.assertIn('id="ro-operational-history"', page)
         self.assertIn('id="ro-historical-thresholds"', page)
         self.assertIn('id="ro-parameter-coverage"', page)
         self.assertIn('id="ro-tributaries"', page)
+        self.assertIn('id="ro-water-resources"', page)
+        self.assertIn('id="missing-register"', page)
         self.assertIn("gauge?.temp_apa_c", app)
         self.assertIn("gauge?.tendinte_cm", app)
         self.assertIn("mediană ian.–azi", app)
@@ -100,6 +105,49 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertNotIn("27.5°C", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("-226 cm", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("U1 oprită", page.split('data-view="romania"', 1)[1])
+
+
+class MissingDataRegistryTests(unittest.TestCase):
+    def test_registry_statuses_follow_available_evidence(self):
+        report = {
+            "water_resources": {
+                "available": True, "current": True, "published": "2026-08-05",
+                "reservoirs": {"count": 40, "fill_pct": 61.5,
+                               "volume_billion_m3": 2.4},
+                "restrictions": {"drinking_water": False},
+            },
+            "romanian_tributaries": {
+                "selected_systems": 9,
+                "observed_sections": {"sections_available": 9, "sections": []},
+            },
+            "energy": {"history": {
+                "available": True, "enough_for_comparison": True,
+                "days": 14, "minimum_days": 14,
+            }},
+            "cernavoda": {"parameter_transparency": {
+                "decision_reproducible": True, "decision_parameters": [],
+                "public_signals": [],
+            }},
+        }
+        with mock.patch.object(server, "api_romania", return_value=report), \
+                mock.patch.object(C, "earthdata_satellite_catalog", return_value={
+                    "data": {"sources": {}, "download_configurat": False}}), \
+                mock.patch.object(C, "copernicus_land_context", return_value={
+                    "data": {"straturi": {"soil": {"activ": False}}}}), \
+                mock.patch.object(C, "grdc_series", return_value={"activ": True}), \
+                mock.patch.object(C, "entsoe_irongates", return_value={"activ": False}):
+            result = server.api_missing_data({})
+
+        statuses = {entry["id"]: entry["status"] for entry in result["entries"]}
+        self.assertEqual(statuses["anar_reservoirs"], "available")
+        self.assertEqual(statuses["cernavoda_decision"], "available")
+        self.assertEqual(statuses["tributary_gauges"], "available")
+        self.assertEqual(statuses["sen_history"], "partial")
+        self.assertEqual(statuses["soil_moisture"], "missing")
+        self.assertEqual(statuses["optional_backfill"], "partial")
+        self.assertEqual(result["summary"], {
+            "available": 3, "partial": 2, "missing": 1,
+        })
 
 
 class RomaniaProportionalityTests(unittest.TestCase):
@@ -273,6 +321,31 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(claims["romania_scope"]["status"], "not_supported")
         self.assertEqual(claims["cernavoda_impact"]["status"], "confirmed")
         self.assertEqual(claims["national_energy_crisis"]["status"], "not_demonstrated")
+
+    def test_new_water_and_energy_inputs_update_missing_sections(self):
+        afdj, inhga, sen = self.inputs()
+        water = {
+            "available": True, "current": True, "published": "2026-08-04",
+            "reservoirs": {"count": 40, "fill_pct": 61.5,
+                           "volume_billion_m3": 2.4,
+                           "sufficient_for_centralized_supply": True},
+            "restrictions": {"drinking_water": False,
+                             "official_statements": []},
+        }
+        history = {"available": True, "enough_for_comparison": True,
+                   "days": 14, "minimum_days": 14, "metrics": {}}
+
+        out = romania.build_report(
+            self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
+            "2026-08-04", water_resources=water, sen_history=history)
+
+        missing = " ".join(out["missing_for_national_verdict"])
+        rain_claim = next(c for c in out["claims"] if c["key"] == "romania_scope")
+        self.assertNotIn("gradul curent de umplere", missing)
+        self.assertNotIn("arhiva locală acumulează", missing)
+        self.assertIn("rezerve SEN", missing)
+        self.assertIn("nicio restricție", rain_claim["conclusion"])
+        self.assertTrue(out["energy"]["history"]["enough_for_comparison"])
         self.assertIn("nu este demonstrată", out["headline"])
         self.assertIn("snn_pdf_sha256", out["energy"])
 
@@ -612,6 +685,27 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(second["stale"])
         self.assertEqual(calls, 1)
 
+    def test_sen_history_comparison_self_enables_only_after_minimum_days(self):
+        start = date(2026, 7, 20)
+        for offset in range(13):
+            day = start + timedelta(days=offset)
+            C.cache_put(f"hist:sen:{day.isoformat()}", {
+                "consum_mw": 6000 + offset, "sold_mw": 1000 + offset,
+                "hidro_mw": 1500, "nuclear_mw": 700,
+            }, 10 ** 9)
+
+        accumulating = C.sen_history_context(min_days=14)
+        self.assertFalse(accumulating["enough_for_comparison"])
+        self.assertEqual(accumulating["days"], 13)
+
+        C.cache_put("hist:sen:2026-08-02", {
+            "consum_mw": 6100, "sold_mw": 1200,
+            "hidro_mw": 1400, "nuclear_mw": 700,
+        }, 10 ** 9)
+        ready = C.sen_history_context(min_days=14)
+        self.assertTrue(ready["enough_for_comparison"])
+        self.assertEqual(ready["metrics"]["consum_mw"]["samples"], 14)
+
 
 class ConnectorTests(unittest.TestCase):
     @staticmethod
@@ -658,6 +752,49 @@ class ConnectorTests(unittest.TestCase):
                          [["era5"], ["era5"]])
         self.assertTrue(keys[0].startswith("era5v3:"))
         self.assertTrue(keys[1].startswith("era5pt:v3:"))
+
+    def test_anar_parser_keeps_qualitative_current_context_partial(self):
+        posts = [{
+            "date": "2026-07-28T16:29:16",
+            "link": "https://rowater.ro/2026/07/28/context/",
+            "title": {"rendered": "28 iulie 2026"},
+            "content": {"rendered": """
+              <p>În prezent, pe sectorul Călărași-Cernavodă, se mențin
+              restricțiile la folosințe (irigații), respectiv treapta III.</p>
+              <p>Nu sunt impuse restricții în ceea ce privește alimentarea cu
+              apă a populației, coeficientul de umplere în principalele 40 de
+              lacuri, volumul de apă fiind suficient pentru alimentarea în sistem centralizat.</p>
+            """},
+        }]
+
+        out = C._parse_anar_water_resources_posts(posts, date(2026, 8, 5))
+
+        self.assertTrue(out["current"])
+        self.assertIsNone(out["reservoirs"]["fill_pct"])
+        self.assertEqual(out["reservoirs"]["count"], 40)
+        self.assertTrue(out["reservoirs"]["sufficient_for_centralized_supply"])
+        self.assertFalse(out["restrictions"]["drinking_water"])
+        self.assertTrue(out["restrictions"]["official_statements"])
+        self.assertFalse(out["quantitative_complete"])
+
+    def test_anar_parser_reacts_to_new_numbers_and_expires_old_state(self):
+        numeric = [{
+            "date": "2026-08-04T10:00:00",
+            "link": "https://rowater.ro/current/",
+            "title": {"rendered": "Rezervele de apă"},
+            "content": {"rendered": (
+                "<p>La nivel național, coeficientul de umplere în principalele "
+                "40 de lacuri este 61,5%, cu un volum de 2,4 miliarde m3.</p>")},
+        }]
+        current = C._parse_anar_water_resources_posts(numeric, date(2026, 8, 5))
+        old = C._parse_anar_water_resources_posts(numeric, date(2026, 8, 25))
+
+        self.assertEqual(current["reservoirs"]["fill_pct"], 61.5)
+        self.assertEqual(current["reservoirs"]["volume_billion_m3"], 2.4)
+        self.assertTrue(current["quantitative_complete"])
+        self.assertTrue(current["current"])
+        self.assertFalse(old["current"])
+        self.assertEqual(old["status"], "historical_only")
 
     def test_hydroinfo_parser_extracts_daily_danube_measurement(self):
         def row(values):
@@ -1180,6 +1317,17 @@ class AiAnalysisAuditTests(unittest.TestCase):
                 mock.patch.object(C, "glofas_romanian_tributary_climatology",
                                   return_value={"data": {"tip": "model_climatic"},
                                                 "stale": False, "cache_age_s": 7}), \
+                mock.patch.object(C, "anar_water_resources",
+                                  return_value={"data": {"tip": "anar"},
+                                                "stale": False, "cache_age_s": 8}), \
+                mock.patch.object(C, "snn_cernavoda_status",
+                                  return_value={"data": {"tip": "snn"},
+                                                "stale": False, "cache_age_s": 9}), \
+                mock.patch.object(C, "sen_live",
+                                  return_value={"data": {"tip": "sen"},
+                                                "stale": False, "cache_age_s": 10}), \
+                mock.patch.object(C, "sen_history_context",
+                                  return_value={"tip": "sen_history"}), \
                 mock.patch.object(C, "edo_status", return_value=fresh_context), \
                 mock.patch.object(C, "opera_surface_status", return_value=fresh_context), \
                 mock.patch.object(C, "copernicus_land_context", return_value=fresh_context), \
@@ -1203,6 +1351,10 @@ class AiAnalysisAuditTests(unittest.TestCase):
                          6)
         self.assertEqual(digest["climatologie_modelata_afluenti"]["date"]["tip"],
                          "model_climatic")
+        self.assertEqual(digest["context_resurse_apa_anar"]["date"]["tip"], "anar")
+        self.assertEqual(digest["stare_cne_snn"]["date"]["tip"], "snn")
+        self.assertEqual(digest["stare_sen"]["date"]["tip"], "sen")
+        self.assertEqual(digest["istoric_sen_local"]["date"]["tip"], "sen_history")
         bazias = digest["reconciliere_bazias"]
         self.assertEqual(bazias["valoare_oficiala_curenta"]["debit_m3s"], 900)
         self.assertEqual(bazias["reper_modelat_climatologic"]["debit_m3s"], 1200)
@@ -1278,6 +1430,9 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("un singur an, nu climatologia", prompt)
         self.assertIn("climatologie_modelata_afluenti", prompt)
         self.assertIn("nu transferă percentila modelului", prompt)
+        self.assertIn("context_resurse_apa_anar", prompt)
+        self.assertIn("stare_cne_snn", prompt)
+        self.assertIn("istoric_sen_local", prompt)
 
     def test_response_heading_normalization_is_narrow_and_auditable(self):
         text = "## SITUAȚIA\nFapt.\n\n**CE AR SCHIMBĂ CONCLUZIA:**\nAlt fapt."

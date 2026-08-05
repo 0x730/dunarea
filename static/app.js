@@ -16,6 +16,7 @@ const VIEW_LABELS = {
   integritate: "Verificări & surse",
   sectoare: "Porțile de Fier & Delta",
   actiuni: "Opțiuni",
+  lipsa: "Date lipsă",
 };
 const VIEW_PATHS = {
   acum: "/",
@@ -24,6 +25,7 @@ const VIEW_PATHS = {
   integritate: "/integritate",
   sectoare: "/sectoare",
   actiuni: "/optiuni",
+  lipsa: "/date-lipsa",
 };
 
 function requestedView() {
@@ -1466,7 +1468,8 @@ async function renderRomania() {
     $("ro-headline").innerHTML = `<div class="err-box">Analiza România nu a putut fi recompusă acum; nicio concluzie veche nu este păstrată ca stare curentă.</div>`;
     ["ro-claims", "ro-cernavoda-facts", "ro-cne-facts", "ro-history-table",
       "ro-operational-history", "ro-historical-thresholds", "ro-parameter-coverage",
-      "ro-sen-facts", "ro-energy-test", "ro-tributaries", "ro-rain", "ro-missing"].forEach((id) => {
+      "ro-sen-facts", "ro-energy-test", "ro-tributaries", "ro-water-resources",
+      "ro-rain", "ro-missing"].forEach((id) => {
         $(id).innerHTML = `<div class="err-box">date indisponibile</div>`;
       });
     pill("România", "err");
@@ -1640,6 +1643,7 @@ async function renderRomania() {
       <b>${parameter.name}</b><br><span>${parameter.basis}</span><br><small>${parameter.kind}</small>
     </li>`).join("")}</ul>`;
 
+  const energyHistory = en.history || {};
   $("ro-sen-facts").innerHTML = [
     li("nuclear", `<b>${fmtV(en.nuclear_mw)} MW</b> · ${en.nuclear_unit_equivalent || "stare neclară"}`),
     li("hidro", `<b>${fmtV(en.hydro_mw)} MW</b> · toate centralele hidro din SEN`),
@@ -1647,6 +1651,7 @@ async function renderRomania() {
       ? `<b>${fmtN.format(en.imports_mw)} MW</b> ${en.imports_mw >= 0 ? "import" : "export"}${en.imports_share_consumption_pct != null ? ` · ${fmt1.format(en.imports_share_consumption_pct)}% din consum` : ""}`
       : "–"),
     li("actualizat", `${en.sen_updated || "–"} <span class="prov prov-masurat">măsurat</span>`),
+    li("istoric local", `<b>${fmtV(energyHistory.days)} zile</b> din minimum ${fmtV(energyHistory.minimum_days)} pentru comparație · ${energyHistory.from || "–"} → ${energyHistory.to || "–"}`),
   ].join("");
 
   const energyClaim = (d.claims || []).find((claim) => claim.key === "national_energy_crisis");
@@ -1656,8 +1661,9 @@ async function renderRomania() {
     <p class="claim-limit">${energyClaim.limit}</p>
     <ul class="check-list">
       <li class="ok">starea unităților: verificată separat prin SNN, dacă raportul este proaspăt</li>
-      <li class="missing">rezerve și adecvanță SEN: lipsesc din flux</li>
-      <li class="missing">prețuri și comparație istorică a importurilor: lipsesc din această versiune</li>
+      <li class="${energyHistory.enough_for_comparison ? "ok" : "missing"}">istoric din același endpoint: ${fmtV(energyHistory.days)} / ${fmtV(energyHistory.minimum_days)} zile${energyHistory.enough_for_comparison ? " · prag minim atins, cu limita fotografiilor zilnice" : " · încă se acumulează"}</li>
+      <li class="missing">rezerve și adecvanță SEN: identificate în rapoartele oficiale, încă neingerate</li>
+      <li class="missing">prețuri și medii zilnice comparabile: încă neingerate din DAMAS II</li>
       <li class="missing">măsuri oficiale de urgență sau consum întrerupt: neidentificate în datele ingerate</li>
     </ul>` : `<div class="err-box">test indisponibil</div>`;
 
@@ -1760,6 +1766,39 @@ async function renderRomania() {
     : `<div class="err-box">Statisticile măsurate pe afluenți sunt indisponibile: ${observed.reason || "sursa nu a putut fi verificată"}.</div>`;
   $("ro-tributaries").innerHTML = `${observedPanel}${forecastPanel}`;
 
+  const water = d.water_resources || {};
+  const reservoirs = water.reservoirs || {};
+  const restrictions = water.restrictions || {};
+  const waterSource = water.url
+    ? `<a href="${water.url}" target="_blank" rel="noopener">comunicatul ANAR</a>`
+    : `<a href="${water.management_page_url || "https://rowater.ro/activitatea-institutiei/departamente/managementul-situatiilor-de-urgenta/"}" target="_blank" rel="noopener">pagina ANAR verificată</a>`;
+  if (!water.available) {
+    $("ro-water-resources").innerHTML = `<div class="err-box">Contextul național ANAR nu este disponibil: ${water.reason || "nu a fost găsit un comunicat relevant"}. Nicio valoare istorică nu este relabelată drept stare curentă.</div>`;
+  } else {
+    const currentLabel = water.current
+      ? `<span class="sev sev-normal">context curent</span>`
+      : `<span class="sev sev-info">numai context istoric</span>`;
+    const supply = reservoirs.sufficient_for_centralized_supply == null
+      ? "neprecizat"
+      : reservoirs.sufficient_for_centralized_supply ? "declarat suficient" : "declarat insuficient / în scădere";
+    const drinking = restrictions.drinking_water == null
+      ? "neprecizat"
+      : restrictions.drinking_water ? "da" : "nu";
+    $("ro-water-resources").innerHTML = `
+      <div class="chips">${currentLabel}${water.delivery_stale ? ` <span class="sev sev-atentie">livrare cache vechi</span>` : ""}</div>
+      <ul class="facts compact-facts">
+        ${li("publicat", `<b>${water.published || "–"}</b> · ${fmtV(water.age_days)} zile vechime`)}
+        ${li("lacuri menționate", reservoirs.count != null ? `<b>${fmtN.format(reservoirs.count)}</b>` : "număr nepublicat")}
+        ${li("coeficient umplere", reservoirs.fill_pct != null ? `<b>${fmt1.format(reservoirs.fill_pct)}%</b>` : `<span class="prov prov-lipsa">nepublicat în comunicat</span>`)}
+        ${li("volum național", reservoirs.volume_billion_m3 != null ? `<b>${fmt2.format(reservoirs.volume_billion_m3)} mld. m³</b>` : `<span class="prov prov-lipsa">nepublicat în comunicat</span>`)}
+        ${li("alimentare centralizată", supply)}
+        ${li("restricții apă populație", drinking)}
+      </ul>
+      ${(restrictions.official_statements || []).length ? `<h4>Restricții și limite declarate</h4><ul class="check-list">${restrictions.official_statements.map((statement) => `<li>${statement}</li>`).join("")}</ul>` : ""}
+      <p class="sub">${waterSource} · ${water.scope || "context oficial"}<br><b>Limită:</b> ${water.limit || "nu este serie zilnică omogenă"}</p>
+      ${water.current ? "" : `<p class="threshold-warning"><b>Nu este stare curentă:</b> valorile sunt păstrate numai ca ultim context găsit.</p>`}`;
+  }
+
   const rainClaim = (d.claims || []).find((claim) => claim.key === "romania_scope");
   const rainPoints = rainClaim?.evidence?.points || [];
   $("ro-rain").innerHTML = rainClaim ? `
@@ -1780,6 +1819,64 @@ async function renderRomania() {
   $("ro-missing").innerHTML = (d.missing_for_national_verdict || [])
     .map((item, index) => li(`${index + 1}`, item)).join("") || li("stare", "lista nu este disponibilă");
   pill("România", d.stale ? "stale" : "ok");
+}
+
+/* --------------------------------------- registrul datelor încă lipsă -- */
+const MISSING_STATUS = {
+  available: ["normal", "disponibil"],
+  partial: ["atentie", "parțial"],
+  missing: ["info", "lipsă"],
+};
+
+function missingStatusChip(status) {
+  const [style, label] = MISSING_STATUS[status] || ["info", status || "necunoscut"];
+  return `<span class="sev sev-${style}">${label}</span>`;
+}
+
+function registerValue(value) {
+  if (value == null || value === "") return "–";
+  if (typeof value === "boolean") return value ? "da" : "nu";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "–";
+  return String(value);
+}
+
+async function renderMissingData() {
+  let d;
+  try {
+    d = await jget("/api/date-lipsa");
+  } catch (e) {
+    $("missing-summary").innerHTML = `<div class="err-box">Registrul nu a putut fi recompus acum.</div>`;
+    $("missing-register").innerHTML = "";
+    pill("Date lipsă", "err");
+    return;
+  }
+  const summary = d.summary || {};
+  $("missing-summary").innerHTML = `
+    <div class="chips">
+      <span class="sev sev-normal">${fmtV(summary.available)} disponibile</span>
+      <span class="sev sev-atentie">${fmtV(summary.partial)} parțiale</span>
+      <span class="sev sev-info">${fmtV(summary.missing)} lipsă</span>
+    </div>
+    <p><b>${d.rule || "Sunt acceptate numai valori datate și comparabile."}</b></p>
+    <p class="sub">registru recompus ${d.generated || "–"} · starea se schimbă odată cu sursele și configurarea locală</p>`;
+
+  $("missing-register").innerHTML = `<div class="missing-grid">${(d.entries || []).map((entry) => {
+    const values = Object.entries(entry.what_we_have || {})
+      .filter(([, value]) => value != null && value !== "" && !(Array.isArray(value) && !value.length));
+    const sources = (entry.sources_checked || []).filter((source) => source.url);
+    return `<article class="card missing-card">
+      <p class="eyebrow">${entry.category || "date"}</p>
+      <h3>${entry.title || "Verigă neidentificată"} ${missingStatusChip(entry.status)}</h3>
+      <dl class="register-facts">
+        <dt>De ce ajută</dt><dd>${entry.why || "–"}</dd>
+        <dt>Ce trebuie</dt><dd>${entry.need || "–"}</dd>
+        <dt>Ce avem</dt><dd>${values.length ? values.map(([key, value]) => `<span><b>${key.replaceAll("_", " ")}:</b> ${registerValue(value)}</span>`).join("") : "nimic comparabil încă"}</dd>
+        <dt>Ce lipsește</dt><dd>${entry.gap || "–"}</dd>
+        <dt>Surse verificate</dt><dd>${sources.length ? sources.map((source) => `<a href="${source.url}" target="_blank" rel="noopener">${source.label || source.url}</a>${source.coverage ? `<small>${source.coverage}</small>` : ""}`).join("") : "nicio adresă publică stabilă"}</dd>
+      </dl>
+    </article>`;
+  }).join("")}</div>`;
+  pill("Date lipsă", "ok");
 }
 
 /* ---------------------------------------------------------------- main -- */
@@ -1818,7 +1915,7 @@ const safeRun = (fn) => {
 
 async function refreshData() {
   [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
-   renderBilantApa, renderMvMChart, renderIstoric].forEach(safeRun);
+   renderBilantApa, renderMvMChart, renderIstoric, renderMissingData].forEach(safeRun);
 
   const [ovR, afdjR, hidmetR, portalR, hydroinfoR, danubehisR] = await Promise.allSettled([
     jget("/api/overview"), jget("/api/afdj"), jget("/api/hidmet"),

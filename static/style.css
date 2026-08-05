@@ -100,6 +100,13 @@ header.site h1 .thin { color: var(--muted); font-weight: 400; }
 .view-toc:empty { display: none; }
 [hidden] { display: none !important; }
 
+.missing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.missing-card h3 { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.register-facts { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 9px 14px; margin: 16px 0 0; }
+.register-facts dt { color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.register-facts dd { margin: 0; color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
+.register-facts dd > span, .register-facts dd > a, .register-facts dd > small { display: block; margin-bottom: 4px; }
+
 /* ------------------------------------------------------------ sections */
 section { margin-top: 44px; scroll-margin-top: 110px; }
 .eyebrow {
@@ -448,10 +455,11 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; }
-  .grid-2, .grid-3, .tributary-grid { grid-template-columns: 1fr; }
+  .grid-2, .grid-3, .tributary-grid, .missing-grid { grid-template-columns: 1fr; }
   .hero-num .value { font-size: 46px; }
   .view-nav { align-items: flex-start; flex-direction: column; gap: 4px; }
   .view-nav-links { width: 100%; }
+  .register-facts { grid-template-columns: 1fr; gap: 3px; }
 }
 
 @media (max-width: 640px) {

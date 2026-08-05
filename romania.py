@@ -709,7 +709,8 @@ def _tributary_model_context(source, generated_on):
 
 def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                  tributaries=None, tributary_observations=None,
-                 tributary_model_climatology=None):
+                 tributary_model_climatology=None, water_resources=None,
+                 sen_history=None):
     generated_on = date.fromisoformat(
         as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
@@ -725,6 +726,14 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         tributary_model_climatology, generated_on)
     tributary_context["observed_sections"] = tributary_observed
     tributary_context["model_climatology"] = tributary_model
+    water_resources = water_resources if isinstance(water_resources, dict) else {
+        "available": False, "current": False,
+        "reason": "contextul ANAR nu a fost disponibil",
+    }
+    sen_history = sen_history if isinstance(sen_history, dict) else {
+        "available": False, "enough_for_comparison": False,
+        "days": 0, "minimum_days": 14,
+    }
 
     measured = _number(inhga.get("debit_bazias_m3s"))
     monthly_mean = _number(inhga.get("media_multianuala_m3s"))
@@ -815,6 +824,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                    for row in ro_precip],
         "inhga_selected_tributaries": tributary_context,
         "glofas_tributary_climatology": tributary_model,
+        "anar_water_resources": water_resources,
     }
     selected_count = tributary_context.get("selected_systems") or 0
     low_tributaries = tributary_context.get("systems_at_most_50pct") or []
@@ -856,10 +866,20 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     else:
         ro_status = "mixed"
         ro_text = "Semnalul de precipitații din România este mixt și nu susține o etichetă națională unică."
+    anar_current = bool(water_resources.get("available") and
+                        water_resources.get("current"))
+    anar_reservoirs = water_resources.get("reservoirs") or {}
+    anar_restrictions = water_resources.get("restrictions") or {}
+    if anar_current and (anar_reservoirs.get("sufficient_for_centralized_supply") is True
+                         or anar_restrictions.get("drinking_water") is False):
+        ro_text += (" ANAR raportează totodată volume suficiente pentru alimentarea "
+                    "centralizată și nicio restricție pentru apa populației; aceasta "
+                    "limitează eticheta de criză națională uniformă, fără a anula "
+                    "restricțiile sectoriale.")
     claims.append(_claim(
         "romania_scope", "Criză hidrologică în toată România?", ro_status, ro_text,
         rain_evidence,
-        "INHGA oferă prognoze în benzi; DanubeHIS aduce numai cinci secțiuni măsurate parțiale; percentilele afluenților sunt GloFAS față de istoricul propriului model, nu climatologie măsurată; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
+        "INHGA oferă prognoze în benzi; DanubeHIS aduce numai cinci secțiuni măsurate parțiale; percentilele afluenților sunt GloFAS față de istoricul propriului model, nu climatologie măsurată; ERA5 rămâne reanaliză în patru puncte-proxy; ANAR este context oficial, nu serie zilnică omogenă."))
 
     snn_status = snn.get("data", snn) if snn else {}
     snn_stale = bool(snn.get("stale")) if snn and "data" in snn else False
@@ -886,6 +906,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "imports_share_consumption_pct": (round(100 * imports / consumption, 1)
                                            if imports is not None and imports > 0 and consumption else None),
         "hydro_mw": _number(sen.get("hidro_mw")),
+        "history": sen_history,
     }
     stopped_for_water = (snn_status.get("status_available")
                          and snn_status.get("status_fresh")
@@ -916,10 +937,16 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         crisis_text = "Nu apare acum o pierdere nucleară; o criză energetică produsă de Cernavodă nu este susținută."
     else:
         crisis_text = "Criticitatea energetică națională nu poate fi evaluată din fotografia SEN disponibilă."
+    history_days = int(sen_history.get("days") or 0)
+    history_minimum = int(sen_history.get("minimum_days") or 14)
+    history_limit = ("Istoricul local are "
+                     f"{history_days}/{history_minimum} zile și încă nu este folosit comparativ. "
+                     if not sen_history.get("enough_for_comparison") else
+                     f"Istoricul local are {history_days} zile, dar fotografiile nu sunt medii zilnice. ")
     claims.append(_claim(
         "national_energy_crisis", "Criză energetică națională critică?", "not_demonstrated",
         crisis_text, energy_evidence,
-        "Lipsesc comparațiile istorice pentru cerere, importuri, rezerve, prețuri și eventuale măsuri de urgență; un instantaneu SEN nu este un test de criză."))
+        history_limit + "Lipsesc încă rezervele, prețurile și eventualele măsuri de urgență; un instantaneu SEN nu este un test de criză."))
 
     physical_confirmed = claims[0]["status"] == "confirmed"
     cne_confirmed = cne_status == "confirmed"
@@ -938,6 +965,31 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     parameter_transparency = _parameter_transparency(
         cern, cern_gauge, measured, monthly_mean, nuclear, snn_status)
     current_intake_level = _number(snn_status.get("intake_basin_level_mdmb"))
+
+    missing = []
+    reservoir_complete = (anar_current and
+                          anar_reservoirs.get("fill_pct") is not None and
+                          anar_reservoirs.get("volume_billion_m3") is not None)
+    if not reservoir_complete:
+        if anar_current:
+            missing.append(
+                "ANAR oferă context curent despre acumulări și restricții, dar nu publică în comunicatul ingerat simultan coeficientul de umplere și volumul util național")
+        else:
+            missing.append(
+                "gradul curent de umplere și volumele utile ale acumulărilor, într-o serie națională comparabilă")
+    missing.append(
+        "debite măsurate aproape de confluență pentru toate cele nouă sisteme; cele cinci secțiuni DanubeHIS integrate au acoperire parțială")
+    missing.append(
+        "umiditate a solului și secetă agricolă validate spațial pentru România")
+    if not sen_history.get("enough_for_comparison"):
+        missing.append(
+            f"istoric SEN comparabil: arhiva locală acumulează {history_days}/{history_minimum} zile; rezervele și prețurile rămân neintegrate")
+    else:
+        missing.append(
+            "rezerve SEN, prețuri și măsuri de urgență comparabile cu istoricul deja acumulat")
+    if not parameter_transparency.get("decision_reproducible"):
+        missing.append(
+            "nivelul bazinului de aspirație CNE, aceeași cotă de referință și pragurile operaționale curente")
 
     return {
         "generated": generated_on.isoformat(),
@@ -971,14 +1023,9 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
             "parameter_transparency": parameter_transparency,
         },
         "energy": energy_evidence,
+        "water_resources": water_resources,
         "romanian_tributaries": tributary_context,
-        "missing_for_national_verdict": [
-            "gradul curent de umplere și volumele utile ale acumulărilor, într-o serie națională comparabilă",
-            "debite măsurate aproape de confluență pentru toate cele nouă sisteme; cele cinci secțiuni DanubeHIS integrate au acoperire parțială",
-            "umiditate a solului și secetă agricolă validate spațial pentru România",
-            "serii SEN pentru cerere, importuri, rezerve și prețuri înainte și după oprirea unității",
-            "nivelul bazinului de aspirație CNE, aceeași cotă de referință și pragurile operaționale curente",
-        ],
+        "missing_for_national_verdict": missing,
         "method": ("Reguli deterministe; nicio afirmație despre cauză sau criticitate nu este "
                    "dedusă dintr-o singură valoare și nicio analiză AI nu rulează."),
     }

@@ -120,6 +120,27 @@ def history_status():
     return out
 
 
+def history_snapshots(source):
+    """Returnează fotografiile zilnice locale, ordonate și fără a le
+    confunda cu o arhivă oficială completă."""
+    prefix = f"hist:{source}:"
+    with _db_lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT key, payload FROM cache WHERE key LIKE ? ORDER BY key",
+            (prefix + "%",),
+        ).fetchall()
+    out = []
+    for key, payload in rows:
+        stamp = key[len(prefix):]
+        try:
+            date.fromisoformat(stamp)
+            data = json.loads(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        out.append({"date": stamp, "data": data})
+    return out
+
+
 def cached(key, ttl, fetch_fn, stale_ok=True):
     """Returnează din cache dacă e proaspăt; altfel refetch. La eroare de
     rețea servește versiunea veche (stale) dacă există, cu marcaj.
@@ -1688,6 +1709,158 @@ def danubeportal_avize():
         return {"active": len(out), "pe_tari": pe_tari, "avize": out[:60]}
 
     return cached("avize", 3 * 3600, fetch)
+# ------------------- ANAR: acumulări, restricții și resurse de apă --------
+
+ANAR_POSTS_URL = "https://rowater.ro/wp-json/wp/v2/posts"
+ANAR_MANAGEMENT_URL = ("https://rowater.ro/activitatea-institutiei/"
+                       "departamente/managementul-situatiilor-de-urgenta/")
+ANAR_LOOKBACK_DAYS = 120
+ANAR_CURRENT_MAX_AGE_DAYS = 14
+
+
+def _normal_text(value):
+    value = unicodedata.normalize("NFKD", value or "")
+    return "".join(c for c in value if not unicodedata.combining(c)).lower()
+
+
+def _anar_number(pattern, text):
+    match = re.search(pattern, text, re.I)
+    return _num(match.group(1)) if match else None
+
+
+def _parse_anar_water_resources_posts(posts, today=None):
+    """Alege ultimul comunicat național relevant și extrage numai afirmații
+    explicite. Absența unei cifre rămâne ``None``; nu o completăm dintr-un
+    comunicat mai vechi."""
+    today = today or date.today()
+    candidates = []
+    for post in posts or []:
+        rendered = ((post.get("content") or {}).get("rendered") or "")
+        title = ((post.get("title") or {}).get("rendered") or "")
+        text = re.sub(r"\s+", " ", _strip_tags(rendered)).strip()
+        normalized = _normal_text(f"{title} {text}")
+        score = 0
+        for phrase, points in (
+            ("principalele 40 de lacuri", 6), ("40 de lacuri", 4),
+            ("coeficientul de umplere", 5), ("rezervele de apa", 3),
+            ("restrictii", 2), ("debitul minim necesar", 2),
+            ("cernavoda", 2), ("dunarii", 1),
+        ):
+            if phrase in normalized:
+                score += points
+        # Avertizările punctuale și materialele fără resurse naționale nu sunt
+        # transformate într-o situație a țării doar fiindcă menționează apa.
+        national = ("40 de lacuri" in normalized or
+                    "la nivel national" in normalized or
+                    ("dunarii" in normalized and "restrictii" in normalized))
+        if score < 4 or not national:
+            continue
+        try:
+            published = date.fromisoformat((post.get("date") or "")[:10])
+        except ValueError:
+            continue
+        candidates.append((published, score, post, text, normalized))
+
+    if not candidates:
+        return {
+            "available": False, "current": False,
+            "reason": "nu a fost identificat un comunicat ANAR național relevant în fereastra verificată",
+            "source_url": ANAR_MANAGEMENT_URL,
+        }
+
+    published, _, post, text, normalized = max(candidates,
+                                                key=lambda item: (item[0], item[1]))
+    age = max(0, (today - published).days)
+    fill_pct = _anar_number(
+        r"coeficient(?:ul)?\s+de\s+umplere.{0,140}?([\d]+(?:[.,]\d+)?)\s*%", text)
+    volume_billion_m3 = _anar_number(
+        r"([\d.,]+)\s*(?:miliarde|mld\.?)[^\n.]{0,20}(?:m[³3]|mc)", text)
+    reservoir_count = _anar_number(
+        r"(?:principalele\s+)?(\d+)\s+de\s+lacuri", text)
+    sections_below_minimum = _anar_number(
+        r"(?:in|în)\s+(\d+)\s+(?:dintre\s+acestea\s+)?(?:de\s+)?sec(?:t|ț)iuni[^.]{0,100}"
+        r"(?:sub|debit(?:e)?\s+sub)\s+(?:cel\s+)?minim", text)
+
+    drinking_restrictions = None
+    if re.search(r"nu\s+sunt\s+impuse\s+restric.{0,80}alimentarea\s+cu\s+ap.{0,30}popula", normalized):
+        drinking_restrictions = False
+    elif re.search(r"restrict.{0,80}alimentarea\s+cu\s+ap.{0,30}popula", normalized):
+        drinking_restrictions = True
+
+    reservoirs_sufficient = None
+    if re.search(r"volum(?:ul)?\s+de\s+ap.{0,100}suficient", normalized):
+        reservoirs_sufficient = True
+    elif re.search(r"rezerve(?:le)?\s+de\s+ap.{0,80}(?:insuficient|in scadere)", normalized):
+        reservoirs_sufficient = False
+
+    restrictions = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        norm_sentence = _normal_text(sentence)
+        if ("restrict" in norm_sentence and
+                any(term in norm_sentence for term in
+                    ("irig", "alimentarea cu apa", "folosinte", "sectorul"))):
+            restrictions.append(sentence.strip())
+
+    current = age <= ANAR_CURRENT_MAX_AGE_DAYS
+    return {
+        "available": True,
+        "current": current,
+        "status": "current_context" if current else "historical_only",
+        "published": published.isoformat(),
+        "age_days": age,
+        "title": html_lib.unescape(((post.get("title") or {}).get("rendered") or "")),
+        "url": post.get("link"),
+        "provider": "Administrația Națională Apele Române (ANAR)",
+        "reservoirs": {
+            "count": int(reservoir_count) if reservoir_count is not None else None,
+            "fill_pct": fill_pct,
+            "volume_billion_m3": volume_billion_m3,
+            "sufficient_for_centralized_supply": reservoirs_sufficient,
+        },
+        "restrictions": {
+            "drinking_water": drinking_restrictions,
+            "official_statements": restrictions[:4],
+            "sections_below_minimum": (int(sections_below_minimum)
+                                       if sections_below_minimum is not None else None),
+        },
+        "quantitative_complete": (fill_pct is not None and
+                                  volume_billion_m3 is not None),
+        "scope": "comunicat național ANAR; nu este o serie zilnică omogenă",
+        "limit": ("Valorile sunt folosite drept stare curentă numai maximum "
+                  f"{ANAR_CURRENT_MAX_AGE_DAYS} zile. Câmpurile nepublicate rămân lipsă."),
+        "management_page_url": ANAR_MANAGEMENT_URL,
+    }
+
+
+def anar_water_resources():
+    def fetch():
+        start = (date.today() - timedelta(days=ANAR_LOOKBACK_DAYS)).isoformat()
+        query = urllib.parse.urlencode({
+            "after": f"{start}T00:00:00", "per_page": 100,
+            "orderby": "date", "order": "desc",
+            "_fields": "id,date,link,title,content",
+        })
+        posts = http_json(f"{ANAR_POSTS_URL}?{query}", timeout=45)
+        parsed = _parse_anar_water_resources_posts(posts)
+        if not parsed.get("available"):
+            raise RuntimeError(parsed.get("reason") or "comunicat ANAR relevant negăsit")
+        daily_snapshot("anar_resources", parsed)
+        return parsed
+
+    result = cached("anar:water-resources:v1", 3 * 3600, fetch)
+    data = dict(result["data"])
+    try:
+        age = max(0, (date.today() - date.fromisoformat(data["published"])).days)
+    except (KeyError, TypeError, ValueError):
+        age = None
+    data["age_days"] = age
+    data["current"] = age is not None and age <= ANAR_CURRENT_MAX_AGE_DAYS
+    data["status"] = "current_context" if data["current"] else "historical_only"
+    data["delivery_stale"] = bool(result.get("stale"))
+    result["data"] = data
+    return result
+
+
 # Starea Sistemului Energetic Național, JSON public, fără cont.
 
 SEN_URL = "https://www.transelectrica.ro/sen-filter"
@@ -1720,6 +1893,55 @@ def sen_live():
         return out
 
     return cached("sen", 300, fetch)
+
+
+SEN_DAILY_REPORTS_URL = "https://www.transelectrica.ro/web/tel/rapoarte-zilnice"
+SEN_DAMAS_REPORTS_URL = ("https://newmarkets.transelectrica.ro/uu-webkit-maing02/"
+                         "00121011300000000000000000000100/publicReports")
+
+
+def sen_history_context(min_days=14):
+    """Contextul istoric auto-acumulat din același endpoint SEN.
+
+    Nu îl numim climatologie și nu îl folosim pentru comparații până când nu
+    există suficiente zile distincte. Sursele oficiale de backfill sunt
+    publicate ca legături, dar interfața DAMAS nu este încă ingerată automat.
+    """
+    snapshots = history_snapshots("sen")
+    rows = [{"date": item["date"], **(item["data"] or {})} for item in snapshots]
+    enough = len(rows) >= min_days
+
+    def series(name):
+        return [float(row[name]) for row in rows
+                if isinstance(row.get(name), (int, float))]
+
+    metrics = {}
+    for name in ("consum_mw", "productie_mw", "sold_mw", "hidro_mw", "nuclear_mw"):
+        values = series(name)
+        metrics[name] = {
+            "samples": len(values),
+            "median": round(median(values), 1) if values else None,
+            "min": round(min(values), 1) if values else None,
+            "max": round(max(values), 1) if values else None,
+        }
+    return {
+        "available": bool(rows),
+        "enough_for_comparison": enough,
+        "days": len(rows),
+        "minimum_days": min_days,
+        "from": rows[0]["date"] if rows else None,
+        "to": rows[-1]["date"] if rows else None,
+        "metrics": metrics,
+        "sources": [
+            {"label": "Transelectrica — Rapoarte zilnice", "url": SEN_DAILY_REPORTS_URL,
+             "coverage": "arhivă până la 30.06.2024"},
+            {"label": "Transelectrica DAMAS II — Public Reports", "url": SEN_DAMAS_REPORTS_URL,
+             "coverage": "date publice de la 01.07.2024"},
+        ],
+        "method": "o fotografie locală pe zi din endpointul SEN live",
+        "limit": ("Comparația este dezactivată până la minimum "
+                  f"{min_days} zile; nu este o arhivă oficială completă și nu include încă rezerve sau prețuri."),
+    }
 
 
 # ------------------------- CNE Cernavodă: rapoarte curente oficiale SNN ----
@@ -2525,6 +2747,11 @@ EVIDENCE_SOURCES = {
     "inhga_tributaries": {"provider": "INHGA", "kind": "prognoza_oficiala",
                            "family": "inhga_monthly_basin_forecast",
                            "mode": "active_context"},
+    "anar_resources": {"provider": "Administrația Națională Apele Române",
+                         "kind": "comunicat_oficial_structurat",
+                         "family": "anar_national_water_resources",
+                         "mode": "active_context",
+                         "url": ANAR_MANAGEMENT_URL},
     "afdj": {"provider": "AFDJ", "kind": "masurat",
              "family": "gauge_ro_afdj", "mode": "active"},
     "rhmz": {"provider": "RHMZ Serbia", "kind": "masurat",
@@ -2567,6 +2794,12 @@ EVIDENCE_SOURCES = {
                   "family": "sentinel1_soil_moisture", "mode": "active_context"},
     "grace": {"provider": "GRACE/GRACE-FO, SAGSA/Theia", "kind": "masurat_orbita",
               "family": "grace_gravimetry", "mode": "active_lagged"},
+    "sen": {"provider": "Transelectrica", "kind": "masurat_sistem_energetic",
+             "family": "transelectrica_sen", "mode": "active",
+             "url": SEN_URL},
+    "sen_history_local": {"provider": "Transelectrica", "kind": "istoric_auto_acumulat",
+                           "family": "transelectrica_sen", "mode": "accumulating",
+                           "url": SEN_DAMAS_REPORTS_URL},
     "swot_direct": {"provider": "NASA/JPL PO.DAAC", "kind": "produs_satelit",
                     "family": "swot_karin_riversp", "mode": "catalog_only_free_account"},
     "smap": {"provider": "NASA NSIDC", "kind": "produs_satelit",
@@ -2595,6 +2828,9 @@ EVIDENCE_SOURCES = {
 EVIDENCE_DEPENDENCIES = [
     {"members": ["inhga", "inhga_tributaries", "danubehis_ro_tributaries"],
      "relationship": "același furnizor național NIHWM/INHGA; produse și căi diferite, nu confirmări instituționale independente",
+     "count_as": 1},
+    {"members": ["sen", "sen_history_local"],
+     "relationship": "aceeași familie Transelectrica; istoricul local acumulează endpointul live și nu este o confirmare independentă",
      "count_as": 1},
     {"members": ["hydroinfo", "danubehis"],
      "relationship": "aceleași măsurători OVF, două căi de livrare",

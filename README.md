@@ -43,6 +43,17 @@ de propria referință multidecenală efectiv returnată de sursă (fereastră
 calendaristică ±7 zile); intervalul real este afișat, nu presupus din cerere.
 Percentila nu este atribuită măsurătorii DanubeHIS și diferența absolută dintre
 model și observație nu este tratată automat drept anomalie.
+Contextul național despre acumulări și restricții este preluat din ultimul
+comunicat relevant ANAR. El expiră automat după 14 zile și nu completează din
+comunicate vechi un coeficient sau un volum nepublicat. Pentru energie,
+aplicația păstrează o fotografie SEN pe zi și activează comparația locală numai
+după minimum 14 zile distincte; aceste fotografii nu sunt medii zilnice și nu
+înlocuiesc rezervele sau prețurile DAMAS II.
+
+Vederea `/date-lipsa` este registrul auto-actualizat al verigilor care ar putea
+schimba concluzia: ce valoare este necesară, de ce ajută, ce există deja, ce
+lipsește și ce surse oficiale au fost verificate. Un catalog de satelit sau un
+link identificat rămâne separat de o observație efectiv ingerată.
 
 ## Pornire
 
@@ -109,12 +120,14 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [OVF Hydroinfo](https://www.hydroinfo.hu/tables/eng/dunhif.html) (Ungaria) | nivel/debit pe Dunăre, inclusiv Budapesta și Mohács | zilnic | măsurat, oficial |
 | [ICPDR DanubeHIS](https://www.danubehis.org/time-series/stations/Q?country=HU&river=Danube) | valori curente normalizate; fallback și control al căii de livrare OVF | aproape în timp real | măsurat, același furnizor ca Hydroinfo |
 | [ICPDR DanubeHIS — România](https://www.danubehis.org/time-series/stations/Q?country=RO) | serii Q publice NIHWM pentru secțiuni pe Jiu, Olt, Vedea, Siret și Prut; statistici de la 1 ianuarie și pentru luna curentă | zilnic, cu întârzieri pe stație | măsurat brut, neverificat; acoperire parțială |
+| [ANAR — resurse de apă](https://rowater.ro/activitatea-institutiei/departamente/managementul-situatiilor-de-urgenta/) | ultimul context național relevant despre acumulări, restricții și secțiuni sub minim | la comunicat | oficial; câmpurile nepublicate rămân lipsă, stare curentă max. 14 zile |
 | GloFAS / [Open-Meteo flood API](https://open-meteo.com/en/docs/flood-api) (Copernicus) | debit zilnic în orice punct, arhivă din 1984 | zilnic | **model** |
 | ERA5 / [Open-Meteo archive](https://open-meteo.com/en/docs/historical-weather-api) (Copernicus) | precipitații și ninsoare zilnică, cu modelul fixat explicit la ERA5 pentru consistență multidecenală | zilnic | reanaliză |
 | [Copernicus EDO WMS](https://drought.emergency.copernicus.eu/data/wms-service) | hărți CDI și anomalie a umidității solului, decupate pe bazin | dekadal | model/observații compozite, doar context |
 | [ENTSO-E Transparency](https://transparency.entsoe.eu) (opțional) | producție pe unități ≥100 MW (PF I) | orar, cu întârziere | măsurat |
 | [DanubeSTREAM](https://www.danubeportal.com) (FAIRway) | mirele de navigație din toate țările riverane (~100 stații AT/SK/HU/RS/RO/BG) + cross-check automat cu AFDJ | cvasi-orar | măsurat |
 | [Transelectrica SEN](https://www.transelectrica.ro/sen-grafic) | producția pe surse (hidro, nuclear/CNE), linia Djerdap, sold | timp real | măsurat |
+| [Transelectrica — rapoarte zilnice / DAMAS II](https://newmarkets.transelectrica.ro/uu-webkit-maing02/00121011300000000000000000000100/publicReports) | destinațiile oficiale pentru consum, rezerve și rapoarte ale pieței; istoricul local SEN se acumulează separat | zilnic | identificat; comparația locală folosește fotografii, nu medii zilnice |
 | [SNN — rapoarte curente](https://nuclearelectrica.ro/ir/rapoarte-curente/) | starea oficială a unităților CNE și cauza declarată de operator | la eveniment | oficial; rezumat auditat și datat |
 | Comisia Dunării — [2003](https://www.danubecommission.org/uploads/doc/Library_scan/hydro_yearbooks/5.1.51_fr_ru_de.pdf), [2011](https://www.danubecommission.org/uploads/doc/2017/EG_Hydro_5_6_09_2017/yearbook_2011.pdf), [2015](https://www.danubecommission.org/uploads/doc/2021/yearbook_2015.pdf) + [AFDJ 2020–2025](https://www.danubecommission.org/uploads/doc/2026/20260305_EG_HYDRO/01_RO_AFDJ.pdf) | context măsurat la mira Cernavodă pentru episoadele 2003, 2011, 2015 și 2022 | istoric | rezumate factuale cu perioadă/pagină; fără redistribuirea tabelelor brute |
 | [hydroweb.next](https://hydroweb.next.theia-land.fr) (cheie în `data/keys/hydroweb.key`) | niveluri din altimetrie satelitară (Sentinel-3/6, SWOT) pe stații virtuale Dunăre, cu percentila proprie | la trecerea satelitului | măsurat din orbită |
@@ -142,7 +155,7 @@ clasice rămân o integrare locală opțională: uz necomercial, fără redistri
 fișierelor brute.
 
 Aplicația își construiește automat **arhiva locală**: un snapshot pe zi pentru
-AFDJ, RHMZ, Hydroinfo, DanubeHIS, DanubeSTREAM, SEN, HydroWeb, OPERA și buletinele INHGA
+AFDJ, RHMZ, Hydroinfo, DanubeHIS, DanubeSTREAM, SEN, ANAR, HydroWeb, OPERA și buletinele INHGA
 (`/api/istoric` arată stadiul).
 Cu fiecare zi de rulare, detectoarele capătă serie măsurată proprie.
 
@@ -227,4 +240,5 @@ cache.db         cache local (generat la rulare)
 `/api/glofas/recent?point=&days=` · `/api/glofas/years?point=&start=` ·
 `/api/precip?point=&start=` · `/api/delta` · `/api/entsoe` · `/api/points` ·
 `/api/anomalii` · `/api/romania` · `/api/inhga/serie?days=` ·
+`/api/anar/resurse-apa` · `/api/sen/istoric` · `/api/date-lipsa` ·
 `/api/statistici` (+`.csv` pentru export)

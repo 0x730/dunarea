@@ -25,7 +25,7 @@ from datetime import date
 import anomalii
 import connectors as C
 
-PROMPT_VERSION = 11
+PROMPT_VERSION = 12
 
 _lock_ai = threading.Lock()
 
@@ -49,6 +49,9 @@ Dicționarul câmpurilor:
 - prognoza_afluenti_inhga conține benzi de prognoză, nu valori măsurate;
 - statistici_afluenti_masurati conține observații instantanee brute în secțiuni parțiale; acestea nu sunt medii zilnice și nici aporturi totale în Dunăre.
 - climatologie_modelata_afluenti compară valoarea GloFAS exclusiv cu istoricul aceleiași celule și aceluiași model; percentila ei nu este percentila măsurătorii DanubeHIS.
+- context_resurse_apa_anar este un comunicat oficial structurat, nu o serie zilnică: folosește-l drept curent numai dacă current=true; un coeficient sau volum null rămâne nepublicat.
+- stare_sen este o fotografie instantanee Transelectrica; istoric_sen_local conține câte o fotografie locală pe zi, nu medii zilnice și nu o climatologie.
+- stare_cne_snn poate confirma starea și cauza declarată de operator; nu completează nivelul bazinului de aspirație sau pragurile operaționale dacă acestea lipsesc.
 
 Reguli stricte:
 1. Pentru starea monitorului și toate valorile numerice hidrologice folosește exclusiv JSON-ul. Nu inventa și nu completa din memorie valori, stații, date, ani sau procente. Spune explicit când lipsesc.
@@ -64,6 +67,7 @@ Reguli stricte:
 11. La Baziaș, reconciliere_bazias.valoare_oficiala_curenta este cifra canonică a monitorului pentru starea curentă. reper_modelat_climatologic este debitul simulat într-o celulă GloFAS de aproximativ 5 km, nu o a doua măsurătoare și nu trebuie să egaleze valoarea INHGA. Folosește GloFAS față de propria climatologie. O diferență absolută compatibilă cu biasul istoric nu este „contradicție”; numește ruptură numai schimbarea relației pe perechi cu aceeași dată, susținută de test.
 12. Pentru afluenții românești, separă prognoza_afluenti_inhga, statistici_afluenti_masurati și climatologie_modelata_afluenti. Cele cinci secțiuni măsurate au acoperire parțială în bazin și valori instantanee brute: nu se însumează, nu se integrează în km³ și nu estimează aportul total al României în Dunăre. Comparația măsurată cu aceeași fereastră din anul anterior descrie un singur an, nu climatologia. GloFAS poate clasifica raritatea numai în propriul model; diferența absolută măsurat/model poate fi bias local și nu transferă percentila modelului asupra măsurătorii.
 13. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
+14. Pentru concluzii despre România și criticitatea energetică, confruntă context_resurse_apa_anar, stare_cne_snn, stare_sen și istoric_sen_local. Lipsa restricțiilor pentru apa populației nu anulează restricțiile sectoriale; o oprire CNE nu dovedește singură o criză SEN; un istoric local sub minimum_days sau cu enough_for_comparison=false nu poate susține comparații.
 
 Răspunsul trebuie să aibă exact aceste șase titluri, în română. Țintește 500–550 de cuvinte și nu depăși 600; rezervă spațiu pentru toate secțiunile înainte de a detalia:
 SITUAȚIA
@@ -183,6 +187,10 @@ def _digest():
         "statistici_afluenti_masurati": _safe_context(C.danubehis_romanian_tributaries),
         "climatologie_modelata_afluenti": _safe_context(
             C.glofas_romanian_tributary_climatology),
+        "context_resurse_apa_anar": _safe_context(C.anar_water_resources),
+        "stare_cne_snn": _safe_context(C.snn_cernavoda_status),
+        "stare_sen": _safe_context(C.sen_live),
+        "istoric_sen_local": _safe_context(C.sen_history_context),
         "registru_provenienta": C.evidence_source_registry(),
         "context_seceta_copernicus_edo": _safe_context(C.edo_status),
         "context_suprafata_apa_opera": _safe_context(C.opera_surface_status),
@@ -201,6 +209,9 @@ def _amprenta_stare():
         return None if not value or value.get("insuficient") else abs(value.get("z", 0)) <= prag
 
     inhga = _inhga()
+    anar_context = _safe_context(C.anar_water_resources).get("date") or {}
+    snn_context = _safe_context(C.snn_cernavoda_status).get("date") or {}
+    sen_history = C.sen_history_context()
     debit, medie = inhga.get("debit_bazias_m3s"), inhga.get("media_multianuala_m3s")
     normal = (bi.get("bazias") or {}).get("normal_km3")
     lipsa = (bi.get("bazias") or {}).get("lipsa_km3")
@@ -225,6 +236,18 @@ def _amprenta_stare():
         "bilant_gaura_pct5": round(100 * lipsa / normal / 5) if normal and lipsa is not None else None,
         "grace_luna": (bi.get("grace") or {}).get("luna"),
         "inhga_pct10": round(10 * debit / medie) if debit and medie else None,
+        "anar": {
+            "published": anar_context.get("published"),
+            "current": anar_context.get("current"),
+            "fill_pct": (anar_context.get("reservoirs") or {}).get("fill_pct"),
+            "drinking_restrictions": (anar_context.get("restrictions") or {}).get("drinking_water"),
+        },
+        "cernavoda_snn": {
+            "date": snn_context.get("date"), "u1": snn_context.get("u1"),
+            "u2": snn_context.get("u2"), "water_related": snn_context.get("water_related"),
+            "needs_review": snn_context.get("needs_review"),
+        },
+        "sen_history_ready": bool(sen_history.get("enough_for_comparison")),
     }
     fp = hashlib.sha256(json.dumps(parti, sort_keys=True).encode()).hexdigest()[:16]
     return parti, fp

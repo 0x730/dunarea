@@ -25,6 +25,7 @@
     <a href="/integritate" data-view-link="integritate">Verificări &amp; surse</a>
     <a href="/sectoare" data-view-link="sectoare">Porțile de Fier &amp; Delta</a>
     <a href="/optiuni" data-view-link="actiuni">Opțiuni</a>
+    <a href="/date-lipsa" data-view-link="lipsa">Date lipsă</a>
   </div>
 </nav>
 <nav id="view-toc" class="view-toc" aria-label="În această vedere"></nav>
@@ -103,6 +104,18 @@
   </div>
 </section>
 
+<!-- ============================================== registrul datelor lipsă -->
+<section id="sec-missing-register" data-view="lipsa">
+  <p class="eyebrow">registru public · auto-actualizat</p>
+  <h2>Date care ar ajuta, dar nu sunt încă disponibile comparabil</h2>
+  <p class="section-note">Aici separăm o verigă lipsă de o sursă doar identificată.
+    Un link, un catalog de satelit sau un prag istoric nu devine automat observație
+    curentă. Registrul se recompune din starea reală a conectorilor.</p>
+  <div class="card" id="missing-summary"><div class="loading">se verifică acoperirea…</div></div>
+  <div style="height:22px"></div>
+  <div id="missing-register"><div class="loading">se inventariază sursele oficiale verificate…</div></div>
+</section>
+
 <section id="sec-romania-energie" data-view="romania">
   <p class="eyebrow">impactul în sistem</p>
   <h2>O unitate oprită nu este automat o criză energetică națională</h2>
@@ -137,6 +150,11 @@
       Selecția evită o hartă a tuturor râurilor țării și nu numără din nou
       sistemele care ajung prin Tisa înainte de Baziaș.</p>
     <div id="ro-tributaries"><div class="loading">se verifică seriile măsurate și ultimul buletin lunar…</div></div>
+  </div>
+  <div style="height:22px"></div>
+  <div class="card">
+    <h3>Acumulări și restricții <span class="prov prov-masurat">ANAR · context oficial</span></h3>
+    <div id="ro-water-resources"><div class="loading">se caută ultimul comunicat național relevant…</div></div>
   </div>
   <div style="height:22px"></div>
   <div class="grid-2">

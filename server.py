@@ -239,6 +239,15 @@ def api_sen(q):
     return {**r["data"], "stale": r["stale"]}
 
 
+def api_sen_history(q):
+    return C.sen_history_context()
+
+
+def api_anar_resources(q):
+    r = C.anar_water_resources()
+    return {**r["data"], "stale": r["stale"]}
+
+
 def api_romania(q):
     """Testul de proporționalitate, recompus din sursele curente."""
     def optional(fetch, fallback):
@@ -267,6 +276,14 @@ def api_romania(q):
                 "reason": "climatologia GloFAS a afluenților nu a putut fi verificată",
             })
         sen = optional(lambda: C.sen_live()["data"], {})
+        sen_history = optional(C.sen_history_context, {
+            "available": False, "enough_for_comparison": False,
+            "days": 0, "minimum_days": 14,
+        })
+        water_resources = optional(lambda: C.anar_water_resources()["data"], {
+            "available": False, "current": False,
+            "reason": "comunicatul național ANAR nu a putut fi verificat",
+        })
         snn = optional(C.snn_cernavoda_status, {
             "data": {"status_available": False, "needs_review": False,
                      "status_fresh": False,
@@ -276,13 +293,173 @@ def api_romania(q):
         return romania.build_report(stats, archive, afdj, inhga, sen, snn,
                                     tributaries=tributaries,
                                     tributary_observations=tributary_observations,
-                                    tributary_model_climatology=tributary_model_climatology)
+                                    tributary_model_climatology=tributary_model_climatology,
+                                    water_resources=water_resources,
+                                    sen_history=sen_history)
 
     # Versiunea cheii urmărește schema payloadului; schimbarea ei împiedică un
     # răspuns vechi din cache să mascheze câmpuri noi după repornire.
-    result = C.cached("romania_proportionality:v11", 5 * 60, build)
+    result = C.cached("romania_proportionality:v12", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
+
+
+def api_missing_data(q):
+    """Registru public al verigilor utile, disponibilității și căutărilor.
+
+    Este recompus din aceleași payloaduri ca verdictul România. Nu conține
+    tokenuri, instrucțiuni interne sau concluzii păstrate manual.
+    """
+    report = api_romania({})
+    water = report.get("water_resources") or {}
+    reservoirs = water.get("reservoirs") or {}
+    tributaries = report.get("romanian_tributaries") or {}
+    observed = tributaries.get("observed_sections") or {}
+    energy_history = (report.get("energy") or {}).get("history") or {}
+    transparency = ((report.get("cernavoda") or {})
+                    .get("parameter_transparency") or {})
+
+    try:
+        satellite = C.earthdata_satellite_catalog()["data"]
+    except Exception:
+        satellite = {"sources": {}, "download_configurat": False}
+    try:
+        land = C.copernicus_land_context()["data"]
+    except Exception:
+        land = {"straturi": {}}
+    grdc = C.grdc_series()
+    entsoe = C.entsoe_irongates()
+
+    reservoir_complete = (water.get("current") and
+                          reservoirs.get("fill_pct") is not None and
+                          reservoirs.get("volume_billion_m3") is not None)
+    reservoir_status = "available" if reservoir_complete else (
+        "partial" if water.get("current") else "missing")
+    sections_available = int(observed.get("sections_available") or
+                             len(observed.get("sections") or []))
+    systems_selected = int(tributaries.get("selected_systems") or 9)
+    decision_missing = [item for item in transparency.get("decision_parameters") or []
+                        if item.get("status") != "available"]
+    catalog_sources = satellite.get("sources") or {}
+    soil_catalog = [catalog_sources.get(key) for key in ("smap", "nisar")
+                    if catalog_sources.get(key)]
+    land_soil = (land.get("straturi") or {}).get("soil") or {}
+
+    entries = [
+        {
+            "id": "anar_reservoirs", "category": "România · resurse de apă",
+            "title": "Acumulări și restricții naționale",
+            "status": reservoir_status,
+            "need": "coeficient de umplere, volum util și restricții într-o serie națională datată",
+            "why": "separă un deficit al Dunării de o penurie uniformă a resurselor din România",
+            "what_we_have": ({
+                "published": water.get("published"), "age_days": water.get("age_days"),
+                "reservoir_count": reservoirs.get("count"),
+                "fill_pct": reservoirs.get("fill_pct"),
+                "volume_billion_m3": reservoirs.get("volume_billion_m3"),
+                "sufficient_for_centralized_supply": reservoirs.get("sufficient_for_centralized_supply"),
+                "drinking_water_restrictions": (water.get("restrictions") or {}).get("drinking_water"),
+            } if water.get("available") else None),
+            "gap": ("comunicatul curent este util calitativ, dar câmpurile numerice nepublicate rămân lipsă"
+                    if water.get("current") else
+                    "nu există în flux un comunicat național suficient de recent"),
+            "sources_checked": [
+                {"label": "ANAR — ultimul comunicat relevant", "url": water.get("url")},
+                {"label": "ANAR — Situația hidrologică lacuri", "url": C.ANAR_MANAGEMENT_URL},
+            ],
+        },
+        {
+            "id": "cernavoda_decision", "category": "Cernavodă · decizie tehnică",
+            "title": "Parametrii care declanșează reducerea sau oprirea",
+            "status": "available" if transparency.get("decision_reproducible") else "partial",
+            "need": "nivel bazin aspirație și praguri curente pe aceeași cotă de referință, plus condițiile hidraulice ale pompelor",
+            "why": "permite verificarea independentă a deciziei, nu doar confirmarea efectului publicat de operator",
+            "what_we_have": {
+                "public_signals": len([x for x in transparency.get("public_signals") or []
+                                       if x.get("value") is not None]),
+                "decision_reproducible": bool(transparency.get("decision_reproducible")),
+            },
+            "gap": "; ".join(item.get("name", "parametru neidentificat")
+                              for item in decision_missing),
+            "sources_checked": [
+                {"label": "SNN — rapoarte curente", "url": C.SNN_CURRENT_REPORTS_URL},
+                {"label": "SNN — praguri publicate în 2011",
+                 "url": (transparency.get("historical_2011") or {}).get("source", {}).get("url")},
+            ],
+        },
+        {
+            "id": "sen_history", "category": "Energie · proporționalitate",
+            "title": "Istoric SEN, rezerve și prețuri",
+            "status": ("partial" if energy_history.get("available") else "missing"),
+            "need": "cerere, import/export, producție, rezerve și prețuri înainte și după episod",
+            "why": "o unitate nucleară oprită este materială, dar nu dovedește singură o criză energetică națională",
+            "what_we_have": {
+                "local_days": energy_history.get("days", 0),
+                "minimum_days": energy_history.get("minimum_days", 14),
+                "enough_for_comparison": bool(energy_history.get("enough_for_comparison")),
+                "from": energy_history.get("from"), "to": energy_history.get("to"),
+            },
+            "gap": "fotografiile locale se acumulează automat; mediile zilnice, rezervele și prețurile DAMAS nu sunt încă ingerate",
+            "sources_checked": energy_history.get("sources") or [
+                {"label": "Transelectrica — Rapoarte zilnice", "url": C.SEN_DAILY_REPORTS_URL},
+                {"label": "Transelectrica — DAMAS II Public Reports", "url": C.SEN_DAMAS_REPORTS_URL},
+            ],
+        },
+        {
+            "id": "tributary_gauges", "category": "România · afluenți",
+            "title": "Debite măsurate aproape de confluențe",
+            "status": "available" if sections_available >= systems_selected else "partial",
+            "need": "debit măsurat comparabil pentru cele nouă sisteme selectate, cât mai aproape de Dunăre",
+            "why": "arată ce a intrat efectiv în sectorul românesc, separat de prognoză și model",
+            "what_we_have": {"measured_sections": sections_available,
+                             "selected_systems": systems_selected,
+                             "missing_systems": observed.get("missing_systems") or []},
+            "gap": observed.get("limit") or "secțiunile disponibile au acoperire parțială",
+            "sources_checked": [{"label": observed.get("provider") or "DanubeHIS / NIHWM",
+                                 "url": observed.get("source_url")}],
+        },
+        {
+            "id": "soil_moisture", "category": "Satelit · agricultură",
+            "title": "Umiditate a solului validată spațial",
+            "status": "partial" if land_soil.get("activ") else "missing",
+            "need": "valori spațiale și indicatori de calitate pentru România, nu doar existența unei granule sau o miniatură",
+            "why": "verifică dacă semnalul hidrologic se extinde la seceta agricolă și localizează contradicțiile",
+            "what_we_have": {
+                "copernicus_observation": land_soil.get("data"),
+                "copernicus_mode": "context_map" if land_soil.get("activ") else None,
+                "earthdata_catalogs": [item.get("title") for item in soil_catalog],
+                "downloads_configured": bool(satellite.get("download_configurat")),
+            },
+            "gap": "Copernicus Land este context vizual; SMAP și NISAR sunt doar catalogate până la configurarea și validarea fișierelor",
+            "sources_checked": [
+                {"label": "Copernicus Land / CDSE", "url": "https://land.copernicus.eu/en/products/soil-moisture"},
+                {"label": "NASA Earthdata CMR", "url": "https://cmr.earthdata.nasa.gov/search/"},
+            ],
+        },
+        {
+            "id": "optional_backfill", "category": "Istoric · verificare secundară",
+            "title": "GRDC, ENTSO-E și produse orbitale directe",
+            "status": "partial" if grdc.get("activ") or entsoe.get("activ") else "missing",
+            "need": "backfill măsurat sau operațional care aduce o familie de probă nouă",
+            "why": "poate calibra modelul și reconstrui episoade vechi, dar nu înlocuiește datele CNE lipsă",
+            "what_we_have": {"grdc_active": bool(grdc.get("activ")),
+                             "entsoe_active": bool(entsoe.get("activ")),
+                             "satellite_downloads_configured": bool(satellite.get("download_configurat"))},
+            "gap": "se activează numai după obținerea legală a exportului/tokenului și după un test de valoare informațională",
+            "sources_checked": [
+                {"label": "GRDC — portal date", "url": "https://portal.grdc.bafg.de"},
+                {"label": "ENTSO-E Transparency", "url": "https://transparency.entsoe.eu"},
+                {"label": "NASA Earthdata", "url": "https://search.earthdata.nasa.gov"},
+            ],
+        },
+    ]
+    counts = {status: sum(1 for item in entries if item["status"] == status)
+              for status in ("available", "partial", "missing")}
+    return {
+        "generated": date.today().isoformat(),
+        "entries": entries, "summary": counts,
+        "rule": "O sursă intră în verdict numai dacă aduce o valoare comparabilă, datată și cu proveniență; catalogul sau linkul singur nu este observație.",
+    }
 
 
 def api_danubeportal(q):
@@ -372,6 +549,9 @@ def api_raport(q):
                      ("catalog_sateliti", lambda: C.earthdata_satellite_catalog()["data"]),
                      ("registru_provenienta", C.evidence_source_registry),
                      ("sen", lambda: C.sen_live()["data"]),
+                     ("sen_istoric_local", C.sen_history_context),
+                     ("anar_resurse_apa", lambda: C.anar_water_resources()["data"]),
+                     ("date_lipsa", lambda: api_missing_data({})),
                      ("romania", lambda: api_romania({}))):
         try:
             out["sectiuni"][nume] = fn()
@@ -412,7 +592,10 @@ ROUTES = {
     "/api/statistici": api_statistici,
     "/api/statistici.csv": api_statistici_csv,
     "/api/sen": api_sen,
+    "/api/sen/istoric": api_sen_history,
+    "/api/anar/resurse-apa": api_anar_resources,
     "/api/romania": api_romania,
+    "/api/date-lipsa": api_missing_data,
     "/api/danubeportal": api_danubeportal,
     "/api/dahiti": api_dahiti,
     "/api/hydroweb": api_hydroweb,
@@ -447,7 +630,8 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
        "form-action 'none'; frame-ancestors 'none'")
 
-PAGE_PATHS = {"/", "/romania", "/bazin", "/integritate", "/sectoare", "/optiuni"}
+PAGE_PATHS = {"/", "/romania", "/bazin", "/integritate", "/sectoare", "/optiuni",
+              "/date-lipsa"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -536,6 +720,7 @@ def warmup():
     jobs = [C.pegelonline_stations, C.inhga_bulletin,
             C.inhga_danube_tributaries, C.danubehis_romanian_tributaries,
             C.glofas_romanian_tributary_climatology,
+            C.anar_water_resources,
             C.hidmet_report,
             C.hydroinfo_danube, C.danubehis_danube, C.edo_status,
             C.copernicus_land_context, C.earthdata_satellite_catalog]
@@ -572,6 +757,7 @@ def maintenance_watcher():
             C.inhga_bulletin()      # ține seria oficială la zi fără repornire
             C.inhga_danube_tributaries()
             C.danubehis_romanian_tributaries()
+            C.anar_water_resources()
             if n % 48 == 0:         # o dată pe zi: curățenie în cache
                 C.glofas_romanian_tributary_climatology()
                 C.cache_gc()
