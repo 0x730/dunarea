@@ -388,6 +388,8 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
     current_hydrology = []
     if _number((cern_gauge or {}).get("cota_cm")) is not None:
         current_hydrology.append(f"miră AFDJ {cern_gauge['cota_cm']} cm")
+    if _number((cern_gauge or {}).get("temp_apa_c")) is not None:
+        current_hydrology.append(f"apă la mira AFDJ {cern_gauge['temp_apa_c']}°C")
     if measured is not None:
         bazias = f"Baziaș {measured:g} m³/s"
         if monthly_mean:
@@ -423,16 +425,34 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
         })
 
     current_gauge_value = _number((cern_gauge or {}).get("cota_cm"))
+    current_water_temperature = _number((cern_gauge or {}).get("temp_apa_c"))
+    current_gauge_facts = []
+    if current_gauge_value is not None:
+        current_gauge_facts.append({
+            "label": "ultima citire", "value": current_gauge_value,
+            "unit": "cm", "date": (cern_gauge or {}).get("actualizat"),
+        })
+    if current_water_temperature is not None:
+        current_gauge_facts.append({
+            "label": "temperatura apei la miră", "value": current_water_temperature,
+            "unit": "°C", "date": (cern_gauge or {}).get("actualizat"),
+        })
+    gauge_forecast = [
+        {"hours": hours, "value_cm": value}
+        for hours in (24, 48, 72, 96, 120)
+        if (value := _number(((cern_gauge or {}).get("tendinte_cm") or {}).get(
+            f"{hours}h"))) is not None
+    ]
     current_gauge = {
         "available": current_gauge_value is not None,
         "station": "Cernavodă",
         "period": ((cern_gauge or {}).get("actualizat") or "data citirii indisponibilă"),
-        "facts": ([{"label": "ultima citire", "value": current_gauge_value,
-                    "unit": "cm", "date": (cern_gauge or {}).get("actualizat")}]
-                  if current_gauge_value is not None else []),
+        "facts": current_gauge_facts,
+        "forecast": gauge_forecast,
         "source": {"label": "AFDJ — cotele Dunării",
                    "url": AFDJ_CURRENT_LEVELS_URL},
-        "source_scope": "ultima cotă publicată în fluxul AFDJ; valoarea se schimbă odată cu sursa",
+        "source_scope": ("cota și temperatura sunt observații la miră; valorile +24…+120 h "
+                         "sunt prognoza AFDJ și se schimbă odată cu sursa"),
         "limit": GAUGE_CONTEXT_LIMIT,
     }
 
@@ -483,6 +503,23 @@ def _parameter_transparency(cern, cern_gauge, measured, monthly_mean,
             "unit": "cm",
             "context": (cern_gauge or {}).get("actualizat") or "dată indisponibilă",
             "what_it_proves": "nivelul la mira de navigație; nu se convertește aici în mdMB-ul bazinului",
+        },
+        {
+            "key": "cernavoda_water_temperature",
+            "label": "temperatura apei AFDJ Cernavodă",
+            "value": _number((cern_gauge or {}).get("temp_apa_c")),
+            "unit": "°C",
+            "context": (cern_gauge or {}).get("actualizat") or "dată indisponibilă",
+            "what_it_proves": ("context termic măsurat la mira AFDJ; nu este temperatura "
+                               "certificată în bazinul de aspirație CNE"),
+        },
+        {
+            "key": "cernavoda_gauge_forecast_120h",
+            "label": "prognoză cotă AFDJ +120 h",
+            "value": _number((((cern_gauge or {}).get("tendinte_cm") or {}).get("120h"))),
+            "unit": "cm",
+            "context": ("prognoză de nivel, nu observație și nu prag operațional CNE"),
+            "what_it_proves": "direcția proiectată la mira de navigație în următoarele cinci zile",
         },
         {
             "key": "cernavoda_model",
@@ -553,7 +590,49 @@ def _parameter_transparency(cern, cern_gauge, measured, monthly_mean,
     }
 
 
-def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
+def _tributary_context(source, generated_on):
+    """Selectează numai luna raportului, fără a relabela altă lună ca prezent."""
+    if not isinstance(source, dict) or not source.get("available"):
+        return {
+            "available": False,
+            "reason": (source or {}).get("reason", "prognoza lunară INHGA nu este disponibilă"),
+        }
+    wanted = generated_on.strftime("%Y-%m")
+    selected = next((item for item in (source.get("months") or [])
+                     if item.get("month") == wanted), None)
+    base = {key: value for key, value in source.items() if key != "months"}
+    if selected is None:
+        return {
+            **base,
+            "available": False,
+            "reason": f"ultimul buletin nu conține prognoza pentru {wanted}",
+            "forecast_month": None,
+            "horizon": [item.get("month") for item in (source.get("months") or [])],
+        }
+    basins = ((selected.get("upstream_cernavoda") or [])
+              + (selected.get("downstream_cernavoda") or []))
+    low = []
+    very_low = []
+    for basin in basins:
+        band = basin.get("band_pct") or {}
+        maximum = _number(band.get("max"))
+        if maximum is not None and maximum <= 50:
+            low.append(basin.get("id"))
+        if band.get("operator") == "lt" and maximum is not None and maximum <= 30:
+            very_low.append(basin.get("id"))
+    return {
+        **base,
+        "available": True,
+        "forecast_month": selected,
+        "horizon": [item.get("month") for item in (source.get("months") or [])],
+        "selected_systems": len(basins),
+        "systems_at_most_50pct": low,
+        "systems_explicit_below_30pct": very_low,
+    }
+
+
+def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
+                 tributaries=None):
     generated_on = date.fromisoformat(
         as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
@@ -562,6 +641,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
     model_as_of = _model_evidence_date(cern, archive, generated_on)
     hist = historical_cernavoda(archive, model_as_of)
     cern_gauge = _find_station(afdj, "cernavoda")
+    tributary_context = _tributary_context(tributaries, generated_on)
 
     measured = _number(inhga.get("debit_bazias_m3s"))
     monthly_mean = _number(inhga.get("media_multianuala_m3s"))
@@ -644,8 +724,25 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
                     "last90_percentile": (row.get("ultimele90") or {}).get("pct"),
                     "ytd_deviation_pct": (row.get("ian_azi") or {}).get("abatere_pct")}
                    for row in ro_precip],
+        "inhga_selected_tributaries": tributary_context,
     }
-    if len(ro_precip) < 3:
+    selected_count = tributary_context.get("selected_systems") or 0
+    low_tributaries = tributary_context.get("systems_at_most_50pct") or []
+    broad_low_forecast = (tributary_context.get("available") and selected_count > 0
+                          and len(low_tributaries) >= max(1, selected_count // 2 + 1))
+    if broad_low_forecast and len(dry90) >= 3:
+        ro_status = "supported_component"
+        ro_text = ("Prognoza INHGA indică regimuri reduse pe majoritatea sistemelor "
+                   "selectate care alimentează sectorul românesc al Dunării, iar ERA5 "
+                   "arată și deficit pluviometric larg. Este confirmată o componentă "
+                   "hidrologică extinsă, nu automat o criză uniformă în toată România.")
+    elif broad_low_forecast:
+        ro_status = "mixed"
+        ro_text = ("Prognoza INHGA indică regimuri reduse pe majoritatea afluenților "
+                   "selectați ai sectorului românesc al Dunării, dar punctele ERA5 nu "
+                   "arată un deficit pluviometric uniform. Semnalul este mai larg decât "
+                   "fluviul, fără a demonstra o criză în toată România.")
+    elif len(ro_precip) < 3:
         ro_status = "insufficient"
         ro_text = "Nu avem suficiente puncte-proxy pentru a evalua precipitațiile din România."
     elif len(dry90) >= 3:
@@ -661,7 +758,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
     claims.append(_claim(
         "romania_scope", "Criză hidrologică în toată România?", ro_status, ro_text,
         rain_evidence,
-        "ERA5 este reanaliză în patru puncte-proxy; lipsesc o sinteză curentă a acumulărilor, râurilor interioare și umidității solului."))
+        "INHGA oferă prognoze în benzi pentru afluenții selectați, nu debite măsurate; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
 
     snn_status = snn.get("data", snn) if snn else {}
     snn_stale = bool(snn.get("stale")) if snn and "data" in snn else False
@@ -748,6 +845,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
             "glofas_lag_days": ((generated_on - model_as_of).days
                                 if model_as_of is not None else None),
             "inhga": inhga.get("data_buletin"),
+            "inhga_tributaries": tributary_context.get("published"),
             "afdj": (cern_gauge or {}).get("actualizat"),
             "snn": snn_status.get("date"),
             "sen": sen.get("actualizat"),
@@ -770,9 +868,10 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None):
             "parameter_transparency": parameter_transparency,
         },
         "energy": energy_evidence,
+        "romanian_tributaries": tributary_context,
         "missing_for_national_verdict": [
             "gradul curent de umplere și volumele utile ale acumulărilor, într-o serie națională comparabilă",
-            "debite și restricții curente pe râurile interioare, agregate pe bazine",
+            "debite măsurate și restricții curente pe afluenții selectați; buletinul INHGA integrat este prognoză în benzi",
             "umiditate a solului și secetă agricolă validate spațial pentru România",
             "serii SEN pentru cerere, importuri, rezerve și prețuri înainte și după oprirea unității",
             "nivelul bazinului de aspirație CNE, aceeași cotă de referință și pragurile operaționale curente",

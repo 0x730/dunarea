@@ -85,8 +85,13 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn('id="ro-operational-history"', page)
         self.assertIn('id="ro-historical-thresholds"', page)
         self.assertIn('id="ro-parameter-coverage"', page)
+        self.assertIn('id="ro-tributaries"', page)
+        self.assertIn("gauge?.temp_apa_c", app)
+        self.assertIn("gauge?.tendinte_cm", app)
         self.assertNotIn("1.450 m³/s", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("-214 cm", page.split('data-view="romania"', 1)[1])
+        self.assertNotIn("27.5°C", page.split('data-view="romania"', 1)[1])
+        self.assertNotIn("-226 cm", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("U1 oprită", page.split('data-view="romania"', 1)[1])
 
 
@@ -154,6 +159,39 @@ class RomaniaProportionalityTests(unittest.TestCase):
         sen = {"nuclear_mw": 680, "hidro_mw": 1370, "sold_mw": 1900,
                "consum_mw": 6400, "actualizat": "26/8/4 23:00:00"}
         return afdj, inhga, sen
+
+    @staticmethod
+    def tributaries(month="2026-08", maximum=50):
+        def basin(identifier, label, relation):
+            return {
+                "id": identifier, "label": label, "relation": relation,
+                "band_pct": {"min": 30, "max": maximum, "operator": "range"},
+                "basis": "general_band", "official_clause": None,
+            }
+
+        upstream = [basin(identifier, label, "upstream_cernavoda")
+                    for identifier, label in (("nera", "Nera"), ("cerna", "Cerna"),
+                                              ("jiu", "Jiu"), ("olt", "Olt"),
+                                              ("vedea", "Vedea"), ("arges", "Argeș"))]
+        downstream = [basin(identifier, label, "downstream_cernavoda")
+                      for identifier, label in (("ialomita", "Ialomița"),
+                                                ("siret", "Siret"), ("prut", "Prut"))]
+        return {
+            "available": True,
+            "url": "https://www.hidro.ro/bulletin/monthly/",
+            "title": "Prognoza hidrologică lunară",
+            "published": "2026-07-31",
+            "scope": "afluenți selectați",
+            "limit": "prognoză, nu măsurătoare",
+            "months": [{
+                "month": month, "label": "august 2026",
+                "base_band_pct": {"min": 30, "max": maximum,
+                                  "operator": "range"},
+                "upstream_cernavoda": upstream,
+                "downstream_cernavoda": downstream,
+                "official_text": "Text oficial dinamic.",
+            }],
+        }
 
     def test_history_calls_current_rare_but_not_unprecedented(self):
         out = romania.historical_cernavoda(self.archive(), "2026-08-04")
@@ -290,6 +328,59 @@ class RomaniaProportionalityTests(unittest.TestCase):
         }])
         self.assertIn("se schimbă odată cu sursa", gauge["source_scope"])
         self.assertNotIn("-214", str(gauge))
+
+    def test_afdj_temperature_and_forecast_react_to_source_values(self):
+        afdj, inhga, sen = self.inputs()
+        afdj["statii"][0].update({
+            "cota_cm": -180,
+            "temp_apa_c": 24.3,
+            "tendinte_cm": {"24h": -181, "48h": -184, "72h": -188,
+                              "96h": -190, "120h": -193},
+            "actualizat": "2026-08-05T03:00:00+03:00",
+        })
+
+        out = romania.build_report(self.stats(), self.archive(), afdj, inhga,
+                                   sen, self.snn(), "2026-08-05")
+        gauge = out["cernavoda"]["operational_history"][-1]["gauge_context"]
+        signals = {item["key"]: item for item in
+                   out["cernavoda"]["parameter_transparency"]["public_signals"]}
+
+        self.assertEqual(gauge["facts"][1]["value"], 24.3)
+        self.assertEqual(gauge["forecast"], [
+            {"hours": 24, "value_cm": -181},
+            {"hours": 48, "value_cm": -184},
+            {"hours": 72, "value_cm": -188},
+            {"hours": 96, "value_cm": -190},
+            {"hours": 120, "value_cm": -193},
+        ])
+        self.assertEqual(signals["cernavoda_water_temperature"]["value"], 24.3)
+        self.assertEqual(signals["cernavoda_gauge_forecast_120h"]["value"], -193)
+        self.assertNotIn("27.5", str(gauge))
+        self.assertNotIn("-226", str(gauge))
+
+    def test_current_month_tributary_forecast_changes_national_context(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(
+            self.stats(ro_last90=50, ro_ytd=20), self.archive(), afdj, inhga,
+            sen, self.snn(), "2026-08-05", tributaries=self.tributaries())
+        claim = next(item for item in out["claims"] if item["key"] == "romania_scope")
+
+        self.assertEqual(claim["status"], "mixed")
+        self.assertEqual(out["romanian_tributaries"]["selected_systems"], 9)
+        self.assertEqual(len(out["romanian_tributaries"]["systems_at_most_50pct"]), 9)
+        self.assertIn("afluenților", claim["conclusion"])
+
+    def test_old_tributary_month_is_not_relabelled_as_current(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(
+            self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
+            "2026-08-05", tributaries=self.tributaries(month="2026-07"))
+        context = out["romanian_tributaries"]
+
+        self.assertFalse(context["available"])
+        self.assertIsNone(context["forecast_month"])
+        self.assertIn("2026-08", context["reason"])
+        self.assertEqual(context["horizon"], ["2026-07"])
 
     def test_day_rollover_keeps_previous_model_date_and_does_not_relabel_value(self):
         afdj, inhga, sen = self.inputs()
@@ -500,6 +591,67 @@ class ConnectorTests(unittest.TestCase):
         page = ("<p>Baziaș) a fost în scădere la ora 06.00, situându-se sub "
                 "media lunii, în jurul valorii de 1.234 m3/s.</p>")
         self.assertEqual(C._parse_inhga_html(page), 1234.0)
+
+    def test_inhga_monthly_listing_selects_latest_forecast_article(self):
+        listing = """
+          <article><h2 class="entry-title"><a href="https://example/august">
+            Prognoza hidrologică lunară pentru intervalul august-octombrie 2026
+          </a></h2></article>
+          <article><h2 class="entry-title"><a href="https://example/old">
+            Prognoza hidrologică lunară pentru intervalul iulie-septembrie 2026
+          </a></h2></article>
+        """
+
+        url, title = C._inhga_monthly_latest_url(listing)
+
+        self.assertEqual(url, "https://example/august")
+        self.assertIn("august-octombrie 2026", title)
+
+    def test_inhga_monthly_parser_scopes_only_selected_danube_tributaries(self):
+        page = """
+          <span class="entry-title">Prognoza hidrologică lunară august-octombrie 2026</span>
+          <span class="updated">2026-07-31T10:00:00+03:00</span>
+          <p>În luna august 2026 regimul hidrologic se va situa la valori cuprinse
+          între 30-50% din mediile lunare, mai mari (50-80%) pe Prahova și cursul
+          superior al Ialomiței și mai mici (sub 30%) pe cursul superior al Siretului
+          și pe afluenții Prutului.</p>
+        """
+
+        out = C._parse_inhga_monthly_tributaries(page, "https://example/monthly")
+        month = out["months"][0]
+        basins = {item["id"]: item for item in
+                  month["upstream_cernavoda"] + month["downstream_cernavoda"]}
+
+        self.assertEqual(len(basins), 9)
+        self.assertEqual(basins["jiu"]["band_pct"]["max"], 50)
+        self.assertEqual(basins["ialomita"]["basis"], "explicit_higher")
+        self.assertEqual(basins["ialomita"]["band_pct"]["max"], 80)
+        self.assertEqual(basins["siret"]["basis"], "explicit_lower")
+        self.assertEqual(basins["prut"]["band_pct"],
+                         {"min": None, "max": 30, "operator": "lt"})
+        self.assertNotIn("mures", basins)
+        self.assertNotIn("som es", basins)
+
+    def test_inhga_monthly_connector_fails_closed_without_stale_fallback(self):
+        listing = ('<article><h2 class="entry-title"><a href="https://example/monthly">'
+                   'Prognoza hidrologică lunară</a></h2></article>')
+        page = ('<span class="entry-title">Prognoza lunară</span>'
+                '<span class="updated">2026-07-31T10:00:00+03:00</span>'
+                '<p>În luna august 2026 regimul hidrologic se va situa la valori '
+                'cuprinse între 30-50% din mediile lunare.</p>')
+
+        def no_cache(key, ttl, fetch_fn, stale_ok=True):
+            self.assertFalse(stale_ok)
+            return {"data": fetch_fn(), "stale": False}
+
+        with mock.patch.object(C, "cached", side_effect=no_cache) as cache, \
+                mock.patch.object(C, "http_get", side_effect=[listing, page]):
+            out = C.inhga_danube_tributaries()
+
+        self.assertTrue(out["data"]["available"])
+        self.assertEqual(cache.call_args.args[:2],
+                         ("inhga_tributaries:v1", 6 * 3600))
+        self.assertFalse(cache.call_args.kwargs["stale_ok"])
 
     def test_inhga_bulletin_refresh_window_is_thirty_minutes(self):
         cached = {"data": {}, "stale": False, "cache_age_s": 0}

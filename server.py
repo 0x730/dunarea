@@ -107,6 +107,12 @@ def api_inhga(q):
             "cache_age_s": r.get("cache_age_s")}
 
 
+def api_inhga_tributaries(q):
+    r = C.inhga_danube_tributaries()
+    return {**r["data"], "stale": r["stale"],
+            "cache_age_s": r.get("cache_age_s")}
+
+
 def api_hidmet(q):
     r = C.hidmet_report()
     return {**r["data"], "stale": r["stale"]}
@@ -234,6 +240,10 @@ def api_romania(q):
         archive = C.glofas_archive("cernavoda", romania.MODEL_START_YEAR)["data"]
         afdj = optional(lambda: C.afdj_cote()["data"], {"statii": []})
         inhga = optional(lambda: C.inhga_bulletin()["data"], {})
+        tributaries = optional(lambda: C.inhga_danube_tributaries()["data"], {
+            "available": False,
+            "reason": "prognoza lunară INHGA nu a putut fi verificată",
+        })
         sen = optional(lambda: C.sen_live()["data"], {})
         snn = optional(C.snn_cernavoda_status, {
             "data": {"status_available": False, "needs_review": False,
@@ -241,11 +251,12 @@ def api_romania(q):
                      "reason": "lista oficială SNN nu a răspuns"},
             "stale": True,
         })
-        return romania.build_report(stats, archive, afdj, inhga, sen, snn)
+        return romania.build_report(stats, archive, afdj, inhga, sen, snn,
+                                    tributaries=tributaries)
 
     # Versiunea cheii urmărește schema payloadului; schimbarea ei împiedică un
     # răspuns vechi din cache să mascheze câmpuri noi după repornire.
-    result = C.cached("romania_proportionality:v8", 5 * 60, build)
+    result = C.cached("romania_proportionality:v9", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
 
@@ -324,6 +335,7 @@ def api_raport(q):
                      ("statistici", lambda: _stats_cached()["data"]),
                      ("bilant_apa", lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)["data"]),
                      ("inhga", lambda: C.inhga_bulletin()["data"]),
+                     ("inhga_afluenti_dunare", lambda: C.inhga_danube_tributaries()["data"]),
                      ("afdj", lambda: C.afdj_cote()["data"]),
                      ("hidmet", lambda: C.hidmet_report()["data"]),
                      ("hydroinfo", lambda: C.hydroinfo_danube()["data"]),
@@ -358,6 +370,7 @@ ROUTES = {
     "/api/pegel/series": api_pegel_series,
     "/api/afdj": api_afdj,
     "/api/inhga": api_inhga,
+    "/api/inhga/afluenti-dunare": api_inhga_tributaries,
     "/api/hidmet": api_hidmet,
     "/api/hydroinfo": api_hydroinfo,
     "/api/danubehis": api_danubehis,
@@ -492,7 +505,8 @@ def warmup():
         print("warmup sărit (rulat recent)")
         return
 
-    jobs = [C.pegelonline_stations, C.inhga_bulletin, C.hidmet_report,
+    jobs = [C.pegelonline_stations, C.inhga_bulletin,
+            C.inhga_danube_tributaries, C.hidmet_report,
             C.hydroinfo_danube, C.danubehis_danube, C.edo_status,
             C.copernicus_land_context, C.earthdata_satellite_catalog]
     jobs += [lambda p=pid: C.glofas_recent(p, past_days=10, forecast_days=3)
@@ -526,6 +540,7 @@ def maintenance_watcher():
         n += 1
         try:
             C.inhga_bulletin()      # ține seria oficială la zi fără repornire
+            C.inhga_danube_tributaries()
             if n % 48 == 0:         # o dată pe zi: curățenie în cache
                 C.cache_gc()
         except Exception:

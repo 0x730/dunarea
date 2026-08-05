@@ -23,6 +23,14 @@ zilei, ultima valoare GloFAS își păstrează data reală până când sosește
 Pragurile în mdMB publicate de SNN în 2011 sunt marcate exclusiv drept reper
 istoric; monitorul arată explicit că debitul Baziaș, mira AFDJ, GloFAS și
 producția SEN nu reproduc nivelul și limitele curente ale bazinului de aspirație.
+Pentru contextul românesc, monitorul preia din ultimul buletin lunar INHGA numai
+sistemele care intră direct în sectorul românesc al Dunării: Nera, Cerna, Jiu,
+Olt, Vedea și Argeș înainte de Cernavodă, respectiv Ialomița, Siret și Prut după
+Cernavodă. Someș, Mureș, Crișuri și Timiș nu sunt afișate separat: aportul lor
+ajunge prin Tisa înainte de Baziaș și este deja inclus în debitul de intrare în
+țară. Benzile lunare sunt marcate drept prognoză, nu debit măsurat. La
+Cernavodă sunt afișate dinamic și temperatura observată la mira AFDJ, plus
+prognozele de cotă la 24–120 h, fără a le prezenta drept praguri ale CNE.
 
 ## Pornire
 
@@ -83,8 +91,8 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | Sursă | Ce dă | Frecvență | Tip |
 |---|---|---|---|
 | [PEGELONLINE](https://www.pegelonline.wsv.de) (WSV, Germania) | nivel + debit, stații DE și AT (VIA DONAU) | orar/15 min | măsurat (brut, neverificat) |
-| [INHGA](https://www.hidro.ro) | buletinul „Diagnoza și prognoza pentru Dunăre": debit Baziaș, medie multianuală, prognoză | zilnic | măsurat, oficial |
-| [AFDJ Galați](https://www.afdj.ro/ro/cotele-dunarii) | cotele Dunării pe tot sectorul românesc + brațe (flux XML) | zilnic | măsurat, oficial |
+| [INHGA](https://www.hidro.ro) | buletinul zilnic pentru Dunăre (Baziaș) și ultima prognoză lunară în benzi pentru afluenții selectați ai sectorului românesc | zilnic / lunar | măsurat la Baziaș; prognoză oficială pe afluenți |
+| [AFDJ Galați](https://www.afdj.ro/ro/cotele-dunarii) | cotele și temperatura apei pe sectorul românesc + brațe, inclusiv prognoza de cotă la 24–120 h | zilnic | observații și prognoză oficială, etichetate separat |
 | [RHMZ Serbia](https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php) | nivel/debit stații sârbești, până la Prahovo | zilnic | măsurat, oficial |
 | [OVF Hydroinfo](https://www.hydroinfo.hu/tables/eng/dunhif.html) (Ungaria) | nivel/debit pe Dunăre, inclusiv Budapesta și Mohács | zilnic | măsurat, oficial |
 | [ICPDR DanubeHIS](https://www.danubehis.org/time-series/stations/Q?country=HU&river=Danube) | valori curente normalizate; fallback și control al căii de livrare OVF | aproape în timp real | măsurat, același furnizor ca Hydroinfo |
@@ -195,6 +203,7 @@ cache.db         cache local (generat la rulare)
 ## API local
 
 `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
+`/api/inhga/afluenti-dunare` ·
 `/api/hydroinfo` · `/api/danubehis` · `/api/edo` · `/api/edo/map?layer=cdi|soil` ·
 `/api/opera` · `/api/opera/map?layer=sentinel1|hls&zone=` ·
 `/api/copernicus-land` · `/api/copernicus-land/map?layer=snow|soil` ·

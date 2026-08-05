@@ -1466,7 +1466,7 @@ async function renderRomania() {
     $("ro-headline").innerHTML = `<div class="err-box">Analiza România nu a putut fi recompusă acum; nicio concluzie veche nu este păstrată ca stare curentă.</div>`;
     ["ro-claims", "ro-cernavoda-facts", "ro-cne-facts", "ro-history-table",
       "ro-operational-history", "ro-historical-thresholds", "ro-parameter-coverage",
-      "ro-sen-facts", "ro-energy-test", "ro-rain", "ro-missing"].forEach((id) => {
+      "ro-sen-facts", "ro-energy-test", "ro-tributaries", "ro-rain", "ro-missing"].forEach((id) => {
         $(id).innerHTML = `<div class="err-box">date indisponibile</div>`;
       });
     pill("România", "err");
@@ -1492,12 +1492,25 @@ async function renderRomania() {
   const model = d.cernavoda?.model || {};
   const gauge = d.cernavoda?.gauge;
   const history = d.cernavoda?.history || {};
+  const gaugeForecast = [24, 48, 72, 96, 120]
+    .map((hours) => ({ hours, value: gauge?.tendinte_cm?.[`${hours}h`] }))
+    .filter((item) => item.value != null);
+  const forecast120 = gaugeForecast.find((item) => item.hours === 120);
+  const forecastDelta = gauge?.cota_cm != null && forecast120
+    ? forecast120.value - gauge.cota_cm
+    : null;
   $("ro-cernavoda-facts").innerHTML = [
     li("debit în celula GloFAS", model.azi_m3s != null
       ? `<b>${fmtN.format(model.azi_m3s)} m³/s</b> · P${fmtV(model.percentila, fmt1)} · ${fmtV(model.zile_sub_p10)} zile sub P10 · ${model.data || sourceDates.glofas || "dată lipsă"} <span class="prov prov-model">model</span>`
       : `<span class="prov prov-lipsa">indisponibil</span>`),
     li("cotă miră AFDJ", gauge?.cota_cm != null
       ? `<b>${fmtN.format(gauge.cota_cm)} cm</b> · variație ${fmtV(gauge.variatie_cm)} cm · ${gauge.actualizat || "dată lipsă"} <span class="prov prov-masurat">măsurat</span>`
+      : `<span class="prov prov-lipsa">indisponibilă</span>`),
+    li("temperatura apei la miră", gauge?.temp_apa_c != null
+      ? `<b>${fmt1.format(gauge.temp_apa_c)}°C</b> · ${gauge.actualizat || "dată lipsă"} <span class="prov prov-masurat">măsurat AFDJ</span><br><span class="table-detail">context local; nu este temperatura certificată în bazinul de aspirație CNE</span>`
+      : `<span class="prov prov-lipsa">indisponibilă</span>`),
+    li("prognoză cotă AFDJ", gaugeForecast.length
+      ? `${gaugeForecast.map((item) => `<b>${item.hours} h</b> ${fmtN.format(item.value)} cm`).join(" · ")}${forecastDelta != null ? ` · Δ120 h ${forecastDelta > 0 ? "+" : ""}${fmtN.format(forecastDelta)} cm` : ""}<br><span class="table-detail">prognoză de nivel la miră; nu este observație și nu reproduce pragul CNE</span>`
       : `<span class="prov prov-lipsa">indisponibilă</span>`),
     li("atenție la cotă", d.cernavoda?.gauge_warning || "zero-ul mirei nu este documentat aici"),
     li("bazin de aspirație CNE", d.cernavoda?.intake_basin?.available
@@ -1575,11 +1588,13 @@ async function renderRomania() {
         const gaugeSummary = gauge.available && gaugeFacts
           ? gaugeFacts
           : `<span class="prov prov-lipsa">cotă măsurată indisponibilă pentru această fereastră</span>`;
+        const gaugeForecast = (gauge.forecast || []).map((item) =>
+          `${item.hours} h: <b>${fmtN.format(item.value_cm)} cm</b>`).join(" · ");
         return `<tr${row.current ? ` class="current-year"` : ""}>
           <td class="name">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
           <td>${row.hydrology}
             <div class="episode-gauge"><span class="prov prov-masurat">miră măsurată · ${gauge.period || "perioadă neprecizată"}</span><br>
-              ${gaugeSummary}<br><span class="table-detail">${gaugeSource}<br>${gauge.source_scope || "acoperire neprecizată"}<br>${gauge.limit || "cotă locală; nu este nivelul bazinului CNE"}</span>
+              ${gaugeSummary}${gaugeForecast ? `<br><span class="prov prov-calculat">prognoză AFDJ</span> ${gaugeForecast}` : ""}<br><span class="table-detail">${gaugeSource}<br>${gauge.source_scope || "acoperire neprecizată"}<br>${gauge.limit || "cotă locală; nu este nivelul bazinului CNE"}</span>
             </div>
             <div class="episode-flow"><span class="prov prov-model">GloFAS · ${flow.label || "fereastră neprecizată"}</span><br>
               ${flowSummary}<br><span class="table-detail">${flow.basis || ""}${flow.complete === false ? ` · acoperire ${flow.days_available || 0}/${flow.days_expected || "?"} zile` : ""}<br>${flow.limit || "debit modelat, nu măsurare la priza CNE"}</span>
@@ -1645,6 +1660,38 @@ async function renderRomania() {
       <li class="missing">prețuri și comparație istorică a importurilor: lipsesc din această versiune</li>
       <li class="missing">măsuri oficiale de urgență sau consum întrerupt: neidentificate în datele ingerate</li>
     </ul>` : `<div class="err-box">test indisponibil</div>`;
+
+  const tributaries = d.romanian_tributaries || {};
+  const tributaryMonth = tributaries.forecast_month;
+  const bandLabel = (band) => {
+    if (!band) return "benzi mixte";
+    if (band.operator === "lt") return `<${fmtN.format(band.max)}%`;
+    return `${fmtN.format(band.min)}–${fmtN.format(band.max)}%`;
+  };
+  const basinRows = (items) => (items || []).map((basin) => {
+    const basis = basin.basis === "general_band"
+      ? "reperul general al lunii; nu este enumerat separat"
+      : basin.basis === "explicit_lower"
+        ? "excepție explicită sub reperul general"
+        : basin.basis === "explicit_higher"
+          ? "excepție explicită peste reperul general"
+          : "sub-bazine cu semnale diferite";
+    const caveat = basin.basis !== "general_band" && basin.caveat
+      ? ` · ${basin.caveat}` : "";
+    return `<li><span><b>${basin.label}</b><small>${basis}${caveat}</small></span><strong>${bandLabel(basin.band_pct)}</strong></li>`;
+  }).join("");
+  const tributarySource = tributaries.url
+    ? `<a href="${tributaries.url}" target="_blank" rel="noopener">${tributaries.title || "buletin INHGA"}</a>`
+    : "sursă indisponibilă";
+  $("ro-tributaries").innerHTML = tributaries.available && tributaryMonth ? `
+    <p class="parameter-verdict"><b>${tributaryMonth.label}</b> · reper general ${bandLabel(tributaryMonth.base_band_pct)} din mediile lunare · publicat ${tributaries.published || "dată lipsă"}</p>
+    <div class="tributary-grid">
+      <div><h4>Intră în Dunăre înainte de Cernavodă</h4><ul class="tributary-list">${basinRows(tributaryMonth.upstream_cernavoda)}</ul></div>
+      <div><h4>Intră în Dunăre după Cernavodă</h4><ul class="tributary-list">${basinRows(tributaryMonth.downstream_cernavoda)}</ul></div>
+    </div>
+    <p class="sub">${tributarySource}<br>${tributaries.scope || ""}<br><b>Limită:</b> ${tributaries.limit || "prognoză, nu măsurătoare"}</p>
+    <details class="official-details"><summary>Textul oficial al lunii</summary><p>${tributaryMonth.official_text || "indisponibil"}</p></details>`
+    : `<div class="err-box">Prognoza INHGA pentru afluenții selectați este indisponibilă: ${tributaries.reason || "formatul sau luna nu au putut fi verificate"}. Nu se păstrează o lună veche ca stare curentă.</div>`;
 
   const rainClaim = (d.claims || []).find((claim) => claim.key === "romania_scope");
   const rainPoints = rainClaim?.evidence?.points || [];

@@ -19,6 +19,7 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import unicodedata
 import zlib
 from datetime import date, datetime, timedelta, timezone
 
@@ -566,7 +567,7 @@ INHGA_CACHE_TTL_S = 30 * 60
 def _strip_tags(html):
     text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
     text = re.sub(r"<[^>]+>", "\n", text)
-    text = text.replace("&nbsp;", " ").replace("&#8211;", "–").replace("&amp;", "&")
+    text = html_lib.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     return re.sub(r"\n\s*\n+", "\n", text)
 
@@ -632,6 +633,183 @@ def inhga_bulletin():
     # Verificăm de două ori pe oră: suficient de rar pentru sursa oficială,
     # dar fără întârzierea de până la 3 ore a unui buletin nou sau corectat.
     return cached(INHGA_CACHE_KEY, INHGA_CACHE_TTL_S, fetch)
+
+
+# Prognoza lunară INHGA pentru râurile interioare, restrânsă la sistemele care
+# aduc apă în sectorul românesc al Dunării. Nu includem Someș/Mureș/Crișuri/
+# Timiș: ele ajung în Dunăre prin Tisa în amonte de Baziaș și aportul lor este
+# deja cuprins în debitul de intrare în țară.
+INHGA_MONTHLY_LIST = "https://www.hidro.ro/bulletin_type/buletin-hidrologic-lunar/"
+INHGA_TRIBUTARIES_CACHE_KEY = "inhga_tributaries:v1"
+INHGA_TRIBUTARIES_TTL_S = 6 * 3600
+INHGA_MONTHS_RO = {
+    "ianuarie": 1, "februarie": 2, "martie": 3, "aprilie": 4,
+    "mai": 5, "iunie": 6, "iulie": 7, "august": 8,
+    "septembrie": 9, "octombrie": 10, "noiembrie": 11, "decembrie": 12,
+}
+INHGA_DANUBE_TRIBUTARIES = (
+    {"id": "nera", "label": "Nera", "stem": "ner",
+     "relation": "upstream_cernavoda"},
+    {"id": "cerna", "label": "Cerna", "stem": "cern",
+     "relation": "upstream_cernavoda"},
+    {"id": "jiu", "label": "Jiu", "stem": "jiu",
+     "relation": "upstream_cernavoda"},
+    {"id": "olt", "label": "Olt", "stem": "olt",
+     "relation": "upstream_cernavoda"},
+    {"id": "vedea", "label": "Vedea", "stem": "vede",
+     "relation": "upstream_cernavoda"},
+    {"id": "arges", "label": "Argeș", "stem": "arges",
+     "relation": "upstream_cernavoda"},
+    {"id": "ialomita", "label": "Ialomița", "stem": "ialomit",
+     "relation": "downstream_cernavoda",
+     "caveat": "excepția poate viza numai bazinul superior"},
+    {"id": "siret", "label": "Siret", "stem": "siret",
+     "relation": "downstream_cernavoda",
+     "caveat": "excepția poate viza numai cursul superior"},
+    {"id": "prut", "label": "Prut", "stem": "prut",
+     "relation": "downstream_cernavoda",
+     "caveat": "excepția poate viza numai afluenții Prutului"},
+)
+
+
+def _plain_ro(value):
+    value = (html_lib.unescape(value or "").replace("ş", "ș").replace("ţ", "ț")
+             .replace("Ş", "Ș").replace("Ţ", "Ț"))
+    decomposed = unicodedata.normalize("NFD", value)
+    return "".join(ch for ch in decomposed
+                   if unicodedata.category(ch) != "Mn").lower()
+
+
+def _inhga_monthly_latest_url(listing):
+    """Selectează primul buletin de prognoză lunară, nu un slug presupus."""
+    for article in re.findall(r"<article\b[^>]*>(.*?)</article>", listing,
+                              re.S | re.I):
+        title_match = re.search(
+            r'<h2\b[^>]*class="[^"]*entry-title[^"]*"[^>]*>.*?'
+            r'<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', article, re.S | re.I)
+        if not title_match:
+            continue
+        title = re.sub(r"\s+", " ", _strip_tags(title_match.group(2))).strip()
+        plain = _plain_ro(title)
+        if "prognoza" in plain and "lunar" in plain:
+            return html_lib.unescape(title_match.group(1)), title
+    raise RuntimeError("nu găsesc ultima prognoză hidrologică lunară INHGA")
+
+
+def _band(minimum=None, maximum=None, operator="range"):
+    return {"min": minimum, "max": maximum, "operator": operator}
+
+
+def _parse_inhga_monthly_tributaries(page, url=None, listing_title=None):
+    """Extrage intervalele oficiale fără a transforma prognoza în măsurătoare."""
+    title_match = re.search(
+        r'<span\b[^>]*class="[^"]*entry-title[^"]*"[^>]*>(.*?)</span>',
+        page, re.S | re.I)
+    title = (re.sub(r"\s+", " ", _strip_tags(title_match.group(1))).strip()
+             if title_match else listing_title)
+    updated = re.search(r'<span\b[^>]*class="[^"]*updated[^"]*"[^>]*>'
+                        r'(\d{4}-\d{2}-\d{2})T', page, re.I)
+    if not title or not updated:
+        raise RuntimeError("prognoza lunară INHGA nu mai expune titlul și data")
+
+    paragraphs = []
+    for raw in re.findall(r"<p\b[^>]*>(.*?)</p>", page, re.S | re.I):
+        text = re.sub(r"\s+", " ", _strip_tags(raw)).strip()
+        if _plain_ro(text).startswith("in luna ") and "regimul hidrologic" in _plain_ro(text):
+            paragraphs.append(text)
+
+    months = []
+    for text in paragraphs:
+        plain = _plain_ro(text)
+        month_match = re.search(
+            r"in luna\s+(ianuarie|februarie|martie|aprilie|mai|iunie|iulie|"
+            r"august|septembrie|octombrie|noiembrie|decembrie)\s+(20\d{2})",
+            plain)
+        base_match = re.search(
+            r"valori cuprinse intre\s*(\d+)\s*[-–]\s*(\d+)\s*%", plain)
+        if not month_match or not base_match:
+            raise RuntimeError("formatul intervalelor lunare INHGA s-a schimbat")
+
+        month_name, year_text = month_match.groups()
+        base = _band(int(base_match.group(1)), int(base_match.group(2)))
+        groups = []
+        higher = re.search(
+            r"mai mari\s*\((\d+)\s*[-–]\s*(\d+)\s*%\)\s*(.*?)"
+            r"(?=\s+(?:si|și|şi)\s+mai mici|\.$)", plain)
+        if higher:
+            groups.append({
+                "kind": "higher",
+                "band_pct": _band(int(higher.group(1)), int(higher.group(2))),
+                "clause": higher.group(3).strip(" ,"),
+            })
+        lower = re.search(r"mai mici\s*\(sub\s*(\d+)\s*%\)\s*(.*?)(?=\.$)", plain)
+        if lower:
+            groups.append({
+                "kind": "lower",
+                "band_pct": _band(None, int(lower.group(1)), "lt"),
+                "clause": lower.group(2).strip(" ,"),
+            })
+
+        basins = []
+        for spec in INHGA_DANUBE_TRIBUTARIES:
+            matches = [group for group in groups
+                       if re.search(rf"\b{re.escape(spec['stem'])}\w*",
+                                    group["clause"])]
+            if len(matches) == 1:
+                group = matches[0]
+                basin = {**spec, "band_pct": group["band_pct"],
+                         "basis": "explicit_" + group["kind"],
+                         "official_clause": group["clause"]}
+            elif len(matches) > 1:
+                basin = {**spec, "band_pct": None, "basis": "mixed",
+                         "bands": [group["band_pct"] for group in matches],
+                         "official_clause": " · ".join(group["clause"] for group in matches)}
+            else:
+                basin = {**spec, "band_pct": base, "basis": "general_band",
+                         "official_clause": None}
+            basin.pop("stem", None)
+            basins.append(basin)
+
+        month_num = INHGA_MONTHS_RO[month_name]
+        months.append({
+            "month": f"{int(year_text):04d}-{month_num:02d}",
+            "label": f"{month_name} {year_text}",
+            "base_band_pct": base,
+            "upstream_cernavoda": [b for b in basins
+                                    if b["relation"] == "upstream_cernavoda"],
+            "downstream_cernavoda": [b for b in basins
+                                      if b["relation"] == "downstream_cernavoda"],
+            "official_text": text,
+        })
+
+    if not months:
+        raise RuntimeError("prognoza lunară INHGA nu conține luni parsabile")
+    months.sort(key=lambda item: item["month"])
+    return {
+        "available": True,
+        "url": url,
+        "title": title,
+        "published": updated.group(1),
+        "months": months,
+        "parser_version": "inhga-monthly-tributaries-v1",
+        "scope": ("numai afluenții principali care intră în sectorul românesc al "
+                  "Dunării; sistemele care ajung prin Tisa sunt deja incluse la Baziaș"),
+        "limit": ("prognoză oficială în benzi procentuale față de mediile lunare; "
+                  "nu este debit măsurat și nu cuantifică aportul fiecărui afluent"),
+    }
+
+
+def inhga_danube_tributaries():
+    def fetch():
+        listing = http_get(INHGA_MONTHLY_LIST, timeout=30)
+        url, listing_title = _inhga_monthly_latest_url(listing)
+        page = http_get(url, timeout=30)
+        return _parse_inhga_monthly_tributaries(page, url, listing_title)
+
+    # Fără stale fallback: un format nou sau un buletin neparsabil devine
+    # indisponibil, nu păstrează prognoza lunii trecute ca și cum ar fi curentă.
+    return cached(INHGA_TRIBUTARIES_CACHE_KEY, INHGA_TRIBUTARIES_TTL_S,
+                  fetch, stale_ok=False)
 
 
 INHGA_DAILY = ("https://www.hidro.ro/bulletin/diagnoza-si-prognoza-hidrologica-"
@@ -2039,6 +2217,9 @@ EVIDENCE_SOURCES = {
                     "family": "gauge_de_at", "mode": "active"},
     "inhga": {"provider": "INHGA", "kind": "masurat",
               "family": "gauge_ro_inhga", "mode": "active"},
+    "inhga_tributaries": {"provider": "INHGA", "kind": "prognoza_oficiala",
+                           "family": "inhga_monthly_basin_forecast",
+                           "mode": "active_context"},
     "afdj": {"provider": "AFDJ", "kind": "masurat",
              "family": "gauge_ro_afdj", "mode": "active"},
     "rhmz": {"provider": "RHMZ Serbia", "kind": "masurat",
@@ -2095,6 +2276,9 @@ EVIDENCE_SOURCES = {
 }
 
 EVIDENCE_DEPENDENCIES = [
+    {"members": ["inhga", "inhga_tributaries"],
+     "relationship": "același emitent; măsurarea Baziaș și prognoza pe bazine sunt produse diferite, nu voturi instituționale independente",
+     "count_as": 1},
     {"members": ["hydroinfo", "danubehis"],
      "relationship": "aceleași măsurători OVF, două căi de livrare",
      "count_as": 1},
