@@ -38,6 +38,11 @@ acoperirea. Sunt debite instantanee brute în secțiuni parțiale, nu medii
 zilnice și nu aporturi totale la Dunăre; aplicația nu le însumează și nu le
 transformă în volum. Tabelul de precipitații arată distinct cumulul ERA5 de la
 1 ianuarie, mediana aceleiași ferestre și abaterea fiecărui punct-proxy.
+Pentru aceleași cinci secțiuni, GloFAS adaugă separat percentila modelată față
+de propria referință multidecenală efectiv returnată de sursă (fereastră
+calendaristică ±7 zile); intervalul real este afișat, nu presupus din cerere.
+Percentila nu este atribuită măsurătorii DanubeHIS și diferența absolută dintre
+model și observație nu este tratată automat drept anomalie.
 
 ## Pornire
 
@@ -213,6 +218,7 @@ cache.db         cache local (generat la rulare)
 `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
 `/api/inhga/afluenti-dunare` ·
 `/api/danubehis/afluenti-romania` ·
+`/api/glofas/afluenti-romania` ·
 `/api/hydroinfo` · `/api/danubehis` · `/api/edo` · `/api/edo/map?layer=cdi|soil` ·
 `/api/opera` · `/api/opera/map?layer=sentinel1|hls&zone=` ·
 `/api/copernicus-land` · `/api/copernicus-land/map?layer=snow|soil` ·

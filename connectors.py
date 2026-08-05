@@ -422,6 +422,28 @@ def _flood_call(lat, lon, extra):
             time.sleep(8 * (attempt + 1))  # rate-limit: așteaptă și reia
 
 
+def _flood_multi_call(points, extra):
+    """Un singur apel GloFAS pentru mai multe coordonate fixe."""
+    qs = urllib.parse.urlencode({
+        "latitude": ",".join(f"{point['lat']:.5f}" for point in points),
+        "longitude": ",".join(f"{point['lon']:.5f}" for point in points),
+        "daily": "river_discharge",
+        **extra,
+    }, safe=",")
+    url = f"{FLOOD_API}?{qs}"
+    for attempt in range(4):
+        try:
+            payload = http_json(url, timeout=60)
+            rows = payload if isinstance(payload, list) else [payload]
+            if len(rows) != len(points):
+                raise RuntimeError("răspuns GloFAS incomplet pentru secțiunile grupate")
+            return rows
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == 3:
+                raise
+            time.sleep(8 * (attempt + 1))
+
+
 def glofas_snap(point_id):
     """Găsește celula de grilă GloFAS care conține efectiv albia fluviului:
     scanează vecinătatea coordonatei candidate și alege celula cu debitul
@@ -1014,26 +1036,31 @@ DANUBEHIS_RO_TRIBUTARY_SECTIONS = (
     {
         "river_id": "jiu", "river": "Jiu", "station": "Podari",
         "code": "RO42231_HYDRO", "relation": "upstream_cernavoda",
+        "lat": 44.25940, "lon": 23.78590,
         "coverage": "secțiune pe Jiu; nu include aporturile dintre Podari și Dunăre",
     },
     {
         "river_id": "olt", "river": "Olt", "station": "Hoghiz",
         "code": "RO42309_HYDRO", "relation": "upstream_cernavoda",
+        "lat": 45.99220, "lon": 25.30080,
         "coverage": "secțiune pe Oltul superior; nu reprezintă aportul total al Oltului la Dunăre",
     },
     {
         "river_id": "vedea", "river": "Vedea", "station": "Alexandria",
         "code": "RO42471_HYDRO", "relation": "upstream_cernavoda",
+        "lat": 43.98710, "lon": 25.31880,
         "coverage": "secțiune pe Vedea; nu include bazinul din aval până la confluență",
     },
     {
         "river_id": "siret", "river": "Siret", "station": "Drăgești",
         "code": "RO42708_HYDRO", "relation": "downstream_cernavoda",
+        "lat": 46.72400, "lon": 26.94450,
         "coverage": "secțiune interioară pe Siret; nu reprezintă aportul total la Dunăre",
     },
     {
         "river_id": "prut", "river": "Prut", "station": "Rădăuți-Prut",
         "code": "RO42945_HYDRO", "relation": "downstream_cernavoda",
+        "lat": 48.22850, "lon": 26.81840,
         "coverage": "secțiune pe Prutul superior; nu reprezintă aportul total la Dunăre",
     },
 )
@@ -1248,6 +1275,106 @@ def danubehis_romanian_tributaries():
         }
 
     return cached(f"danubehis:ro-tributaries:v1:{as_of.year}", 6 * 3600, fetch)
+
+
+def _glofas_tributary_climate_summary(spec, payload, as_of, window=7):
+    """Context climatic intern modelului, fără amestec cu debitul măsurat."""
+    daily = payload.get("daily") or {}
+    values = {
+        stamp: value for stamp, value in zip(
+            daily.get("time") or [], daily.get("river_discharge") or [])
+        if value is not None and stamp <= as_of.isoformat()
+    }
+    current_dates = sorted(
+        stamp for stamp in values if stamp.startswith(f"{as_of.year}-"))
+    if not current_dates:
+        raise RuntimeError(f"GloFAS fără valoare {as_of.year} pentru {spec['station']}")
+    latest_date = current_dates[-1]
+    target_mmdd = latest_date[5:]
+
+    by_mmdd = {}
+    for stamp, value in values.items():
+        year = int(stamp[:4])
+        mmdd = stamp[5:]
+        if year >= as_of.year or mmdd == "02-29":
+            continue
+        by_mmdd.setdefault(mmdd, []).append((year, value))
+    mmdds = sorted(by_mmdd)
+    if target_mmdd not in by_mmdd or not mmdds:
+        raise RuntimeError(f"GloFAS fără referință calendaristică pentru {spec['station']}")
+    idx = mmdds.index(target_mmdd)
+    reference_pairs = []
+    for offset in range(-window, window + 1):
+        reference_pairs.extend(by_mmdd[mmdds[(idx + offset) % len(mmdds)]])
+    reference = [value for _, value in reference_pairs]
+    reference_years = {year for year, _ in reference_pairs}
+    if len(reference) < 20 * (2 * window + 1):
+        raise RuntimeError(f"referință GloFAS prea scurtă pentru {spec['station']}")
+
+    current_value = values[latest_date]
+    climate_median = median(reference)
+    percentile = 100 * sum(value <= current_value for value in reference) / len(reference)
+    return {
+        "river_id": spec["river_id"],
+        "river": spec["river"],
+        "station": spec["station"],
+        "model_date": latest_date,
+        "model_m3s": round(current_value, 2),
+        "percentile": round(percentile, 1),
+        "climate_median_m3s": round(climate_median, 2),
+        "deviation_pct": (round(100 * (current_value - climate_median)
+                                / climate_median, 1) if climate_median else None),
+        "reference_samples": len(reference),
+        "reference_years": len(reference_years),
+        "reference_period": {
+            "start": min(reference_years), "end": max(reference_years),
+        },
+        "calendar_window_days": window,
+        "station_coordinates": {"lat": spec["lat"], "lon": spec["lon"]},
+        "model_cell": {
+            "lat": payload.get("latitude"), "lon": payload.get("longitude"),
+        },
+    }
+
+
+def glofas_romanian_tributary_climatology():
+    """Climatologie modelată multidecenală la cele cinci secțiuni RO.
+
+    Valoarea GloFAS curentă este comparată exclusiv cu istoricul aceluiași
+    model și aceleiași celule. Nu calibrăm măsurătoarea DanubeHIS cu modelul.
+    """
+    as_of = date.today() - timedelta(days=1)
+
+    def fetch():
+        rows = _flood_multi_call(
+            DANUBEHIS_RO_TRIBUTARY_SECTIONS,
+            {"start_date": "1991-01-01", "end_date": as_of.isoformat()},
+        )
+        sections = [
+            _glofas_tributary_climate_summary(spec, payload, as_of)
+            for spec, payload in zip(DANUBEHIS_RO_TRIBUTARY_SECTIONS, rows)
+        ]
+        reference_start = min(
+            section["reference_period"]["start"] for section in sections)
+        reference_end = max(
+            section["reference_period"]["end"] for section in sections)
+        return {
+            "available": True,
+            "as_of": as_of.isoformat(),
+            "source": "GloFAS v4 / Copernicus CEMS via Open-Meteo Flood API",
+            "source_url": "https://open-meteo.com/en/docs/flood-api",
+            "kind": "climatologie modelată la celula secțiunii",
+            "requested_start": 1991,
+            "reference": (f"{reference_start}–{reference_end}, "
+                          "fereastră calendaristică ±7 zile"),
+            "sections": sections,
+            "limit": ("percentila descrie valoarea GloFAS față de istoricul aceluiași "
+                      "model; nu este percentila debitului măsurat, nu corectează biasul "
+                      "local și nu transformă secțiunea în aport total la Dunăre"),
+        }
+
+    return cached(f"glofas:ro-tributary-climate:v2:{as_of.year}",
+                  24 * 3600, fetch)
 
 
 # ------------------------------------------------ Copernicus drought/EDO --
@@ -2416,6 +2543,12 @@ EVIDENCE_SOURCES = {
                      "family": "navigation_gauge_aggregation", "mode": "active"},
     "glofas": {"provider": "Copernicus CEMS / Open-Meteo delivery", "kind": "model",
                "family": "lisflood_glofas", "mode": "active"},
+    "glofas_ro_tributaries": {
+        "provider": "Copernicus CEMS / Open-Meteo delivery",
+        "kind": "model_climatologie_sectiuni",
+        "family": "lisflood_glofas",
+        "mode": "active_context",
+    },
     "era5": {"provider": "Copernicus C3S / Open-Meteo delivery", "kind": "reanaliza",
              "family": "era5_reanalysis", "mode": "active"},
     "edo": {"provider": "Copernicus EDO", "kind": "model_compozit",

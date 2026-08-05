@@ -91,6 +91,8 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn("gauge?.temp_apa_c", app)
         self.assertIn("gauge?.tendinte_cm", app)
         self.assertIn("mediană ian.–azi", app)
+        self.assertIn("raritate GloFAS", app)
+        self.assertIn("climate.percentile", app)
         self.assertIn("point.ytd_mm", app)
         self.assertIn("secțiuni măsurate", page)
         self.assertNotIn("1.450 m³/s", page.split('data-view="romania"', 1)[1])
@@ -226,6 +228,27 @@ class RomaniaProportionalityTests(unittest.TestCase):
                                   "coverage_pct": 100.0},
                 "previous_year_same_window": None,
                 "url": "https://www.danubehis.org/results/RO42471_HYDRO",
+            }],
+        }
+
+    @staticmethod
+    def tributary_model_climatology(model_date="2026-08-04", percentile=4.2,
+                                    reference_years=29):
+        return {
+            "available": True,
+            "as_of": model_date,
+            "source": "GloFAS test",
+            "source_url": "https://open-meteo.com/en/docs/flood-api",
+            "reference": "1997–2025, fereastră calendaristică ±7 zile",
+            "limit": "percentilă în model, nu a măsurătorii",
+            "sections": [{
+                "river_id": "vedea", "river": "Vedea", "station": "Alexandria",
+                "model_date": model_date, "model_m3s": 4.2,
+                "percentile": percentile, "climate_median_m3s": 12.0,
+                "deviation_pct": -65.0, "reference_samples": 435,
+                "reference_years": reference_years,
+                "reference_period": {"start": 1997, "end": 2025},
+                "calendar_window_days": 7,
             }],
         }
 
@@ -411,7 +434,8 @@ class RomaniaProportionalityTests(unittest.TestCase):
         out = romania.build_report(
             self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
             "2026-08-05", tributaries=self.tributaries(),
-            tributary_observations=self.tributary_observations())
+            tributary_observations=self.tributary_observations(),
+            tributary_model_climatology=self.tributary_model_climatology())
         claim = next(item for item in out["claims"] if item["key"] == "romania_scope")
         point = claim["evidence"]["points"][0]
         observed = out["romanian_tributaries"]["observed_sections"]
@@ -423,8 +447,27 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertTrue(observed["available"])
         self.assertEqual(observed["latest_date"], "2026-08-03")
         self.assertEqual(observed["sections"][0]["latest"]["value_m3s"], 3.56)
+        climate = out["romanian_tributaries"]["model_climatology"]
+        self.assertTrue(climate["available"])
+        self.assertEqual(climate["sections_below_p10"], ["vedea"])
+        self.assertEqual(climate["sections"][0]["percentile"], 4.2)
         self.assertEqual(out["data_as_of"]["danubehis_ro_tributaries"],
                          "2026-08-03")
+        self.assertEqual(out["data_as_of"]["glofas_ro_tributaries"],
+                         "2026-08-04")
+
+    def test_short_or_future_tributary_model_reference_is_rejected(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(
+            self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
+            "2026-08-05", tributaries=self.tributaries(),
+            tributary_model_climatology=self.tributary_model_climatology(
+                model_date="2026-08-06", reference_years=19))
+
+        climate = out["romanian_tributaries"]["model_climatology"]
+        self.assertFalse(climate["available"])
+        self.assertEqual(climate["sections"], [])
+        self.assertIn("referință acceptabile", climate["reason"])
 
     def test_future_measured_tributary_section_is_not_relabelled_current(self):
         afdj, inhga, sen = self.inputs()
@@ -834,6 +877,53 @@ class ConnectorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "graficul Q"):
             C._parse_danubehis_q_chart("<html>fără grafic</html>")
 
+    def test_glofas_tributary_climatology_uses_only_its_own_model_history(self):
+        times, values = [], []
+        for year in range(2000, 2026):
+            start = date(year, 7, 28)
+            for offset in range(15):
+                times.append((start + timedelta(days=offset)).isoformat())
+                values.append(100.0)
+        times.append("2026-08-04")
+        values.append(50.0)
+        payload = {
+            "latitude": 43.975006, "longitude": 25.325012,
+            "daily": {"time": times, "river_discharge": values},
+        }
+        spec = next(item for item in C.DANUBEHIS_RO_TRIBUTARY_SECTIONS
+                    if item["river_id"] == "vedea")
+
+        out = C._glofas_tributary_climate_summary(
+            spec, payload, date(2026, 8, 4))
+
+        self.assertEqual(out["model_date"], "2026-08-04")
+        self.assertEqual(out["model_m3s"], 50.0)
+        self.assertEqual(out["climate_median_m3s"], 100.0)
+        self.assertEqual(out["percentile"], 0.0)
+        self.assertEqual(out["deviation_pct"], -50.0)
+        self.assertEqual(out["reference_samples"], 390)
+        self.assertEqual(out["reference_period"], {"start": 2000, "end": 2025})
+
+    def test_glofas_multi_request_keeps_coordinate_order(self):
+        seen = []
+
+        def fake_json(url, timeout=25):
+            seen.append(url)
+            return [{"daily": {"time": [], "river_discharge": []}},
+                    {"daily": {"time": [], "river_discharge": []}}]
+
+        points = [{"lat": 44.25, "lon": 23.78},
+                  {"lat": 45.99, "lon": 25.30}]
+        with mock.patch.object(C, "http_json", side_effect=fake_json):
+            rows = C._flood_multi_call(points, {
+                "start_date": "1991-01-01", "end_date": "2026-08-04"})
+
+        query = parse_qs(urlparse(seen[0]).query)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(query["latitude"], ["44.25000,45.99000"])
+        self.assertEqual(query["longitude"], ["23.78000,25.30000"])
+        self.assertEqual(query["start_date"], ["1991-01-01"])
+
     def test_edo_status_prefers_current_service_page_date(self):
         capabilities = """<WMT_MS_Capabilities><Capability><Layer>
           <Layer><Name>cdiad</Name><Extent name="time">2012-01-01/2026-06-11/P10D</Extent></Layer>
@@ -913,6 +1003,8 @@ class ConnectorTests(unittest.TestCase):
 
         self.assertEqual(C.EVIDENCE_SOURCES["hydroinfo"]["family"],
                          C.EVIDENCE_SOURCES["danubehis"]["family"])
+        self.assertEqual(C.EVIDENCE_SOURCES["glofas"]["family"],
+                         C.EVIDENCE_SOURCES["glofas_ro_tributaries"]["family"])
         self.assertEqual(relations[frozenset(("hydroinfo", "danubehis"))]["count_as"], 1)
         self.assertEqual(relations[frozenset(("hydroweb", "swot_direct"))]["count_as"], 1)
         self.assertEqual(relations[frozenset(("grdc", "grdc_wmo_2024"))]["count_as"], 1)
@@ -1085,6 +1177,9 @@ class AiAnalysisAuditTests(unittest.TestCase):
                 mock.patch.object(C, "danubehis_romanian_tributaries",
                                   return_value={"data": {"tip": "masurat"},
                                                 "stale": False, "cache_age_s": 6}), \
+                mock.patch.object(C, "glofas_romanian_tributary_climatology",
+                                  return_value={"data": {"tip": "model_climatic"},
+                                                "stale": False, "cache_age_s": 7}), \
                 mock.patch.object(C, "edo_status", return_value=fresh_context), \
                 mock.patch.object(C, "opera_surface_status", return_value=fresh_context), \
                 mock.patch.object(C, "copernicus_land_context", return_value=fresh_context), \
@@ -1106,6 +1201,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
                          "masurat")
         self.assertEqual(digest["statistici_afluenti_masurati"]["livrare"]["cache_age_s"],
                          6)
+        self.assertEqual(digest["climatologie_modelata_afluenti"]["date"]["tip"],
+                         "model_climatic")
         bazias = digest["reconciliere_bazias"]
         self.assertEqual(bazias["valoare_oficiala_curenta"]["debit_m3s"], 900)
         self.assertEqual(bazias["reper_modelat_climatologic"]["debit_m3s"], 1200)
@@ -1179,6 +1276,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("nu sunt medii zilnice", prompt)
         self.assertIn("nu se însumează", prompt)
         self.assertIn("un singur an, nu climatologia", prompt)
+        self.assertIn("climatologie_modelata_afluenti", prompt)
+        self.assertIn("nu transferă percentila modelului", prompt)
 
     def test_response_heading_normalization_is_narrow_and_auditable(self):
         text = "## SITUAȚIA\nFapt.\n\n**CE AR SCHIMBĂ CONCLUZIA:**\nAlt fapt."

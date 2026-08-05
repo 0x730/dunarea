@@ -667,8 +667,49 @@ def _tributary_observation_context(source, generated_on):
     }
 
 
+def _tributary_model_context(source, generated_on):
+    """Acceptă numai percentile GloFAS datate și cu referință multidecenală."""
+    if not isinstance(source, dict) or not source.get("available"):
+        return {
+            "available": False,
+            "reason": (source or {}).get(
+                "reason", "climatologia GloFAS a afluenților nu este disponibilă"),
+        }
+    accepted = []
+    for section in source.get("sections") or []:
+        try:
+            model_day = date.fromisoformat(section.get("model_date"))
+            years = int(section.get("reference_years") or 0)
+            samples = int(section.get("reference_samples") or 0)
+        except (TypeError, ValueError):
+            continue
+        if model_day > generated_on or years < 20 or samples < 300:
+            continue
+        accepted.append({**section, "lag_days": (generated_on - model_day).days})
+    if not accepted:
+        return {
+            **{key: value for key, value in source.items() if key != "sections"},
+            "available": False,
+            "reason": "nicio secțiune modelată nu are dată și referință acceptabile",
+            "sections": [],
+        }
+    return {
+        **{key: value for key, value in source.items() if key != "sections"},
+        "available": True,
+        "sections": accepted,
+        "latest_date": max(row["model_date"] for row in accepted),
+        "sections_available": len(accepted),
+        "sections_below_p10": [
+            row["river_id"] for row in accepted
+            if _number(row.get("percentile")) is not None
+            and row["percentile"] < 10
+        ],
+    }
+
+
 def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
-                 tributaries=None, tributary_observations=None):
+                 tributaries=None, tributary_observations=None,
+                 tributary_model_climatology=None):
     generated_on = date.fromisoformat(
         as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
@@ -680,7 +721,10 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     tributary_context = _tributary_context(tributaries, generated_on)
     tributary_observed = _tributary_observation_context(
         tributary_observations, generated_on)
+    tributary_model = _tributary_model_context(
+        tributary_model_climatology, generated_on)
     tributary_context["observed_sections"] = tributary_observed
+    tributary_context["model_climatology"] = tributary_model
 
     measured = _number(inhga.get("debit_bazias_m3s"))
     monthly_mean = _number(inhga.get("media_multianuala_m3s"))
@@ -770,21 +814,33 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                     "ytd_deviation_pct": (row.get("ian_azi") or {}).get("abatere_pct")}
                    for row in ro_precip],
         "inhga_selected_tributaries": tributary_context,
+        "glofas_tributary_climatology": tributary_model,
     }
     selected_count = tributary_context.get("selected_systems") or 0
     low_tributaries = tributary_context.get("systems_at_most_50pct") or []
     broad_low_forecast = (tributary_context.get("available") and selected_count > 0
                           and len(low_tributaries) >= max(1, selected_count // 2 + 1))
-    if broad_low_forecast and len(dry90) >= 3:
+    model_count = tributary_model.get("sections_available") or 0
+    model_low = tributary_model.get("sections_below_p10") or []
+    broad_low_model = (tributary_model.get("available") and model_count > 0
+                       and len(model_low) >= max(1, model_count // 2 + 1))
+    broad_hydro_signal = broad_low_forecast or broad_low_model
+    hydro_signals = []
+    if broad_low_forecast:
+        hydro_signals.append(
+            "Prognoza INHGA indică regimuri reduse pe majoritatea afluenților selectați")
+    if broad_low_model:
+        hydro_signals.append(
+            f"GloFAS plasează {len(model_low)} din {model_count} secțiuni modelate sub P10")
+    hydro_text = "; ".join(hydro_signals)
+    if broad_hydro_signal and len(dry90) >= 3:
         ro_status = "supported_component"
-        ro_text = ("Prognoza INHGA indică regimuri reduse pe majoritatea sistemelor "
-                   "selectate care alimentează sectorul românesc al Dunării, iar ERA5 "
+        ro_text = (hydro_text + ", iar ERA5 "
                    "arată și deficit pluviometric larg. Este confirmată o componentă "
                    "hidrologică extinsă, nu automat o criză uniformă în toată România.")
-    elif broad_low_forecast:
+    elif broad_hydro_signal:
         ro_status = "mixed"
-        ro_text = ("Prognoza INHGA indică regimuri reduse pe majoritatea afluenților "
-                   "selectați ai sectorului românesc al Dunării, dar punctele ERA5 nu "
+        ro_text = (hydro_text + ", dar punctele ERA5 nu "
                    "arată un deficit pluviometric uniform. Semnalul este mai larg decât "
                    "fluviul, fără a demonstra o criză în toată România.")
     elif len(ro_precip) < 3:
@@ -803,7 +859,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     claims.append(_claim(
         "romania_scope", "Criză hidrologică în toată România?", ro_status, ro_text,
         rain_evidence,
-        "INHGA oferă prognoze în benzi; DanubeHIS aduce numai cinci secțiuni măsurate parțiale, care nu sunt aporturi totale la Dunăre; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
+        "INHGA oferă prognoze în benzi; DanubeHIS aduce numai cinci secțiuni măsurate parțiale; percentilele afluenților sunt GloFAS față de istoricul propriului model, nu climatologie măsurată; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
 
     snn_status = snn.get("data", snn) if snn else {}
     snn_stale = bool(snn.get("stale")) if snn and "data" in snn else False
@@ -892,6 +948,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
             "inhga": inhga.get("data_buletin"),
             "inhga_tributaries": tributary_context.get("published"),
             "danubehis_ro_tributaries": tributary_observed.get("latest_date"),
+            "glofas_ro_tributaries": tributary_model.get("latest_date"),
             "afdj": (cern_gauge or {}).get("actualizat"),
             "snn": snn_status.get("date"),
             "sen": sen.get("actualizat"),

@@ -1695,6 +1695,9 @@ async function renderRomania() {
     : `<div class="err-box">Prognoza INHGA pentru afluenții selectați este indisponibilă: ${tributaries.reason || "formatul sau luna nu au putut fi verificate"}. Nu se păstrează o lună veche ca stare curentă.</div>`;
 
   const observed = tributaries.observed_sections || {};
+  const modelClimate = tributaries.model_climatology || {};
+  const climateByRiver = Object.fromEntries(
+    (modelClimate.sections || []).map((section) => [section.river_id, section]));
   const missingLabels = {
     nera: "Nera", cerna: "Cerna", arges: "Argeș", ialomita: "Ialomița",
   };
@@ -1703,6 +1706,7 @@ async function renderRomania() {
     const ytd = section.ytd || {};
     const month = section.current_month || {};
     const previous = section.previous_year_same_window || {};
+    const climate = climateByRiver[section.river_id];
     const source = section.url
       ? `<a href="${section.url}" target="_blank" rel="noopener">${section.station}</a>`
       : section.station;
@@ -1711,9 +1715,14 @@ async function renderRomania() {
     const previousNote = previous.median_change_pct != null
       ? `<br><small>față de mediana aceleiași ferestre ${previous.year}: ${previous.median_change_pct > 0 ? "+" : ""}${fmt1.format(previous.median_change_pct)}% · un singur an, nu climatologie</small>`
       : "";
+    const climateCell = climate ? `<b>P${fmt1.format(climate.percentile)}</b>
+      <br><small>${climate.deviation_pct > 0 ? "+" : ""}${fmt1.format(climate.deviation_pct)}% vs mediana modelului
+      <br>${climate.model_date} · ${climate.reference_years} ani · ±${climate.calendar_window_days} zile</small>`
+      : `<span class="table-detail">indisponibil</span>`;
     return `<tr>
       <td class="name"><b>${section.river}</b><br><span class="table-detail">${source}</span></td>
       <td class="num"><b>${fmtV(latest.value_m3s, fmt2)}</b><br><small>${latest.date || "–"}${lag}</small></td>
+      <td class="num">${climateCell}</td>
       <td class="num">${fmtV(ytd.median_m3s, fmt2)}${previousNote}</td>
       <td class="num">${fmtV(month.median_m3s, fmt2)}<br><small>${month.month || "–"}</small></td>
       <td class="num">${fmtV(ytd.min_m3s, fmt2)}–${fmtV(ytd.max_m3s, fmt2)}</td>
@@ -1728,10 +1737,17 @@ async function renderRomania() {
   const observedSource = observed.source_url
     ? `<a href="${observed.source_url}" target="_blank" rel="noopener">${observed.provider || "DanubeHIS"}</a>`
     : (observed.provider || "DanubeHIS");
+  const climateSource = modelClimate.source_url
+    ? `<a href="${modelClimate.source_url}" target="_blank" rel="noopener">${modelClimate.source || "GloFAS"}</a>`
+    : (modelClimate.source || "GloFAS");
+  const climateNote = modelClimate.available
+    ? `${climateSource} · ${modelClimate.reference || "referință multidecenală"}.<br><b>Limită model:</b> ${modelClimate.limit}`
+    : `<b>Context GloFAS indisponibil:</b> ${modelClimate.reason || "seria nu a putut fi verificată"}.`;
   const observedPanel = observed.available && observedRows ? `
-    <h4 class="tributary-section-title">Ce s-a măsurat de la 1 ianuarie până acum</h4>
+    <h4 class="tributary-section-title">Debite măsurate până acum · context GloFAS separat</h4>
     <div class="table-scroll"><table class="data tributary-observed-table">
       <thead><tr><th>Râu / secțiune</th><th class="num">ultimul Q<br>m³/s</th>
+        <th class="num">raritate GloFAS<br><small>model</small></th>
         <th class="num">mediană ian.–azi</th><th class="num">mediană lună</th>
         <th class="num">min–max</th><th class="num">acoperire</th><th>Ce acoperă</th></tr></thead>
       <tbody>${observedRows}</tbody>
@@ -1739,7 +1755,8 @@ async function renderRomania() {
     <p class="sub">${observedSource} · ${observed.kind || "debit la secțiune"}.<br>
       ${missingMeasured ? `<b>Fără Q public comparabil în acest set:</b> ${missingMeasured}.<br>` : ""}
       ${failedMeasured ? `<b>Indisponibile temporar:</b> ${failedMeasured}.<br>` : ""}
-      <b>Limită:</b> ${observed.limit || "secțiuni parțiale, nu aport total la Dunăre"}</p>`
+      <b>Limită măsurători:</b> ${observed.limit || "secțiuni parțiale, nu aport total la Dunăre"}</p>
+    <p class="sub">${climateNote}</p>`
     : `<div class="err-box">Statisticile măsurate pe afluenți sunt indisponibile: ${observed.reason || "sursa nu a putut fi verificată"}.</div>`;
   $("ro-tributaries").innerHTML = `${observedPanel}${forecastPanel}`;
 

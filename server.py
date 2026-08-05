@@ -119,6 +119,12 @@ def api_danubehis_ro_tributaries(q):
             "cache_age_s": r.get("cache_age_s")}
 
 
+def api_glofas_ro_tributaries(q):
+    r = C.glofas_romanian_tributary_climatology()
+    return {**r["data"], "stale": r["stale"],
+            "cache_age_s": r.get("cache_age_s")}
+
+
 def api_hidmet(q):
     r = C.hidmet_report()
     return {**r["data"], "stale": r["stale"]}
@@ -255,6 +261,11 @@ def api_romania(q):
                 "available": False,
                 "reason": "secțiunile românești DanubeHIS nu au putut fi verificate",
             })
+        tributary_model_climatology = optional(
+            lambda: C.glofas_romanian_tributary_climatology()["data"], {
+                "available": False,
+                "reason": "climatologia GloFAS a afluenților nu a putut fi verificată",
+            })
         sen = optional(lambda: C.sen_live()["data"], {})
         snn = optional(C.snn_cernavoda_status, {
             "data": {"status_available": False, "needs_review": False,
@@ -264,11 +275,12 @@ def api_romania(q):
         })
         return romania.build_report(stats, archive, afdj, inhga, sen, snn,
                                     tributaries=tributaries,
-                                    tributary_observations=tributary_observations)
+                                    tributary_observations=tributary_observations,
+                                    tributary_model_climatology=tributary_model_climatology)
 
     # Versiunea cheii urmărește schema payloadului; schimbarea ei împiedică un
     # răspuns vechi din cache să mascheze câmpuri noi după repornire.
-    result = C.cached("romania_proportionality:v10", 5 * 60, build)
+    result = C.cached("romania_proportionality:v11", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
 
@@ -349,6 +361,7 @@ def api_raport(q):
                      ("inhga", lambda: C.inhga_bulletin()["data"]),
                      ("inhga_afluenti_dunare", lambda: C.inhga_danube_tributaries()["data"]),
                      ("danubehis_afluenti_romania", lambda: C.danubehis_romanian_tributaries()["data"]),
+                     ("glofas_climatologie_afluenti_romania", lambda: C.glofas_romanian_tributary_climatology()["data"]),
                      ("afdj", lambda: C.afdj_cote()["data"]),
                      ("hidmet", lambda: C.hidmet_report()["data"]),
                      ("hydroinfo", lambda: C.hydroinfo_danube()["data"]),
@@ -385,6 +398,7 @@ ROUTES = {
     "/api/inhga": api_inhga,
     "/api/inhga/afluenti-dunare": api_inhga_tributaries,
     "/api/danubehis/afluenti-romania": api_danubehis_ro_tributaries,
+    "/api/glofas/afluenti-romania": api_glofas_ro_tributaries,
     "/api/hidmet": api_hidmet,
     "/api/hydroinfo": api_hydroinfo,
     "/api/danubehis": api_danubehis,
@@ -521,6 +535,7 @@ def warmup():
 
     jobs = [C.pegelonline_stations, C.inhga_bulletin,
             C.inhga_danube_tributaries, C.danubehis_romanian_tributaries,
+            C.glofas_romanian_tributary_climatology,
             C.hidmet_report,
             C.hydroinfo_danube, C.danubehis_danube, C.edo_status,
             C.copernicus_land_context, C.earthdata_satellite_catalog]
@@ -558,6 +573,7 @@ def maintenance_watcher():
             C.inhga_danube_tributaries()
             C.danubehis_romanian_tributaries()
             if n % 48 == 0:         # o dată pe zi: curățenie în cache
+                C.glofas_romanian_tributary_climatology()
                 C.cache_gc()
         except Exception:
             pass
