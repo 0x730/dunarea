@@ -7,6 +7,14 @@ const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });
 const fmt2 = new Intl.NumberFormat("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtRomaniaDateTime = (value) => {
+  if (!value) return "dată lipsă";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${new Intl.DateTimeFormat("ro-RO", {
+    timeZone: "Europe/Bucharest", dateStyle: "short", timeStyle: "short",
+  }).format(parsed)} · ora României`;
+};
 
 /* ---------------------------------------- vederi și navigație internă -- */
 const VIEW_LABELS = {
@@ -37,7 +45,7 @@ function requestedView() {
   return Object.hasOwn(VIEW_LABELS, candidate) ? candidate : "acum";
 }
 
-function showView(view, historyMode = null, scrollTop = false) {
+function showView(view, historyMode = null, scrollTop = false, preserveHash = false) {
   if (!Object.hasOwn(VIEW_LABELS, view)) view = "acum";
   document.querySelectorAll("section[data-view]").forEach((section) => {
     section.hidden = section.dataset.view !== view;
@@ -57,7 +65,7 @@ function showView(view, historyMode = null, scrollTop = false) {
     const url = new URL(location.href);
     url.pathname = VIEW_PATHS[view];
     url.search = "";
-    url.hash = "";
+    if (!preserveHash) url.hash = "";
     history[`${historyMode}State`]({ view }, "", url);
   }
   if (scrollTop) window.scrollTo({ top: 0, behavior: "smooth" });
@@ -65,7 +73,10 @@ function showView(view, historyMode = null, scrollTop = false) {
 }
 
 function setupViewNavigation() {
-  showView(requestedView(), "replace");
+  const initialTarget = location.hash
+    ? document.getElementById(location.hash.slice(1)) : null;
+  showView(requestedView(), "replace", false, Boolean(initialTarget));
+  if (initialTarget) requestAnimationFrame(() => initialTarget.scrollIntoView({ block: "start" }));
   document.querySelectorAll("[data-view-link]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
@@ -127,6 +138,7 @@ const BLUE = "#3987e5", ORANGE = "#d95926";
 function baseOpt() {
   return {
     backgroundColor: "transparent",
+    aria: { enabled: true, decal: { show: true } },
     textStyle: { fontFamily: "system-ui, sans-serif", color: INK2 },
     grid: { left: 58, right: 80, top: 42, bottom: 34 },
     legend: { top: 4, textStyle: { color: MUTED, fontSize: 12 }, itemWidth: 16, itemHeight: 9, inactiveColor: "#4a4a47" },
@@ -390,7 +402,9 @@ function renderHidmetTable(h) {
   $("tabel-hidmet").innerHTML = `<table class="data">
     <thead><tr><th>Stație</th><th class="num">nivel cm</th><th class="num">24 h</th><th class="num">Q m³/s</th><th class="num">apă</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="sub" style="margin:8px 0 0">„·" = debitul nu se publică pentru stația respectivă.</p>`;
+    <p class="sub" style="margin:8px 0 0">Observație: <b>${h.data || "dată neidentificată"}</b>${h.observation_time ? ` · ${h.observation_time}` : ""}.
+      „·" = debitul nu se publică pentru stația respectivă.${h.transport_verified === false
+        ? `<br><span class="down">Limită de integritate:</span> ${h.transport_warning}` : ""}</p>`;
 }
 
 /* ---------------------------------------------------------------- avize -- */
@@ -731,7 +745,8 @@ async function renderAnomalii() {
       <h3>${titlu} ${sevChip(sev)}</h3>
       <p class="v">${mesaj}</p>
       <div class="evi">${probe}</div>
-      <p class="met">Metodă: percentila empirică a zilei calendaristice (±7 zile), GloFAS 1991–${new Date().getFullYear() - 1}.
+      <p class="met">Metodă: percentila empirică a ferestrei calendaristice ±7 zile, GloFAS ${clim[0].reference_period
+        ? `${clim[0].reference_period.effective_start}–${clim[0].reference_period.effective_end}` : "perioadă efectivă indisponibilă"}.
         Este un reper de model, nu o clasificare oficială INHGA.</p>
     </div>`);
   }
@@ -826,7 +841,8 @@ async function renderAnomalii() {
    ["serbia", "Serbia: miră ↔ model", "RHMZ/Hydroinfo"]].forEach(([key, titlu, cine]) => {
     const g = d[key];
     if (!g) return;
-    const sev = g.coerent ? "normal" : "sever";
+    const eligible = g.integrity_eligible !== false;
+    const sev = !eligible ? "atentie" : g.coerent ? "normal" : "sever";
     const delivery = key === "ungaria"
       ? `<br>livrări OVF: Hydroinfo ${g.hydroinfo_m3s != null ? fmtN.format(g.hydroinfo_m3s) + " m³/s" : "–"} ·
          DanubeHIS ${g.danubehis_m3s != null ? fmtN.format(g.danubehis_m3s) + " m³/s" : "–"}${g.diferenta_livrari_pct != null
@@ -834,11 +850,13 @@ async function renderAnomalii() {
       : "";
     cards.push(`<div class="card verdict">
       <h3>${titlu} ${sevChip(sev)}</h3>
-      <p class="v">${g.coerent
+      <p class="v">${!eligible
+        ? `Valoarea este afișată numai ca <b>context</b>; transportul sursei nu permite folosirea ei ca test de integritate.`
+        : g.coerent
         ? `Măsurătoarea ${cine} și modelul sunt <b>compatibile cu banda largă de control</b>.`
         : `Raport măsurat/model în afara plauzibilului — <b>de investigat</b>.`}</p>
       <div class="evi">măsurat ${fmtN.format(g.masurat_m3s)} m³/s · model ${fmtN.format(g.model_m3s)} m³/s · raport ${g.raport}${delivery}</div>
-      <p class="met">${g.metoda}.</p>
+      <p class="met">${g.metoda}.${g.limit ? ` ${g.limit}.` : ""}</p>
     </div>`);
   });
 
@@ -900,6 +918,15 @@ async function renderStatistici() {
     $("tabel-stat-precip").innerHTML = "";
     return;
   }
+
+  const flowPeriod = d.reference_periods?.glofas;
+  $("stats-glofas-reference").textContent = flowPeriod
+    ? `model GloFAS · referință efectivă ${flowPeriod.effective_start}–${flowPeriod.effective_end}`
+    : "model GloFAS · referință efectivă indisponibilă";
+  const rainPeriod = d.reference_periods?.era5;
+  $("stats-era5-reference").textContent = rainPeriod
+    ? `reanaliza ERA5 · referință efectivă ${rainPeriod.effective_start}–${rainPeriod.effective_end}`
+    : "reanaliza ERA5 · referință efectivă indisponibilă";
 
   $("tabel-stat-debit").innerHTML = `<div style="overflow-x:auto"><table class="data">
     <thead><tr><th>Secțiune</th><th class="num">km</th><th class="num">ultima zi m³/s</th>
@@ -1366,9 +1393,17 @@ async function renderSinteza(inhga) {
     add("ploi↔debit", an.precipitatii?.zone?.length
       ? !(an.precipitatii.debit_pct <= 10 && Math.min(...an.precipitatii.zone.map((z) => z.pct ?? 100)) > 20) : null);
     // satelitul rămâne shadow: un nivel mic nu este o verificare de integritate „trecută”
-    add("Germania măsurat↔model", an.germania ? an.germania.coerent : null);
-    add("Ungaria măsurat↔model", an.ungaria ? an.ungaria.coerent : null);
-    add("Serbia măsurat↔model", an.serbia ? an.serbia.coerent : null);
+    const verificationFamilies = new Set();
+    const addIndependent = (name, check) => {
+      if (!check || check.integrity_eligible === false) return;
+      const family = check.verification_family || name;
+      if (verificationFamilies.has(family)) return;
+      verificationFamilies.add(family);
+      add(name, check.coerent);
+    };
+    addIndependent("Germania măsurat↔model", an.germania);
+    addIndependent("Ungaria măsurat↔model", an.ungaria);
+    addIndependent("Serbia măsurat↔model", an.serbia);
     add("retenție Austria", an.austria ? !an.austria.suspiciune_retentie : null);
     const rele = checks.filter((c) => !c.ok);
     if (rele.length === 0 && checks.length) {
@@ -1647,6 +1682,11 @@ async function renderRomania() {
   const market = en.market || {};
   const consumptionDay = market.consumption || {};
   const reserveDay = market.reserve_procurement || {};
+  const reserveServices = reserveDay.services || [];
+  const weakestReserve = reserveServices.find((service) =>
+    service.service === reserveDay.minimum_satisfaction_service) || {};
+  const fullySatisfiedServices = reserveServices.filter((service) =>
+    service.intervals_below_reported_demand === 0).length;
   const balancing = market.balancing || {};
   const balancingLatest = balancing.latest || {};
   const pzu = market.day_ahead || {};
@@ -1659,8 +1699,8 @@ async function renderRomania() {
       : "–"),
     li("actualizat", `${en.sen_updated || "–"} <span class="prov prov-masurat">măsurat</span>`),
     consumptionDay.available ? li("consum DAMAS", `<b>${fmtV(consumptionDay.realized_mw?.median, fmt1)} MW</b> mediană · vârf ${fmtV(consumptionDay.realized_mw?.max, fmt1)} MW · ${fmtV(consumptionDay.realized_intervals)}/${fmtV(consumptionDay.forecast_intervals)} intervale realizate · ${consumptionDay.delivery_date || "dată lipsă"}<br><span class="table-detail">${consumptionDay.limit || "ziua poate fi incompletă"}</span>`) : null,
-    reserveDay.available ? li("capacitate de echilibrare contractată", `minimul raportului publicat cerere satisfăcută/cerere: <b>${fmtV(reserveDay.minimum_satisfaction_pct, fmt1)}%</b>${reserveDay.minimum_satisfaction_service ? ` · ${reserveDay.minimum_satisfaction_service}` : ""} · ${reserveDay.delivery_date || "dată lipsă"}<br><span class="table-detail">${reserveDay.limit || "nu este rezerva disponibilă în timp real"}</span>`) : null,
-    balancing.available ? li("echilibrare DAMAS", `ultimul interval: dezechilibru estimat <b>${fmtV(balancingLatest.estimated_system_imbalance_mw, fmt1)} MW</b> · rezervă activată ${fmtV(balancingLatest.activated_reserve_mw, fmt1)} MW${balancingLatest.estimated_negative_imbalance_price_lei_mwh != null ? ` · preț estimat deficit ${fmtN.format(balancingLatest.estimated_negative_imbalance_price_lei_mwh)} lei/MWh` : ""}<br><span class="table-detail">${balancing.latest_interval?.to || balancing.delivery_date || "dată lipsă"} · ${balancing.limit || "valori operative revizuibile"}</span>`) : null,
+    reserveDay.available ? li("capacitate de echilibrare contractată", `<b>${reserveDay.minimum_satisfaction_service || "serviciul minim"}</b>: mediană ${fmtV(weakestReserve.satisfaction_pct?.median, fmt1)}%, minim ${fmtV(reserveDay.minimum_satisfaction_pct, fmt1)}%${weakestReserve.intervals_below_reported_demand != null ? ` · ${fmtV(weakestReserve.intervals_below_reported_demand)}/${fmtV(weakestReserve.intervals)} intervale sub cererea publicată` : ""} · ${fullySatisfiedServices}/${reserveServices.length || "?"} servicii integral · ${reserveDay.delivery_date || "dată lipsă"}<br><span class="table-detail">${reserveDay.limit || "nu este rezerva disponibilă în timp real"}</span>`) : null,
+    balancing.available ? li("echilibrare DAMAS", `ultimul interval: dezechilibru estimat <b>${fmtV(balancingLatest.estimated_system_imbalance_mw, fmt1)} MW</b> · rezervă activată ${fmtV(balancingLatest.activated_reserve_mw, fmt1)} MW${balancingLatest.estimated_negative_imbalance_price_lei_mwh != null ? ` · preț estimat deficit ${fmtN.format(balancingLatest.estimated_negative_imbalance_price_lei_mwh)} lei/MWh` : ""}<br><span class="table-detail">${fmtRomaniaDateTime(balancing.latest_interval?.to || balancing.delivery_date)} · ${balancing.limit || "valori operative revizuibile"}</span>`) : null,
     pzu.available ? li("PZU · ziua următoare", `<b>${fmtN.format(pzu.base_lei_mwh)} lei/MWh</b> Base · ${pzu.delivery_date || "dată lipsă"}${previousMonth.is_previous_to_delivery && pzu.base_vs_previous_month_pct != null ? ` · ${pzu.base_vs_previous_month_pct >= 0 ? "+" : ""}${fmt1.format(pzu.base_vs_previous_month_pct)}% față de media ponderată ${previousMonth.month} (${fmtN.format(previousMonth.weighted_average_lei_mwh)} lei/MWh)` : ""}<br><span class="table-detail">${pzu.limit || "prețul nu atribuie cauza"}</span>`) : null,
     li("istoric local", `<b>${fmtV(energyHistory.days)} zile</b> din minimum ${fmtV(energyHistory.minimum_days)} pentru comparație · ${energyHistory.from || "–"} → ${energyHistory.to || "–"}`),
   ].filter(Boolean).join("");
@@ -1945,7 +1985,7 @@ async function refreshData() {
   pill("INHGA", ov.inhga ? (ov.inhga.stale ? "stale" : "ok") : "err");
   pill("AFDJ", afdj ? (afdj.stale ? "stale" : "ok") : "err");
   pill("PEGELONLINE", ov.pegelonline ? (ov.pegelonline.stale ? "stale" : "ok") : "err");
-  pill("RHMZ", hidmet ? (hidmet.stale ? "stale" : "ok") : "err");
+  pill("RHMZ", hidmet ? (hidmet.stale || hidmet.transport_verified === false ? "stale" : "ok") : "err");
   pill("Hydroinfo", hydroinfo ? (hydroinfo.stale ? "stale" : "ok") : "err");
   pill("DanubeHIS", danubehis ? (danubehis.stale ? "stale" : "ok") : "err");
 

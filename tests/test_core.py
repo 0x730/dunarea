@@ -109,6 +109,40 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertNotIn("-226 cm", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("U1 oprită", page.split('data-view="romania"', 1)[1])
 
+    def test_deep_links_chart_accessibility_and_effective_reference_copy(self):
+        root = Path(__file__).parents[1]
+        page = root.joinpath("static/index.html").read_text()
+        app = root.joinpath("static/app.js").read_text()
+
+        self.assertIn("preserveHash", app)
+        self.assertIn("initialTarget.scrollIntoView", app)
+        self.assertIn("aria: { enabled: true", app)
+        self.assertIn('role="img" aria-label=', page)
+        self.assertIn('id="stats-glofas-reference"', page)
+        self.assertIn('id="stats-era5-reference"', page)
+        self.assertNotIn("referință 1991–anul trecut", page)
+
+
+class PublicApiSecurityTests(unittest.TestCase):
+    def test_public_payload_removes_sensitive_query_parameters_recursively(self):
+        value = {"items": [{"source_url": (
+            "https://example.org/data?token=secret&safe=yes&X-Amz-Signature=also-secret")}]}
+
+        out = server._public_payload(value)
+
+        self.assertEqual(out["items"][0]["source_url"], "https://example.org/data?safe=yes")
+        self.assertNotIn("secret", json.dumps(out))
+
+    def test_dynamic_external_url_requires_expected_https_host(self):
+        self.assertEqual(
+            C._validated_https_url("https://hydroweb.next.theia-land.fr/a", {
+                "hydroweb.next.theia-land.fr"}),
+            "https://hydroweb.next.theia-land.fr/a")
+        for url in ("http://hydroweb.next.theia-land.fr/a",
+                    "https://127.0.0.1/a", "https://example.org/a"):
+            with self.assertRaises(RuntimeError):
+                C._validated_https_url(url, {"hydroweb.next.theia-land.fr"})
+
 
 class MissingDataRegistryTests(unittest.TestCase):
     def test_registry_statuses_follow_available_evidence(self):
@@ -339,7 +373,12 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(claims["rarity"]["status"], "rare_not_unprecedented")
         self.assertEqual(claims["romania_scope"]["status"], "not_supported")
         self.assertEqual(claims["cernavoda_impact"]["status"], "confirmed")
-        self.assertEqual(claims["national_energy_crisis"]["status"], "not_demonstrated")
+        self.assertEqual(claims["national_energy_crisis"]["status"], "insufficient")
+        assessment = claims["national_energy_crisis"]["evidence"]["national_crisis_assessment"]
+        self.assertFalse(assessment["ready"])
+        self.assertFalse(assessment["coverage"]["operational_reserve_margin_available"])
+        self.assertIn("confirmarea sau excluderea",
+                      claims["national_energy_crisis"]["conclusion"])
 
     def test_new_water_and_energy_inputs_update_missing_sections(self):
         afdj, inhga, sen = self.inputs()
@@ -375,7 +414,7 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertIn("nicio restricție", rain_claim["conclusion"])
         self.assertTrue(out["energy"]["history"]["enough_for_comparison"])
         self.assertEqual(out["energy"]["market"]["available_components"], 4)
-        self.assertIn("nu este demonstrată", out["headline"])
+        self.assertIn("nu poate fi verificată", out["headline"])
         self.assertIn("snn_pdf_sha256", out["energy"])
 
         operational = out["cernavoda"]["operational_history"]
@@ -734,6 +773,21 @@ class CacheTests(unittest.TestCase):
         ready = C.sen_history_context(min_days=14)
         self.assertTrue(ready["enough_for_comparison"])
         self.assertEqual(ready["metrics"]["consum_mw"]["samples"], 14)
+
+    def test_sensitive_hydroweb_cache_is_self_healed_without_losing_history(self):
+        signed = "https://hydroweb.next.theia-land.fr/file?token=secret"
+        C.cache_put("hist:hydroweb:2026-08-04", {
+            "statii": [{"source_url": signed, "nivel_m": 1.2}]}, 10 ** 9)
+        C.cache_put("hydroweb:v3", {"statii": [{"source_url": signed}]}, 3600)
+
+        changed = C.scrub_sensitive_cache()
+
+        self.assertEqual(changed, 2)
+        history = C.cache_get("hist:hydroweb:2026-08-04", max_age=10 ** 9)["data"]
+        self.assertEqual(history["statii"][0]["nivel_m"], 1.2)
+        self.assertEqual(history["statii"][0]["source_url"], C.HYDROWEB_PUBLIC)
+        self.assertIsNone(C.cache_get("hydroweb:v3", max_age=10 ** 9))
+        self.assertEqual(oct(os.stat(C.DB_PATH).st_mode & 0o777), "0o600")
 
 
 class ConnectorTests(unittest.TestCase):
@@ -1216,6 +1270,28 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(entry["quality_flags"], [])
         self.assertTrue(entry["eligibila_detector"])
         self.assertEqual(len(entry["raw_sha256"]), 64)
+        self.assertEqual(entry["source_url"], C.HYDROWEB_PUBLIC)
+        self.assertNotIn("token", json.dumps(entry).lower())
+
+    def test_hidmet_preserves_observation_time_and_marks_tls_limit(self):
+        page = """<h1>Hydrological data: &nbsp;WEDNESDAY&nbsp;05.08.2026.
+          &nbsp;&nbsp;time:&nbsp;8:00&nbsp;(06:00 UTC)</h1>
+          <tr><td>DUNAV</td><td>x</td><td><a href="prognoza.php?hm_id=42035">NOVI SAD</a></td>
+          <td>x</td><td>x</td><td>-73</td><td>-1</td><td>770</td><td>27.0</td>
+          <td><img src="tendencije/stag.gif"></td></tr>"""
+
+        def uncached(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False}
+
+        with mock.patch.object(C, "http_get", return_value=page), \
+                mock.patch.object(C, "cached", side_effect=uncached), \
+                mock.patch.object(C, "daily_snapshot"):
+            out = C.hidmet_report()["data"]
+
+        self.assertEqual(out["data"], "2026-08-05")
+        self.assertIn("2026-08-05T08:00:00", out["observation_time"])
+        self.assertFalse(out["transport_verified"])
+        self.assertEqual(out["statii"][0]["debit_m3s"], 770.0)
 
     def test_png_stats_count_opera_classes_without_pillow(self):
         raw = self._png_rgba([
@@ -1305,6 +1381,30 @@ class AnomalySourceTests(unittest.TestCase):
         self.assertEqual(out["sursa_masurata"], "ICPDR DanubeHIS")
         self.assertEqual(out["raport"], 0.75)
         self.assertTrue(out["coerent"])
+
+    def test_serbia_check_does_not_count_unverified_rhmz_transport(self):
+        rhmz = {"data": {"transport_verified": False, "statii": [
+            {"statie": "Novi Sad", "debit_m3s": 700.0}]}}
+        model = {"data": {"time": ["2026-08-05"], "discharge": [1000.0]}}
+        with mock.patch.object(C, "hidmet_report", return_value=rhmz), \
+                mock.patch.object(C, "hydroinfo_danube", side_effect=OSError("down")), \
+                mock.patch.object(C, "glofas_recent", return_value=model):
+            contextual = anomalii.serbia_check()
+
+        self.assertFalse(contextual["integrity_eligible"])
+        self.assertEqual(contextual["verification_family"], "gauge_rs_rhmz")
+        self.assertIn("TLS", contextual["limit"])
+
+        hydroinfo = {"data": {"statii": [
+            {"statie": "Novi Sad", "debit_m3s": 770.0}]}}
+        with mock.patch.object(C, "hidmet_report", return_value=rhmz), \
+                mock.patch.object(C, "hydroinfo_danube", return_value=hydroinfo), \
+                mock.patch.object(C, "glofas_recent", return_value=model):
+            verified_delivery = anomalii.serbia_check()
+
+        self.assertTrue(verified_delivery["integrity_eligible"])
+        self.assertEqual(verified_delivery["verification_family"], "gauge_hu_ovf")
+        self.assertEqual(verified_delivery["source"], "OVF/Hydroinfo")
 
     def test_satellite_check_uses_only_quality_filtered_spatial_coverage(self):
         stations = []
@@ -1548,6 +1648,8 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("un singur an, nu climatologia", prompt)
         self.assertIn("climatologie_modelata_afluenti", prompt)
         self.assertIn("nu transferă percentila modelului", prompt)
+        self.assertIn("fereastra calendaristică ±7 zile", prompt)
+        self.assertIn("ani_mai_mici folosește separat aceeași dată exactă", prompt)
         self.assertIn("context_resurse_apa_anar", prompt)
         self.assertIn("stare_cne_snn", prompt)
         self.assertIn("istoric_sen_local", prompt)

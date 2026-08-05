@@ -53,6 +53,7 @@ daemonul și îi afli numele.)
   în directorul de deploy):
   ```
   PORT=7300
+  MONITOR_TZ=Europe/Bucharest
   HYDROWEB_KEY=cheia_ta_hydroweb
   AI_API_KEY=cheia_openai            # activează analiza narativă
   AI_MODEL=gpt-4o-mini               # opțional

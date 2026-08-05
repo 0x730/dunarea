@@ -25,7 +25,7 @@ from datetime import date
 import anomalii
 import connectors as C
 
-PROMPT_VERSION = 13
+PROMPT_VERSION = 14
 
 _lock_ai = threading.Lock()
 
@@ -40,7 +40,7 @@ PROMPT_SISTEM = """Ești un analist hidrologic riguros și sobru. Primești un J
 
 Dicționarul câmpurilor:
 - azi.value, azi_m3s, debit, masurat_m3s și model_m3s sunt DEBITE în m³/s, nu niveluri;
-- pct / percentila este rangul față de istoricul aceleiași zile calendaristice: P0 minim, P50 mediană, P100 maxim; nu este procent din debit;
+- pct / percentila debitului este rangul față de istoricul modelului din fereastra calendaristică ±7 zile în jurul datei: P0 minim, P50 mediană, P100 maxim; nu este procent din debit; ani_mai_mici folosește separat aceeași dată exactă;
 - streak_sub_p10 = zile consecutive sub P10;
 - abatere_pct = abaterea procentuală față de mediana istorică a zilei;
 - lipsa_km3 = volum cumulat lipsă față de mediană;

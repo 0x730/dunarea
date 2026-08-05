@@ -195,7 +195,10 @@ Note importante, afișate și în aplicație:
   fluxuri publice la niciun operator** — aplicația marchează aceste poziții cu
   „nepublicat" și indică unde pot fi cerute (Legea 544/2001).
 - Site-ul RHMZ Serbia are lanțul de certificate TLS incomplet; conectorul citește
-  pagina publică cu verificarea relaxată doar pentru acest host.
+  pagina publică cu verificarea relaxată doar pentru acest host, marchează limita
+  în API/UI și nu numără acea livrare singură drept verificare de integritate.
+  Pentru Novi Sad preferă copia HTTPS verificabilă OVF/Hydroinfo, fără a o dubla
+  ca familie independentă față de celelalte valori OVF.
 
 ## Detectorul de anomalii
 

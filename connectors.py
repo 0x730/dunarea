@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import html as html_lib
+import ipaddress
 import os
 import re
 import sqlite3
@@ -40,6 +41,13 @@ FAIL_BACKOFF_S = 60
 
 def _db():
     conn = sqlite3.connect(DB_PATH, timeout=30)
+    # Cache-ul poate conține răspunsuri obținute cu credențiale de operator.
+    # Chiar dacă payloadurile publice sunt igienizate, fișierul local nu trebuie
+    # să fie lizibil de alți utilizatori ai serverului.
+    try:
+        os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
     conn.execute(
         "CREATE TABLE IF NOT EXISTS cache ("
         " key TEXT PRIMARY KEY, fetched_at REAL, ttl REAL, payload TEXT)"
@@ -67,6 +75,45 @@ def cache_put(key, data, ttl):
             "INSERT OR REPLACE INTO cache VALUES (?,?,?,?)",
             (key, time.time(), ttl, json.dumps(data)),
         )
+
+
+def _sanitize_hydroweb_cache_value(value):
+    """Migrare defensivă pentru snapshoturi create înainte de parser v3."""
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if (key == "source_url" and isinstance(item, str)
+                    and urllib.parse.urlparse(item).hostname ==
+                    "hydroweb.next.theia-land.fr"):
+                out[key] = "https://hydroweb.next.theia-land.fr/"
+            else:
+                out[key] = _sanitize_hydroweb_cache_value(item)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_hydroweb_cache_value(item) for item in value]
+    return value
+
+
+def scrub_sensitive_cache():
+    """Curăță URL-urile HydroWeb semnate din cache-urile existente.
+
+    Snapshoturile istorice sunt păstrate, dar numai cu proveniența canonică;
+    cheia de cache v3, devenită inutilă, este eliminată.
+    """
+    changed = 0
+    with _db_lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT key, payload FROM cache "
+            "WHERE key LIKE 'hist:hydroweb:%' OR key='hydroweb:v4'"
+        ).fetchall()
+        for key, payload in rows:
+            clean = _sanitize_hydroweb_cache_value(json.loads(payload))
+            encoded = json.dumps(clean)
+            if encoded != payload:
+                conn.execute("UPDATE cache SET payload=? WHERE key=?", (encoded, key))
+                changed += 1
+        changed += conn.execute("DELETE FROM cache WHERE key='hydroweb:v3'").rowcount
+    return changed
 
 
 # chei păstrate permanent (arhiva locală care crește zi de zi)
@@ -256,6 +303,29 @@ def http_get(url, timeout=25, insecure=False, binary=False):
 
 def http_json(url, timeout=25):
     return json.loads(http_get(url, timeout=timeout))
+
+
+def _validated_https_url(url, allowed_hosts):
+    """Respinge URL-uri dinamice în afara hosturilor publice așteptate.
+
+    Unele cataloage oficiale întorc chiar ele URL-ul activului. Fără această
+    barieră, o modificare rău-intenționată a catalogului ar transforma serverul
+    într-un proxy către o adresă internă sau către un host terț.
+    """
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        raise RuntimeError("URL extern respins: este necesar HTTPS fără credențiale în URL")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address and not address.is_global:
+        raise RuntimeError("URL extern respins: adresă IP nepublică")
+    allowed = {item.lower().rstrip(".") for item in allowed_hosts}
+    if host not in allowed:
+        raise RuntimeError("URL extern respins: host neașteptat")
+    return url
 
 
 # ------------------------------------------------------ registru puncte ----
@@ -928,7 +998,8 @@ def inhga_backfill(days=90, pause=0.25):
 # „Actual hydrological data" — tabel zilnic (ora 10 locală) cu toate stațiile,
 # inclusiv Dunărea din Serbia până la Prahovo (aval de Porțile de Fier II):
 # nivel (cm), variație (cm), debit (m³/s), temperatura apei. Site-ul are lanț
-# TLS incomplet, de aceea fetch cu verificare relaxată (doar citire publică).
+# TLS incomplet, de aceea fetch cu verificare relaxată. Limitarea este expusă
+# în payload: această sursă nu poate fi tratată singură ca probă de integritate.
 
 HIDMET_URL = "https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php"
 
@@ -936,6 +1007,24 @@ HIDMET_URL = "https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php"
 def hidmet_report():
     def fetch():
         html = http_get(HIDMET_URL, insecure=True)
+        observed_day = re.search(
+            r"Hydrological data:.*?(\d{2}\.\d{2}\.\d{4})", html, re.S | re.I)
+        observed_time = re.search(
+            r"time:(?:&nbsp;|\s)*(\d{1,2}:\d{2}).*?"
+            r"\((\d{1,2}:\d{2}) UTC\)", html, re.S | re.I)
+        observed_date = None
+        observation_time = None
+        if observed_day and observed_time:
+            try:
+                observed_date = datetime.strptime(
+                    observed_day.group(1), "%d.%m.%Y").date().isoformat()
+                hour, minute = observed_time.group(1).split(":", 1)
+                local_time = f"{int(hour):02d}:{minute}"
+                observation_time = datetime.fromisoformat(
+                    f"{observed_date}T{local_time}:00").replace(
+                        tzinfo=ZoneInfo("Europe/Belgrade")).isoformat()
+            except ValueError:
+                observed_date = observation_time = None
         rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S | re.I)
         out = []
         for row in rows:
@@ -971,10 +1060,21 @@ def hidmet_report():
         if not out:
             raise RuntimeError("tabelul RHMZ nu conține stații de pe Dunăre "
                                "(structura paginii s-a schimbat?)")
-        daily_snapshot("rhmz", out)
-        return {"url": HIDMET_URL, "statii": out}
+        payload = {
+            "url": HIDMET_URL,
+            "data": observed_date,
+            "observation_time": observation_time,
+            "statii": out,
+            "transport_verified": False,
+            "transport_warning": (
+                "Serverul oficial RHMZ nu livrează un lanț TLS verificabil în "
+                "configurația curentă; conținutul este citit numai de pe hostul "
+                "hidmet.gov.rs și nu este folosit singur ca probă decisivă."),
+        }
+        daily_snapshot("rhmz", payload)
+        return payload
 
-    return cached("hidmet", 3600, fetch)
+    return cached("hidmet:v2", 3600, fetch)
 
 
 # ------------------------------------------------------ Hydroinfo Hungary ---
@@ -2503,6 +2603,7 @@ def dahiti_danube():
 # percentilele proprii, nu valorile absolute.
 
 HYDROWEB_STAC = "https://hydroweb.next.theia-land.fr/api/v1/rs-catalog/stac"
+HYDROWEB_PUBLIC = "https://hydroweb.next.theia-land.fr/"
 HYDROWEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126"
 
 
@@ -2512,11 +2613,13 @@ def _hydroweb_key():
         return k
     path = os.path.join(BASE_DIR, "data", "keys", "hydroweb.key")
     if os.path.isfile(path):
-        return open(path).read().strip()
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
     return ""
 
 
 def _hydroweb_get(url, key, raw=False):
+    _validated_https_url(url, {"hydroweb.next.theia-land.fr"})
     req = urllib.request.Request(url, headers={
         "User-Agent": HYDROWEB_UA, "Accept": "application/json,text/plain",
         "X-API-Key": key})
@@ -2585,7 +2688,7 @@ def _select_hydroweb_features(features, max_statii):
     return [feature for _, feature in sorted(selected, key=lambda pair: pair[0], reverse=True)]
 
 
-def _hydroweb_station_entry(feature, text, fetched_at=None, source_url=None):
+def _hydroweb_station_entry(feature, text, fetched_at=None):
     sid = feature["id"].split("@", 1)[0]
     coords = (feature.get("geometry") or {}).get("coordinates") or [None, None]
     km = _hydroweb_feature_km(feature)
@@ -2599,8 +2702,11 @@ def _hydroweb_station_entry(feature, text, fetched_at=None, source_url=None):
         "provider": "CNES/Theia",
         "product_family": "altimetrie_satelitara_hydroweb",
         "feature_id": feature.get("id"),
-        "source_url": source_url,
-        "parser_version": "hydroweb-series-v2",
+        # URL-urile activelor HydroWeb sunt semnate și efemere. Nu le
+        # serializăm și nu le păstrăm în cache; proveniența publică stabilă este
+        # portalul, iar integritatea fișierului este identificată prin SHA-256.
+        "source_url": HYDROWEB_PUBLIC,
+        "parser_version": "hydroweb-series-v3",
         "raw_sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest(),
         "fetched_at": fetched_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -2665,8 +2771,7 @@ def hydroweb_danube(max_statii=12):
                 try:
                     text = _hydroweb_get(txt_asset["href"], key, raw=True) \
                         .decode("utf-8", "replace")
-                    entry = _hydroweb_station_entry(
-                        f, text, fetched_at, source_url=txt_asset.get("href"))
+                    entry = _hydroweb_station_entry(f, text, fetched_at)
                 except Exception as exc:
                     entry = {"statie": f["id"].split("@", 1)[0],
                              "km": _hydroweb_feature_km(f),
@@ -2687,7 +2792,7 @@ def hydroweb_danube(max_statii=12):
             "colectie": "HYDROWEB_RIVERS_OPE (Theia/CNES)",
             "provider": "CNES/Theia",
             "product_family": "altimetrie_satelitara_hydroweb",
-            "parser_version": "hydroweb-series-v2",
+            "parser_version": "hydroweb-series-v3",
             "fetched_at": fetched_at,
             "praguri_calitate": {"vechime_max_zile": HYDROWEB_MAX_AGE_DAYS,
                                   "incertitudine_max_m": HYDROWEB_MAX_UNCERTAINTY_M},
@@ -2700,7 +2805,7 @@ def hydroweb_danube(max_statii=12):
         daily_snapshot("hydroweb", payload)
         return payload
 
-    return cached("hydroweb:v3", 12 * 3600, fetch)
+    return cached("hydroweb:v4", 12 * 3600, fetch)
 
 
 # ---------------------- OPERA: întinderea apei, radar + optic (NASA/JPL) --
@@ -3009,7 +3114,8 @@ def copernicus_land_map(kind):
     # Serviciul public de thumbnails autorizează exact URL-ul publicat în STAC;
     # modificarea BBOX-ului poate răspunde 403. Păstrăm imaginea europeană
     # originală și nu pretindem că este un subset numeric al bazinului.
-    url = layer["thumbnail_url"]
+    url = _validated_https_url(
+        layer["thumbnail_url"], {"thumbnails.dataspace.copernicus.eu"})
 
     def fetch():
         raw = http_get(url, timeout=60, binary=True)
@@ -3123,7 +3229,7 @@ EVIDENCE_SOURCES = {
     "afdj": {"provider": "AFDJ", "kind": "masurat",
              "family": "gauge_ro_afdj", "mode": "active"},
     "rhmz": {"provider": "RHMZ Serbia", "kind": "masurat",
-             "family": "gauge_rs_rhmz", "mode": "active"},
+             "family": "gauge_rs_rhmz", "mode": "active_unverified_transport"},
     "hydroinfo": {"provider": "OVF Hungary", "kind": "masurat",
                   "family": "gauge_hu_ovf", "mode": "active"},
     "danubehis": {"provider": "ICPDR, valori OVF", "kind": "masurat_retransmis",

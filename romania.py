@@ -935,10 +935,11 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "Transelectrica publică agregatul nuclear, nu cauza; cauza este acceptată numai dintr-un raport SNN revizuit și proaspăt."))
 
     if stopped_for_water:
-        crisis_text = ("Pierderea unei unități este materială, dar datele disponibile nu demonstrează "
-                       "o criză energetică națională critică.")
+        crisis_text = ("Pierderea unei unități este materială, dar acoperirea disponibilă nu permite "
+                       "confirmarea sau excluderea unei crize energetice naționale critice.")
     elif nuclear is not None and nuclear >= 1100:
-        crisis_text = "Nu apare acum o pierdere nucleară; o criză energetică produsă de Cernavodă nu este susținută."
+        crisis_text = ("Nu apare acum o pierdere nucleară; o criză produsă de Cernavodă nu este "
+                       "susținută, iar criticitatea energetică națională cere probe separate.")
     else:
         crisis_text = "Criticitatea energetică națională nu poate fi evaluată din fotografia SEN disponibilă."
     history_days = int(sen_history.get("days") or 0)
@@ -952,8 +953,21 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         f"Sunt disponibile {market_components}/4 componente oficiale de piață și echilibrare. "
         if market_components else
         "Fluxurile oficiale de piață și echilibrare nu sunt disponibile acum. ")
+    crisis_coverage = {
+        "sen_history_comparable": bool(sen_history.get("enough_for_comparison")),
+        "market_components_complete": market_components >= 4,
+        "operational_reserve_margin_available": False,
+        "official_emergency_measures_available": False,
+    }
+    energy_evidence["national_crisis_assessment"] = {
+        "ready": all(crisis_coverage.values()),
+        "coverage": crisis_coverage,
+        "rule": ("Verdictul național cere simultan un baseline SEN comparabil, "
+                 "contextul pieței, marja operațională rămasă și măsuri oficiale "
+                 "de urgență sau consum întrerupt."),
+    }
     claims.append(_claim(
-        "national_energy_crisis", "Criză energetică națională critică?", "not_demonstrated",
+        "national_energy_crisis", "Criză energetică națională critică?", "insufficient",
         crisis_text, energy_evidence,
         history_limit + market_limit +
         "Capacitatea contractată și rezerva activată nu arată marja operațională rămasă; "
@@ -963,7 +977,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     cne_confirmed = cne_status == "confirmed"
     if physical_confirmed and cne_confirmed:
         headline = ("Fenomenul și efectul asupra U1 sunt reale; caracterizarea drept "
-                    "«criză energetică națională critică» nu este demonstrată de datele curente.")
+                    "«criză energetică națională critică» nu poate fi verificată cu acoperirea curentă.")
     elif physical_confirmed:
         headline = ("Fenomenul hidrologic este real, dar efectul energetic curent și amploarea "
                     "națională nu sunt suficient demonstrate.")

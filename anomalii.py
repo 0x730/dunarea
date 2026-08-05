@@ -16,9 +16,9 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
-REPORT_CACHE_KEY = "anomalii_report:v6"
-STATS_CACHE_KEY = "statistici:v3"
-BUDGET_CACHE_KEY = "bilant_apa:v2"
+REPORT_CACHE_KEY = "anomalii_report:v8"
+STATS_CACHE_KEY = "statistici:v4"
+BUDGET_CACHE_KEY = "bilant_apa:v3"
 
 
 # ------------------------------------------------------------- utilitare ---
@@ -86,6 +86,8 @@ def climatology(point_id):
     if not smap:
         raise RuntimeError("serie goală")
     cur_year = date.today().year
+    reference_years = sorted({int(ds[:4]) for ds in smap
+                              if not ds.startswith(str(cur_year))})
     exact, ref = _doy_reference(smap, cur_year)
 
     # ultimele 45 de zile calendaristice, indiferent de anul lor — altfel
@@ -128,6 +130,10 @@ def climatology(point_id):
         "rezolutie_spatiala_aprox_km": 5,
         "azi": last, "streak_sub_p10": streak,
         "ani_mai_mici": ani_mai_mici, "ani_referinta": n_ani,
+        "reference_period": ({"requested_start": CLIM_START,
+                              "effective_start": reference_years[0],
+                              "effective_end": reference_years[-1]}
+                             if reference_years else None),
         "mediana_zilei": mediana_zilei, "abatere_pct": abatere_pct,
         "recent": recent,
     }
@@ -338,7 +344,8 @@ def precip_stats():
         # anul „curent" n-are date — raportăm anul precedent, complet
         an = cy if cy in ytd or cy in winter else cy - 1
         cur = ytd.get(an)
-        hist = [ytd[y] for y in range(PRECIP_START, an) if y in ytd]
+        hist_years = [y for y in sorted(ytd) if y < an]
+        hist = [ytd[y] for y in hist_years]
         wcur = winter.get(an)
         whist = [winter[y] for y in range(PRECIP_START + 1, an) if y in winter]
 
@@ -360,6 +367,10 @@ def precip_stats():
         out.append({
             "id": pid, "zona": p["name"],
             "pana_la": end,
+            "reference_period": ({"requested_start": PRECIP_START,
+                                  "effective_start": hist_years[0],
+                                  "effective_end": hist_years[-1]}
+                                 if hist_years else None),
             "ian_azi": block(cur, hist),
             "iarna": block(wcur, whist),
             "zapada_iarna": block(wsnow.get(an),
@@ -388,16 +399,38 @@ def full_stats():
                 "zile_sub_p10": c["streak_sub_p10"],
                 "ani_mai_mici": c["ani_mai_mici"],
                 "ani_referinta": c["ani_referinta"],
+                "reference_period": c.get("reference_period"),
             })
         except Exception:
             continue
+    periods = [row["reference_period"] for row in debit
+               if row.get("reference_period")]
+    debit_period = ({
+        "requested_start": CLIM_START,
+        "effective_start": min(p["effective_start"] for p in periods),
+        "effective_end": max(p["effective_end"] for p in periods),
+    } if periods else None)
+    debit_reference = (f"{debit_period['effective_start']}–{debit_period['effective_end']}"
+                       if debit_period else "perioadă indisponibilă")
+    precipitation = precip_stats()
+    precip_periods = [row["reference_period"] for row in precipitation
+                      if row.get("reference_period")]
+    precip_period = ({
+        "requested_start": PRECIP_START,
+        "effective_start": min(p["effective_start"] for p in precip_periods),
+        "effective_end": max(p["effective_end"] for p in precip_periods),
+    } if precip_periods else None)
+    precip_reference = (f"{precip_period['effective_start']}–{precip_period['effective_end']}"
+                        if precip_period else "perioadă indisponibilă")
     return {"generat": date.today().isoformat(),
-            "debit": debit, "precipitatii": precip_stats(),
+            "debit": debit, "precipitatii": precipitation,
+            "reference_periods": {"glofas": debit_period,
+                                  "era5": precip_period},
             "metoda": {
-                "debit": "GloFAS/Copernicus (model), referință 1991–anul trecut; "
+                "debit": f"GloFAS/Copernicus (model), referință efectivă {debit_reference}; "
                          "normala zilei = mediana ferestrei calendaristice ±7 zile",
-                "precipitatii": f"ERA5/Copernicus (reanaliză), referință "
-                                f"{PRECIP_START}–anul trecut, aceeași fereastră "
+                "precipitatii": f"ERA5/Copernicus (reanaliză), referință efectivă "
+                                f"{precip_reference}, aceeași fereastră "
                                 "calendaristică; puncte-proxy pe zone",
             }}
 
@@ -543,20 +576,39 @@ def germany_check():
     return {"masurat_m3s": masurat, "model_m3s": round(latest[1], 1),
             "raport": round(raport, 2),
             "coerent": 0.4 <= raport <= 2.5,
+            "verification_family": "gauge_de_at",
+            "integrity_eligible": True,
             "metoda": "debit orar WSV la Hofkirchen vs. GloFAS în aceeași "
                       "secțiune; bias-ul stabil de model e normal, ruptura nu"}
 
 
 def serbia_check():
     """Debitele măsurate sârbești (RHMZ) vs. modelul la Novi Sad."""
-    rs = C.hidmet_report()["data"]["statii"]
-    ns = next((s for s in rs if s["statie"] == "Novi Sad" and s.get("debit_m3s")), None)
+    rhmz = C.hidmet_report()["data"]
+    rs = rhmz["statii"]
+    rhmz_ns = next((s for s in rs if s["statie"] == "Novi Sad"
+                    and s.get("debit_m3s")), None)
+    ns = rhmz_ns if rhmz.get("transport_verified") else None
+    source = "RHMZ"
+    family = "gauge_rs_rhmz"
+    integrity_eligible = bool(ns)
     if not ns:
-        # RHMZ lasă uneori debitul gol; tabelul oficial OVF/Hydroinfo
-        # retransmite zilnic aceeași rețea regională și poate avea valoarea.
-        hu = C.hydroinfo_danube()["data"]["statii"]
-        ns = next((s for s in hu if s["statie"] == "Novi Sad"
-                   and s.get("debit_m3s")), None)
+        # RHMZ are un lanț TLS incomplet. Preferăm livrarea HTTPS verificabilă
+        # OVF/Hydroinfo; dacă lipsește, valoarea RHMZ rămâne doar context.
+        try:
+            hu = C.hydroinfo_danube()["data"]["statii"]
+            ns = next((s for s in hu if s["statie"] == "Novi Sad"
+                       and s.get("debit_m3s")), None)
+        except Exception:
+            ns = None
+        if ns:
+            source = "OVF/Hydroinfo"
+            family = "gauge_hu_ovf"
+            integrity_eligible = True
+        elif rhmz_ns:
+            ns = rhmz_ns
+            source = "RHMZ (transport TLS neverificat)"
+            integrity_eligible = False
     if not ns:
         raise RuntimeError("Novi Sad fără debit publicat azi în RHMZ/Hydroinfo")
     r = C.glofas_recent("novi_sad", past_days=7, forecast_days=0)
@@ -567,8 +619,13 @@ def serbia_check():
     return {"masurat_m3s": ns["debit_m3s"], "model_m3s": round(latest[1], 1),
             "raport": round(raport, 2),
             "coerent": 0.4 <= raport <= 2.5,
-            "metoda": "debit zilnic publicat pentru Novi Sad de RHMZ sau "
-                      "OVF/Hydroinfo vs. GloFAS în aceeași secțiune"}
+            "source": source,
+            "verification_family": family,
+            "integrity_eligible": integrity_eligible,
+            "limit": (None if integrity_eligible else
+                      "valoarea RHMZ este doar context: transportul TLS nu poate fi verificat"),
+            "metoda": f"debit zilnic publicat pentru Novi Sad de {source} "
+                      "vs. GloFAS în aceeași secțiune"}
 
 
 def hungary_check():
@@ -609,6 +666,8 @@ def hungary_check():
         "model_m3s": round(latest[1], 1),
         "raport": round(ratio, 2),
         "coerent": 0.4 <= ratio <= 2.5 and delivery_ok,
+        "verification_family": "gauge_hu_ovf",
+        "integrity_eligible": True,
         "data": budapest.get("data"),
         "metoda": "debitul OVF la Budapesta, livrat direct prin Hydroinfo și "
                   "normalizat prin ICPDR DanubeHIS, vs. GloFAS în aceeași "
@@ -738,11 +797,16 @@ def water_budget():
                 continue
             y = int(ds[:4])
             cum[y] = cum.get(y, 0.0) + v * 86400 / 1e9
-        hist = [cum[y] for y in range(CLIM_START, cy) if y in cum]
-        return cum.get(cy), (median(hist) if hist else None)
+        hist_years = [y for y in sorted(cum) if y < cy]
+        hist = [cum[y] for y in hist_years]
+        period = ({"requested_start": CLIM_START,
+                   "effective_start": hist_years[0],
+                   "effective_end": hist_years[-1]}
+                  if hist_years else None)
+        return cum.get(cy), (median(hist) if hist else None), period
 
-    q_pas_cur, q_pas_med = ytd_volume("passau")
-    q_baz_cur, q_baz_med = ytd_volume("bazias")
+    q_pas_cur, q_pas_med, q_pas_period = ytd_volume("passau")
+    q_baz_cur, q_baz_med, q_baz_period = ytd_volume("bazias")
     if None in (q_pas_cur, q_pas_med, q_baz_cur, q_baz_med):
         raise RuntimeError("serii GloFAS incomplete pentru bilanț")
 
@@ -775,14 +839,23 @@ def water_budget():
             "lipsa_km3": r1(q_baz_med - q_baz_cur),
         },
         "grace": grace,
+        "reference_periods": {
+            "precipitation_era5": {
+                "requested_start": PRECIP_START,
+                "effective_start": min(y for y in ytd_mm if y < cy),
+                "effective_end": max(y for y in ytd_mm if y < cy),
+            },
+            "glofas_passau": q_pas_period,
+            "glofas_bazias": q_baz_period,
+        },
         "consum_uman_nota": "captările, transferurile și variația stocurilor "
                             "nu sunt cuantificate separat în datele publice "
                             "folosite aici",
         "metoda": "ploaie: ERA5, media a 6 puncte-proxy distribuite "
                   "(câmpie+alpin) × aria bazinului la Achleiten; râu: GloFAS "
                   "cumulat de la 1 ianuarie; normal = mediana exact acelorași "
-                  "ferestre calendaristice (fără 29 feb), 1991/2000–anul "
-                  "trecut; rezidual P−Q = evapotranspirație + variația "
+                  "ferestre calendaristice (fără 29 feb); perioadele efective "
+                  "sunt raportate separat pentru fiecare serie; rezidual P−Q = evapotranspirație + variația "
                   "stocurilor + schimburi neobservate + eroarea proxy/model",
     }
 
