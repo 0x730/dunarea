@@ -25,7 +25,7 @@ from datetime import date
 import anomalii
 import connectors as C
 
-PROMPT_VERSION = 9
+PROMPT_VERSION = 10
 
 _lock_ai = threading.Lock()
 
@@ -46,6 +46,8 @@ Dicționarul câmpurilor:
 - lipsa_km3 = volum cumulat lipsă față de mediană;
 - anomalie_km3 la GRACE = abaterea apei totale față de referință, nu debit;
 - z este scor standardizat; |z| ≤ 1,5 este în variabilitatea istorică a testului.
+- prognoza_afluenti_inhga conține benzi de prognoză, nu valori măsurate;
+- statistici_afluenti_masurati conține observații instantanee brute în secțiuni parțiale; acestea nu sunt medii zilnice și nici aporturi totale în Dunăre.
 
 Reguli stricte:
 1. Pentru starea monitorului și toate valorile numerice hidrologice folosește exclusiv JSON-ul. Nu inventa și nu completa din memorie valori, stații, date, ani sau procente. Spune explicit când lipsesc.
@@ -59,7 +61,8 @@ Reguli stricte:
 9. Dacă mod_verificare_externa.activ este true, folosește căutarea web numai pentru context oficial/instituțional actual și contradicții. Încearcă să consulți cel puțin două familii instituționale primare independente, când există. Etichetează separat „validarea sursei deja ingerate” și „contraproba externă independentă”. Redeschiderea pe web a aceleiași pagini sau a aceleiași măsurători din JSON validează livrarea, dar nu adaugă independență; dacă nu găsești o a doua familie, spune explicit asta. Indică data, păstrează citările instrumentului și nu înlocui cifrele monitorului cu valori web. Dacă modul este false sau instrumentul nu a rulat, scrie exact că verificarea externă nu a fost efectuată; nu prezenta memoria modelului ca verificare externă.
 10. Nu numi toate datele „de azi” dacă observațiile au date diferite. În SITUAȚIA precizează intervalul datelor disponibile și atașează data fiecărei comparații materiale, mai ales model versus măsurătoare.
 11. La Baziaș, reconciliere_bazias.valoare_oficiala_curenta este cifra canonică a monitorului pentru starea curentă. reper_modelat_climatologic este debitul simulat într-o celulă GloFAS de aproximativ 5 km, nu o a doua măsurătoare și nu trebuie să egaleze valoarea INHGA. Folosește GloFAS față de propria climatologie. O diferență absolută compatibilă cu biasul istoric nu este „contradicție”; numește ruptură numai schimbarea relației pe perechi cu aceeași dată, susținută de test.
-12. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
+12. Pentru afluenții românești, separă prognoza_afluenti_inhga de statistici_afluenti_masurati. Cele cinci secțiuni măsurate au acoperire parțială în bazin și valori instantanee brute: nu se însumează, nu se integrează în km³ și nu estimează aportul total al României în Dunăre. Comparația cu aceeași fereastră din anul anterior descrie un singur an, nu climatologia.
+13. Fără speculații politice sau acuzații la adresa țărilor, instituțiilor ori operatorilor.
 
 Răspunsul trebuie să aibă exact aceste șase titluri, în română. Țintește 500–550 de cuvinte și nu depăși 600; rezervă spațiu pentru toate secțiunile înainte de a detalia:
 SITUAȚIA
@@ -175,6 +178,8 @@ def _digest():
         "bilant_apa_bazin_superior": bi,
         "statistici_precipitatii_zone": st.get("precipitatii"),
         "buletin_inhga": fara(inhga, "text_oficial"),
+        "prognoza_afluenti_inhga": _safe_context(C.inhga_danube_tributaries),
+        "statistici_afluenti_masurati": _safe_context(C.danubehis_romanian_tributaries),
         "registru_provenienta": C.evidence_source_registry(),
         "context_seceta_copernicus_edo": _safe_context(C.edo_status),
         "context_suprafata_apa_opera": _safe_context(C.opera_surface_status),

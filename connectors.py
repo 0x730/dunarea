@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 import unicodedata
 import zlib
 from datetime import date, datetime, timedelta, timezone
+from statistics import median
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "cache.db")
@@ -1009,6 +1010,34 @@ DANUBEHIS_HU_DANUBE_Q = (
     "https://www.danubehis.org/time-series/stations/Q?country=HU&river=Danube"
 )
 DANUBEHIS_PROFILE_KM = {"Budapest": 1647, "Mohács": 1447}
+DANUBEHIS_RO_TRIBUTARY_SECTIONS = (
+    {
+        "river_id": "jiu", "river": "Jiu", "station": "Podari",
+        "code": "RO42231_HYDRO", "relation": "upstream_cernavoda",
+        "coverage": "secțiune pe Jiu; nu include aporturile dintre Podari și Dunăre",
+    },
+    {
+        "river_id": "olt", "river": "Olt", "station": "Hoghiz",
+        "code": "RO42309_HYDRO", "relation": "upstream_cernavoda",
+        "coverage": "secțiune pe Oltul superior; nu reprezintă aportul total al Oltului la Dunăre",
+    },
+    {
+        "river_id": "vedea", "river": "Vedea", "station": "Alexandria",
+        "code": "RO42471_HYDRO", "relation": "upstream_cernavoda",
+        "coverage": "secțiune pe Vedea; nu include bazinul din aval până la confluență",
+    },
+    {
+        "river_id": "siret", "river": "Siret", "station": "Drăgești",
+        "code": "RO42708_HYDRO", "relation": "downstream_cernavoda",
+        "coverage": "secțiune interioară pe Siret; nu reprezintă aportul total la Dunăre",
+    },
+    {
+        "river_id": "prut", "river": "Prut", "station": "Rădăuți-Prut",
+        "code": "RO42945_HYDRO", "relation": "downstream_cernavoda",
+        "coverage": "secțiune pe Prutul superior; nu reprezintă aportul total la Dunăre",
+    },
+)
+DANUBEHIS_RO_TRIBUTARY_MISSING = ("nera", "cerna", "arges", "ialomita")
 
 
 def _parse_danubehis_current(page):
@@ -1070,6 +1099,155 @@ def danubehis_danube():
         }
 
     return cached("danubehis:hu-danube-q:v1", 3600, fetch)
+
+
+def _parse_danubehis_q_chart(page):
+    """Extrage seria publică din graficul DanubeHIS, fără export/autentificare."""
+    chart_tag = next((tag for tag in re.findall(r"<div\b[^>]*>", page, re.S | re.I)
+                      if 'id="hydro_results__attachment_chart_Q"' in tag), None)
+    if not chart_tag:
+        raise RuntimeError("graficul Q DanubeHIS nu mai este expus în pagină")
+    attr = re.search(r'data-chart="([^"]+)"', chart_tag, re.S | re.I)
+    if not attr:
+        raise RuntimeError("graficul Q DanubeHIS nu mai expune date-chart")
+    try:
+        chart = json.loads(html_lib.unescape(attr.group(1)))
+        raw = chart["series"][0]["data"]
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("schema graficului Q DanubeHIS s-a schimbat") from exc
+
+    # Seria românească este în mod uzual un instantaneu pe zi. Dacă furnizorul
+    # trimite mai multe valori în aceeași zi, păstrăm ultima, fără a o transforma
+    # în medie zilnică și fără a integra artificial un volum.
+    by_day = {}
+    for item in raw:
+        if not isinstance(item, list) or len(item) < 2:
+            continue
+        try:
+            stamp = datetime.fromtimestamp(float(item[0]) / 1000, timezone.utc)
+            value = float(item[1])
+        except (TypeError, ValueError, OSError, OverflowError):
+            continue
+        day = stamp.date().isoformat()
+        if day not in by_day or stamp > by_day[day][0]:
+            by_day[day] = (stamp, value)
+    return [{"date": day, "value_m3s": round(by_day[day][1], 3)}
+            for day in sorted(by_day)]
+
+
+def _danubehis_ro_section_stats(spec, page, as_of):
+    series = [item for item in _parse_danubehis_q_chart(page)
+              if item["date"] <= as_of.isoformat()]
+    current = [item for item in series if item["date"].startswith(f"{as_of.year}-")]
+    if not current:
+        raise RuntimeError(f"nicio valoare {as_of.year} pentru {spec['station']}")
+    latest = current[-1]
+    latest_day = date.fromisoformat(latest["date"])
+    ytd_start = date(as_of.year, 1, 1)
+    expected_ytd = (latest_day - ytd_start).days + 1
+    current_month = [item for item in current
+                     if item["date"].startswith(latest_day.strftime("%Y-%m"))]
+    previous = [item for item in series
+                if item["date"].startswith(f"{as_of.year - 1}-")
+                and item["date"][5:] <= latest["date"][5:]]
+    try:
+        previous_cutoff = latest_day.replace(year=as_of.year - 1)
+    except ValueError:  # 29 februarie într-un an urmat de un an nebisect
+        previous_cutoff = date(as_of.year - 1, 2, 28)
+    expected_previous = (previous_cutoff - date(as_of.year - 1, 1, 1)).days + 1
+
+    def summary(items, expected_days):
+        values = [item["value_m3s"] for item in items]
+        if not values:
+            return None
+        return {
+            "median_m3s": round(median(values), 2),
+            "min_m3s": round(min(values), 2),
+            "max_m3s": round(max(values), 2),
+            "days": len(items),
+            "expected_days": expected_days,
+            "coverage_pct": round(100 * len(items) / expected_days, 1)
+            if expected_days else None,
+        }
+
+    ytd = summary(current, expected_ytd)
+    prev = summary(previous, expected_previous)
+    return {
+        **spec,
+        "available": True,
+        "latest": latest,
+        "lag_days": (as_of - latest_day).days,
+        "ytd": ytd,
+        "current_month": {
+            "month": latest_day.strftime("%Y-%m"),
+            **(summary(current_month, latest_day.day) or {}),
+        },
+        "previous_year_same_window": ({
+            "year": as_of.year - 1,
+            **prev,
+            "median_change_pct": round(
+                100 * (ytd["median_m3s"] - prev["median_m3s"])
+                / prev["median_m3s"], 1)
+            if prev and prev["median_m3s"] else None,
+        } if prev else None),
+        "url": (f"https://www.danubehis.org/results/{spec['code']}?"
+                "symbol%5BQ%5D=Q"),
+    }
+
+
+def danubehis_romanian_tributaries():
+    """Statistici descriptive pentru secțiunile românești cu Q public.
+
+    Nu însumăm secțiunile și nu estimăm volumul intrat în Dunăre: DanubeHIS
+    publică aici debit instantaneu brut, iar secțiunile nu sunt toate la gurile
+    de vărsare și nu acoperă toate cele nouă sisteme selectate.
+    """
+    as_of = date.today()
+    start = date(as_of.year - 1, 1, 1).strftime("%d.%m.%Y")
+    end = as_of.strftime("%d.%m.%Y")
+
+    def fetch_one(spec):
+        query = urllib.parse.urlencode({
+            "symbol[Q]": "Q", "time_from": start, "time_to": end,
+        })
+        page = http_get(
+            f"https://www.danubehis.org/results/{spec['code']}?{query}",
+            timeout=50)
+        return _danubehis_ro_section_stats(spec, page, as_of)
+
+    def fetch():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        rows, errors = [], {}
+        with ThreadPoolExecutor(max_workers=len(DANUBEHIS_RO_TRIBUTARY_SECTIONS)) as pool:
+            futures = {pool.submit(fetch_one, spec): spec
+                       for spec in DANUBEHIS_RO_TRIBUTARY_SECTIONS}
+            for future in as_completed(futures):
+                spec = futures[future]
+                try:
+                    rows.append(future.result())
+                except Exception as exc:
+                    errors[spec["river_id"]] = str(exc)[:160]
+        order = {spec["river_id"]: i
+                 for i, spec in enumerate(DANUBEHIS_RO_TRIBUTARY_SECTIONS)}
+        rows.sort(key=lambda item: order[item["river_id"]])
+        if not rows:
+            raise RuntimeError("nicio secțiune românească DanubeHIS nu a răspuns")
+        return {
+            "available": True,
+            "as_of": as_of.isoformat(),
+            "provider": "NIHWM/INHGA via ICPDR DanubeHIS",
+            "source_url": "https://www.danubehis.org/time-series/stations/Q?country=RO",
+            "sections": rows,
+            "failed_sections": errors,
+            "missing_systems": list(DANUBEHIS_RO_TRIBUTARY_MISSING),
+            "kind": "debit instantaneu brut la secțiuni hidrometrice",
+            "scope": ("statistici descriptive de la 1 ianuarie și pentru luna curentă; "
+                      "secțiuni parțiale, nu aport total la Dunăre"),
+            "limit": ("date operaționale brute, neverificate; valorile sunt instantanee, "
+                      "nu medii zilnice, nu se integrează în km³ și nu se însumează între râuri"),
+        }
+
+    return cached(f"danubehis:ro-tributaries:v1:{as_of.year}", 6 * 3600, fetch)
 
 
 # ------------------------------------------------ Copernicus drought/EDO --
@@ -2228,6 +2406,12 @@ EVIDENCE_SOURCES = {
                   "family": "gauge_hu_ovf", "mode": "active"},
     "danubehis": {"provider": "ICPDR, valori OVF", "kind": "masurat_retransmis",
                   "family": "gauge_hu_ovf", "mode": "active"},
+    "danubehis_ro_tributaries": {
+        "provider": "NIHWM/INHGA via ICPDR DanubeHIS",
+        "kind": "masurat_brut_retransmis",
+        "family": "gauge_ro_nihwm",
+        "mode": "active_context",
+    },
     "danubestream": {"provider": "FAIRway / administrații naționale", "kind": "masurat_agregat",
                      "family": "navigation_gauge_aggregation", "mode": "active"},
     "glofas": {"provider": "Copernicus CEMS / Open-Meteo delivery", "kind": "model",
@@ -2276,8 +2460,8 @@ EVIDENCE_SOURCES = {
 }
 
 EVIDENCE_DEPENDENCIES = [
-    {"members": ["inhga", "inhga_tributaries"],
-     "relationship": "același emitent; măsurarea Baziaș și prognoza pe bazine sunt produse diferite, nu voturi instituționale independente",
+    {"members": ["inhga", "inhga_tributaries", "danubehis_ro_tributaries"],
+     "relationship": "același furnizor național NIHWM/INHGA; produse și căi diferite, nu confirmări instituționale independente",
      "count_as": 1},
     {"members": ["hydroinfo", "danubehis"],
      "relationship": "aceleași măsurători OVF, două căi de livrare",

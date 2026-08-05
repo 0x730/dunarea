@@ -1,4 +1,6 @@
 import inspect
+import html
+import json
 import os
 import sqlite3
 import struct
@@ -6,7 +8,7 @@ import tempfile
 import time
 import unittest
 import zlib
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -88,6 +90,9 @@ class StaticOptionsPageTests(unittest.TestCase):
         self.assertIn('id="ro-tributaries"', page)
         self.assertIn("gauge?.temp_apa_c", app)
         self.assertIn("gauge?.tendinte_cm", app)
+        self.assertIn("mediană ian.–azi", app)
+        self.assertIn("point.ytd_mm", app)
+        self.assertIn("secțiuni măsurate", page)
         self.assertNotIn("1.450 m³/s", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("-214 cm", page.split('data-view="romania"', 1)[1])
         self.assertNotIn("27.5°C", page.split('data-view="romania"', 1)[1])
@@ -122,8 +127,10 @@ class RomaniaProportionalityTests(unittest.TestCase):
         for pid, zone in (("oltenia", "Oltenia"), ("muntenia", "Muntenia"),
                           ("moldova_sud", "Sud-est"), ("delta", "Delta")):
             precip.append({"id": pid, "zona": zone,
-                           "ultimele90": {"pct": ro_last90},
-                           "ian_azi": {"abatere_pct": ro_ytd}})
+                           "pana_la": "2026-08-02",
+                           "ultimele90": {"pct": ro_last90, "cumul_mm": 72.5},
+                           "ian_azi": {"abatere_pct": ro_ytd, "cumul_mm": 410.0,
+                                       "mediana_mm": 380.0}})
         return {
             "generat": "2026-08-04",
             "debit": [
@@ -190,6 +197,35 @@ class RomaniaProportionalityTests(unittest.TestCase):
                 "upstream_cernavoda": upstream,
                 "downstream_cernavoda": downstream,
                 "official_text": "Text oficial dinamic.",
+            }],
+        }
+
+    @staticmethod
+    def tributary_observations(latest="2026-08-03"):
+        return {
+            "available": True,
+            "as_of": "2026-08-05",
+            "provider": "NIHWM/INHGA via ICPDR DanubeHIS",
+            "source_url": "https://www.danubehis.org/time-series/stations/Q?country=RO",
+            "kind": "debit instantaneu brut la secțiuni hidrometrice",
+            "scope": "secțiuni parțiale",
+            "limit": "nu sunt aporturi totale la Dunăre",
+            "missing_systems": ["nera", "cerna", "arges", "ialomita"],
+            "sections": [{
+                "river_id": "vedea", "river": "Vedea", "station": "Alexandria",
+                "relation": "upstream_cernavoda", "coverage": "secțiune parțială",
+                "available": True,
+                "latest": {"date": latest, "value_m3s": 3.56},
+                "lag_days": 2,
+                "ytd": {"median_m3s": 5.75, "min_m3s": 0.36,
+                        "max_m3s": 78.0, "days": 208,
+                        "expected_days": 215, "coverage_pct": 96.7},
+                "current_month": {"month": "2026-08", "median_m3s": 3.7,
+                                  "min_m3s": 3.56, "max_m3s": 3.84,
+                                  "days": 3, "expected_days": 3,
+                                  "coverage_pct": 100.0},
+                "previous_year_same_window": None,
+                "url": "https://www.danubehis.org/results/RO42471_HYDRO",
             }],
         }
 
@@ -370,6 +406,38 @@ class RomaniaProportionalityTests(unittest.TestCase):
         self.assertEqual(len(out["romanian_tributaries"]["systems_at_most_50pct"]), 9)
         self.assertIn("afluenților", claim["conclusion"])
 
+    def test_realized_precipitation_and_measured_section_stats_are_preserved(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(
+            self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
+            "2026-08-05", tributaries=self.tributaries(),
+            tributary_observations=self.tributary_observations())
+        claim = next(item for item in out["claims"] if item["key"] == "romania_scope")
+        point = claim["evidence"]["points"][0]
+        observed = out["romanian_tributaries"]["observed_sections"]
+
+        self.assertEqual(point["data_through"], "2026-08-02")
+        self.assertEqual(point["ytd_mm"], 410.0)
+        self.assertEqual(point["ytd_median_mm"], 380.0)
+        self.assertEqual(point["last90_mm"], 72.5)
+        self.assertTrue(observed["available"])
+        self.assertEqual(observed["latest_date"], "2026-08-03")
+        self.assertEqual(observed["sections"][0]["latest"]["value_m3s"], 3.56)
+        self.assertEqual(out["data_as_of"]["danubehis_ro_tributaries"],
+                         "2026-08-03")
+
+    def test_future_measured_tributary_section_is_not_relabelled_current(self):
+        afdj, inhga, sen = self.inputs()
+        out = romania.build_report(
+            self.stats(), self.archive(), afdj, inhga, sen, self.snn(),
+            "2026-08-05", tributaries=self.tributaries(),
+            tributary_observations=self.tributary_observations("2026-08-06"))
+
+        observed = out["romanian_tributaries"]["observed_sections"]
+        self.assertFalse(observed["available"])
+        self.assertEqual(observed["sections"], [])
+        self.assertIn("dată acceptabilă", observed["reason"])
+
     def test_old_tributary_month_is_not_relabelled_as_current(self):
         afdj, inhga, sen = self.inputs()
         out = romania.build_report(
@@ -503,6 +571,13 @@ class CacheTests(unittest.TestCase):
 
 
 class ConnectorTests(unittest.TestCase):
+    @staticmethod
+    def danubehis_chart(points):
+        payload = {"series": [{"data": points}]}
+        encoded = html.escape(json.dumps(payload), quote=True)
+        return (f'<div class="charts-highchart chart" data-chart="{encoded}" '
+                'id="hydro_results__attachment_chart_Q"></div>')
+
     @staticmethod
     def _png_rgba(rows):
         height, width = len(rows), len(rows[0])
@@ -724,6 +799,40 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(out[0]["debit_m3s"], 753.2)
         self.assertEqual(out[0]["data"], "2026-08-04")
         self.assertEqual(out[0]["km"], 1647)
+
+    def test_danubehis_public_chart_builds_descriptive_section_statistics(self):
+        def stamp(value):
+            return int(datetime.fromisoformat(value).replace(
+                tzinfo=timezone.utc).timestamp() * 1000)
+
+        page = self.danubehis_chart([
+            [stamp("2025-01-01T05:00:00"), 10.0],
+            [stamp("2025-08-03T05:00:00"), 20.0],
+            [stamp("2026-01-01T05:00:00"), 4.0],
+            [stamp("2026-08-01T04:00:00"), 3.0],
+            [stamp("2026-08-01T05:00:00"), 3.5],
+            [stamp("2026-08-02T05:00:00"), 4.5],
+            [stamp("2026-08-03T05:00:00"), 5.5],
+        ])
+        spec = next(item for item in C.DANUBEHIS_RO_TRIBUTARY_SECTIONS
+                    if item["river_id"] == "vedea")
+
+        parsed = C._parse_danubehis_q_chart(page)
+        out = C._danubehis_ro_section_stats(spec, page, date(2026, 8, 5))
+
+        self.assertEqual(len(parsed), 6)
+        self.assertEqual(parsed[-3], {"date": "2026-08-01", "value_m3s": 3.5})
+        self.assertEqual(out["latest"], {"date": "2026-08-03", "value_m3s": 5.5})
+        self.assertEqual(out["current_month"]["median_m3s"], 4.5)
+        self.assertEqual(out["ytd"]["min_m3s"], 3.5)
+        self.assertEqual(out["ytd"]["max_m3s"], 5.5)
+        self.assertEqual(out["ytd"]["days"], 4)
+        self.assertEqual(out["previous_year_same_window"]["year"], 2025)
+        self.assertIn("nu include", out["coverage"])
+
+    def test_danubehis_tributary_parser_fails_when_chart_schema_changes(self):
+        with self.assertRaisesRegex(RuntimeError, "graficul Q"):
+            C._parse_danubehis_q_chart("<html>fără grafic</html>")
 
     def test_edo_status_prefers_current_service_page_date(self):
         capabilities = """<WMT_MS_Capabilities><Capability><Layer>
@@ -970,6 +1079,12 @@ class AiAnalysisAuditTests(unittest.TestCase):
         with mock.patch.object(C, "cached", side_effect=fake_cached), \
                 mock.patch.object(analiza_ai, "_inhga", return_value={
                     "data_buletin": "2026-08-04", "debit_bazias_m3s": 900}), \
+                mock.patch.object(C, "inhga_danube_tributaries",
+                                  return_value={"data": {"tip": "prognoza"},
+                                                "stale": False, "cache_age_s": 4}), \
+                mock.patch.object(C, "danubehis_romanian_tributaries",
+                                  return_value={"data": {"tip": "masurat"},
+                                                "stale": False, "cache_age_s": 6}), \
                 mock.patch.object(C, "edo_status", return_value=fresh_context), \
                 mock.patch.object(C, "opera_surface_status", return_value=fresh_context), \
                 mock.patch.object(C, "copernicus_land_context", return_value=fresh_context), \
@@ -985,6 +1100,12 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("dependencies", digest["registru_provenienta"])
         self.assertEqual(digest["context_seceta_copernicus_edo"]["livrare"]["cache_age_s"], 5)
         self.assertIn("catalog_misiuni_satelitare_nasa", digest)
+        self.assertEqual(digest["prognoza_afluenti_inhga"]["date"]["tip"],
+                         "prognoza")
+        self.assertEqual(digest["statistici_afluenti_masurati"]["date"]["tip"],
+                         "masurat")
+        self.assertEqual(digest["statistici_afluenti_masurati"]["livrare"]["cache_age_s"],
+                         6)
         bazias = digest["reconciliere_bazias"]
         self.assertEqual(bazias["valoare_oficiala_curenta"]["debit_m3s"], 900)
         self.assertEqual(bazias["reper_modelat_climatologic"]["debit_m3s"], 1200)
@@ -1054,6 +1175,10 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("intervalul datelor disponibile", prompt)
         self.assertIn("cifra canonică a monitorului", prompt)
         self.assertIn("nu este „contradicție”", prompt)
+        self.assertIn("statistici_afluenti_masurati", prompt)
+        self.assertIn("nu sunt medii zilnice", prompt)
+        self.assertIn("nu se însumează", prompt)
+        self.assertIn("un singur an, nu climatologia", prompt)
 
     def test_response_heading_normalization_is_narrow_and_auditable(self):
         text = "## SITUAȚIA\nFapt.\n\n**CE AR SCHIMBĂ CONCLUZIA:**\nAlt fapt."

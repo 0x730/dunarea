@@ -181,6 +181,15 @@ section > h2 {
   display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px;
 }
 .tributary-grid h4 { margin: 0 0 7px; color: var(--ink); font-size: 13px; }
+.tributary-section-title {
+  margin: 22px 0 8px; padding-top: 18px; border-top: 1px solid var(--axis);
+  color: var(--ink); font-size: 14px;
+}
+.tributary-section-title:first-child { margin-top: 4px; padding-top: 0; border-top: 0; }
+.tributary-observed-table { min-width: 1040px; }
+.tributary-observed-table th:nth-child(1) { width: 145px; }
+.tributary-observed-table th:last-child { width: 28%; }
+.tributary-observed-table small { color: var(--muted); font-size: 10.5px; line-height: 1.35; }
 .tributary-list { margin: 0; padding: 0; list-style: none; }
 .tributary-list li {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;

@@ -31,6 +31,13 @@ ajunge prin Tisa înainte de Baziaș și este deja inclus în debitul de intrare
 țară. Benzile lunare sunt marcate drept prognoză, nu debit măsurat. La
 Cernavodă sunt afișate dinamic și temperatura observată la mira AFDJ, plus
 prognozele de cotă la 24–120 h, fără a le prezenta drept praguri ale CNE.
+Separat, seriile publice DanubeHIS/NIHWM oferă statistici măsurate de la
+1 ianuarie pentru cinci secțiuni de pe Jiu, Olt, Vedea, Siret și Prut: ultima
+valoare, mediana anuală până la zi, mediana lunii, minimul, maximul și
+acoperirea. Sunt debite instantanee brute în secțiuni parțiale, nu medii
+zilnice și nu aporturi totale la Dunăre; aplicația nu le însumează și nu le
+transformă în volum. Tabelul de precipitații arată distinct cumulul ERA5 de la
+1 ianuarie, mediana aceleiași ferestre și abaterea fiecărui punct-proxy.
 
 ## Pornire
 
@@ -96,6 +103,7 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [RHMZ Serbia](https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php) | nivel/debit stații sârbești, până la Prahovo | zilnic | măsurat, oficial |
 | [OVF Hydroinfo](https://www.hydroinfo.hu/tables/eng/dunhif.html) (Ungaria) | nivel/debit pe Dunăre, inclusiv Budapesta și Mohács | zilnic | măsurat, oficial |
 | [ICPDR DanubeHIS](https://www.danubehis.org/time-series/stations/Q?country=HU&river=Danube) | valori curente normalizate; fallback și control al căii de livrare OVF | aproape în timp real | măsurat, același furnizor ca Hydroinfo |
+| [ICPDR DanubeHIS — România](https://www.danubehis.org/time-series/stations/Q?country=RO) | serii Q publice NIHWM pentru secțiuni pe Jiu, Olt, Vedea, Siret și Prut; statistici de la 1 ianuarie și pentru luna curentă | zilnic, cu întârzieri pe stație | măsurat brut, neverificat; acoperire parțială |
 | GloFAS / [Open-Meteo flood API](https://open-meteo.com/en/docs/flood-api) (Copernicus) | debit zilnic în orice punct, arhivă din 1984 | zilnic | **model** |
 | ERA5 / [Open-Meteo archive](https://open-meteo.com/en/docs/historical-weather-api) (Copernicus) | precipitații și ninsoare zilnică, cu modelul fixat explicit la ERA5 pentru consistență multidecenală | zilnic | reanaliză |
 | [Copernicus EDO WMS](https://drought.emergency.copernicus.eu/data/wms-service) | hărți CDI și anomalie a umidității solului, decupate pe bazin | dekadal | model/observații compozite, doar context |
@@ -204,6 +212,7 @@ cache.db         cache local (generat la rulare)
 
 `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
 `/api/inhga/afluenti-dunare` ·
+`/api/danubehis/afluenti-romania` ·
 `/api/hydroinfo` · `/api/danubehis` · `/api/edo` · `/api/edo/map?layer=cdi|soil` ·
 `/api/opera` · `/api/opera/map?layer=sentinel1|hls&zone=` ·
 `/api/copernicus-land` · `/api/copernicus-land/map?layer=snow|soil` ·

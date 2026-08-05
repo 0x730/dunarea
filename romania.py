@@ -631,8 +631,44 @@ def _tributary_context(source, generated_on):
     }
 
 
+def _tributary_observation_context(source, generated_on):
+    """Păstrează numai secțiuni datate, fără a le echivala cu aportul la gură."""
+    if not isinstance(source, dict) or not source.get("available"):
+        return {
+            "available": False,
+            "reason": (source or {}).get(
+                "reason", "secțiunile măsurate DanubeHIS nu sunt disponibile"),
+        }
+    accepted = []
+    for section in source.get("sections") or []:
+        latest = (section.get("latest") or {}).get("date")
+        try:
+            latest_day = date.fromisoformat(latest)
+        except (TypeError, ValueError):
+            continue
+        if latest_day > generated_on:
+            continue
+        accepted.append({**section, "lag_days": (generated_on - latest_day).days})
+    if not accepted:
+        return {
+            **{key: value for key, value in source.items() if key != "sections"},
+            "available": False,
+            "reason": "nicio secțiune măsurată nu are o dată acceptabilă",
+            "sections": [],
+        }
+    newest = max((row.get("latest") or {}).get("date") for row in accepted)
+    return {
+        **{key: value for key, value in source.items() if key != "sections"},
+        "available": True,
+        "sections": accepted,
+        "latest_date": newest,
+        "sections_available": len(accepted),
+        "selected_systems": 9,
+    }
+
+
 def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
-                 tributaries=None):
+                 tributaries=None, tributary_observations=None):
     generated_on = date.fromisoformat(
         as_of or stats.get("generat") or date.today().isoformat())
     debit_rows = stats.get("debit") or []
@@ -642,6 +678,9 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     hist = historical_cernavoda(archive, model_as_of)
     cern_gauge = _find_station(afdj, "cernavoda")
     tributary_context = _tributary_context(tributaries, generated_on)
+    tributary_observed = _tributary_observation_context(
+        tributary_observations, generated_on)
+    tributary_context["observed_sections"] = tributary_observed
 
     measured = _number(inhga.get("debit_bazias_m3s"))
     monthly_mean = _number(inhga.get("media_multianuala_m3s"))
@@ -720,8 +759,14 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "romania_proxy_points": len(ro_precip),
         "points_below_p10_last90": len(dry90),
         "points_above_ytd_median": len(above_ytd),
+        "data_through": max((row.get("pana_la") or "" for row in ro_precip),
+                            default=None) or None,
         "points": [{"id": row.get("id"), "zone": row.get("zona"),
+                    "data_through": row.get("pana_la"),
+                    "ytd_mm": (row.get("ian_azi") or {}).get("cumul_mm"),
+                    "ytd_median_mm": (row.get("ian_azi") or {}).get("mediana_mm"),
                     "last90_percentile": (row.get("ultimele90") or {}).get("pct"),
+                    "last90_mm": (row.get("ultimele90") or {}).get("cumul_mm"),
                     "ytd_deviation_pct": (row.get("ian_azi") or {}).get("abatere_pct")}
                    for row in ro_precip],
         "inhga_selected_tributaries": tributary_context,
@@ -758,7 +803,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     claims.append(_claim(
         "romania_scope", "Criză hidrologică în toată România?", ro_status, ro_text,
         rain_evidence,
-        "INHGA oferă prognoze în benzi pentru afluenții selectați, nu debite măsurate; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
+        "INHGA oferă prognoze în benzi; DanubeHIS aduce numai cinci secțiuni măsurate parțiale, care nu sunt aporturi totale la Dunăre; ERA5 rămâne reanaliză în patru puncte-proxy, iar acumulările și restricțiile nu sunt încă integrate."))
 
     snn_status = snn.get("data", snn) if snn else {}
     snn_stale = bool(snn.get("stale")) if snn and "data" in snn else False
@@ -846,6 +891,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                                 if model_as_of is not None else None),
             "inhga": inhga.get("data_buletin"),
             "inhga_tributaries": tributary_context.get("published"),
+            "danubehis_ro_tributaries": tributary_observed.get("latest_date"),
             "afdj": (cern_gauge or {}).get("actualizat"),
             "snn": snn_status.get("date"),
             "sen": sen.get("actualizat"),
@@ -871,7 +917,7 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "romanian_tributaries": tributary_context,
         "missing_for_national_verdict": [
             "gradul curent de umplere și volumele utile ale acumulărilor, într-o serie națională comparabilă",
-            "debite măsurate și restricții curente pe afluenții selectați; buletinul INHGA integrat este prognoză în benzi",
+            "debite măsurate aproape de confluență pentru toate cele nouă sisteme; cele cinci secțiuni DanubeHIS integrate au acoperire parțială",
             "umiditate a solului și secetă agricolă validate spațial pentru România",
             "serii SEN pentru cerere, importuri, rezerve și prețuri înainte și după oprirea unității",
             "nivelul bazinului de aspirație CNE, aceeași cotă de referință și pragurile operaționale curente",

@@ -1665,7 +1665,7 @@ async function renderRomania() {
   const tributaryMonth = tributaries.forecast_month;
   const bandLabel = (band) => {
     if (!band) return "benzi mixte";
-    if (band.operator === "lt") return `<${fmtN.format(band.max)}%`;
+    if (band.operator === "lt") return `&lt;${fmtN.format(band.max)}%`;
     return `${fmtN.format(band.min)}–${fmtN.format(band.max)}%`;
   };
   const basinRows = (items) => (items || []).map((basin) => {
@@ -1683,7 +1683,8 @@ async function renderRomania() {
   const tributarySource = tributaries.url
     ? `<a href="${tributaries.url}" target="_blank" rel="noopener">${tributaries.title || "buletin INHGA"}</a>`
     : "sursă indisponibilă";
-  $("ro-tributaries").innerHTML = tributaries.available && tributaryMonth ? `
+  const forecastPanel = tributaries.available && tributaryMonth ? `
+    <h4 class="tributary-section-title">Prognoza hidrologică a lunii</h4>
     <p class="parameter-verdict"><b>${tributaryMonth.label}</b> · reper general ${bandLabel(tributaryMonth.base_band_pct)} din mediile lunare · publicat ${tributaries.published || "dată lipsă"}</p>
     <div class="tributary-grid">
       <div><h4>Intră în Dunăre înainte de Cernavodă</h4><ul class="tributary-list">${basinRows(tributaryMonth.upstream_cernavoda)}</ul></div>
@@ -1693,16 +1694,70 @@ async function renderRomania() {
     <details class="official-details"><summary>Textul oficial al lunii</summary><p>${tributaryMonth.official_text || "indisponibil"}</p></details>`
     : `<div class="err-box">Prognoza INHGA pentru afluenții selectați este indisponibilă: ${tributaries.reason || "formatul sau luna nu au putut fi verificate"}. Nu se păstrează o lună veche ca stare curentă.</div>`;
 
+  const observed = tributaries.observed_sections || {};
+  const missingLabels = {
+    nera: "Nera", cerna: "Cerna", arges: "Argeș", ialomita: "Ialomița",
+  };
+  const observedRows = (observed.sections || []).map((section) => {
+    const latest = section.latest || {};
+    const ytd = section.ytd || {};
+    const month = section.current_month || {};
+    const previous = section.previous_year_same_window || {};
+    const source = section.url
+      ? `<a href="${section.url}" target="_blank" rel="noopener">${section.station}</a>`
+      : section.station;
+    const lag = section.lag_days > 2
+      ? ` <span class="prov prov-lipsa">întârziere ${section.lag_days} zile</span>` : "";
+    const previousNote = previous.median_change_pct != null
+      ? `<br><small>față de mediana aceleiași ferestre ${previous.year}: ${previous.median_change_pct > 0 ? "+" : ""}${fmt1.format(previous.median_change_pct)}% · un singur an, nu climatologie</small>`
+      : "";
+    return `<tr>
+      <td class="name"><b>${section.river}</b><br><span class="table-detail">${source}</span></td>
+      <td class="num"><b>${fmtV(latest.value_m3s, fmt2)}</b><br><small>${latest.date || "–"}${lag}</small></td>
+      <td class="num">${fmtV(ytd.median_m3s, fmt2)}${previousNote}</td>
+      <td class="num">${fmtV(month.median_m3s, fmt2)}<br><small>${month.month || "–"}</small></td>
+      <td class="num">${fmtV(ytd.min_m3s, fmt2)}–${fmtV(ytd.max_m3s, fmt2)}</td>
+      <td class="num">${fmtV(ytd.coverage_pct, fmt1)}%<br><small>${ytd.days || 0}/${ytd.expected_days || "?"} zile</small></td>
+      <td><span class="table-detail">${section.coverage || "secțiune parțială"}</span></td>
+    </tr>`;
+  }).join("");
+  const missingMeasured = (observed.missing_systems || [])
+    .map((id) => missingLabels[id] || id).join(", ");
+  const failedMeasured = Object.keys(observed.failed_sections || {})
+    .map((id) => missingLabels[id] || id).join(", ");
+  const observedSource = observed.source_url
+    ? `<a href="${observed.source_url}" target="_blank" rel="noopener">${observed.provider || "DanubeHIS"}</a>`
+    : (observed.provider || "DanubeHIS");
+  const observedPanel = observed.available && observedRows ? `
+    <h4 class="tributary-section-title">Ce s-a măsurat de la 1 ianuarie până acum</h4>
+    <div class="table-scroll"><table class="data tributary-observed-table">
+      <thead><tr><th>Râu / secțiune</th><th class="num">ultimul Q<br>m³/s</th>
+        <th class="num">mediană ian.–azi</th><th class="num">mediană lună</th>
+        <th class="num">min–max</th><th class="num">acoperire</th><th>Ce acoperă</th></tr></thead>
+      <tbody>${observedRows}</tbody>
+    </table></div>
+    <p class="sub">${observedSource} · ${observed.kind || "debit la secțiune"}.<br>
+      ${missingMeasured ? `<b>Fără Q public comparabil în acest set:</b> ${missingMeasured}.<br>` : ""}
+      ${failedMeasured ? `<b>Indisponibile temporar:</b> ${failedMeasured}.<br>` : ""}
+      <b>Limită:</b> ${observed.limit || "secțiuni parțiale, nu aport total la Dunăre"}</p>`
+    : `<div class="err-box">Statisticile măsurate pe afluenți sunt indisponibile: ${observed.reason || "sursa nu a putut fi verificată"}.</div>`;
+  $("ro-tributaries").innerHTML = `${observedPanel}${forecastPanel}`;
+
   const rainClaim = (d.claims || []).find((claim) => claim.key === "romania_scope");
   const rainPoints = rainClaim?.evidence?.points || [];
   $("ro-rain").innerHTML = rainClaim ? `
     <div class="chips">${roClaimChip(rainClaim.status)}</div>
     <p>${rainClaim.conclusion}</p>
-    <table class="data"><thead><tr><th>Zonă</th><th class="num">P90 zile</th><th class="num">Ian.–azi</th></tr></thead>
+    <div class="table-scroll"><table class="data"><thead><tr><th>Zonă</th>
+      <th class="num">ian.–azi<br>mm</th><th class="num">mediană<br>mm</th>
+      <th class="num">abatere</th><th class="num">ult. 90 zile</th></tr></thead>
       <tbody>${rainPoints.map((point) => `<tr><td class="name">${point.zone}</td>
-        <td class="num">P${fmtV(point.last90_percentile, fmt1)}</td>
-        <td class="num">${point.ytd_deviation_pct > 0 ? "+" : ""}${fmtV(point.ytd_deviation_pct, fmt1)}%</td></tr>`).join("")}</tbody>
-    </table>
+        <td class="num"><b>${fmtV(point.ytd_mm, fmt1)}</b></td>
+        <td class="num">${fmtV(point.ytd_median_mm, fmt1)}</td>
+        <td class="num">${point.ytd_deviation_pct > 0 ? "+" : ""}${fmtV(point.ytd_deviation_pct, fmt1)}%</td>
+        <td class="num">${fmtV(point.last90_mm, fmt1)} mm · P${fmtV(point.last90_percentile, fmt1)}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <p class="sub">acumulat până la ${rainClaim.evidence?.data_through || "ultima zi ERA5 disponibilă"} · aceeași fereastră calendaristică în referința 2000–anul trecut</p>
     <p class="claim-limit"><b>Limită:</b> ${rainClaim.limit}</p>` : `<div class="err-box">date indisponibile</div>`;
 
   $("ro-missing").innerHTML = (d.missing_for_national_verdict || [])
