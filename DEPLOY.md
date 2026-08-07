@@ -159,6 +159,43 @@ Pastilele din header-ul paginii arată live starea fiecărei surse; dacă vreuna
 e roșie permanent după ~5 minute de la pornire, `supervisorctl tail -f
 daemon-XXXXXX` pe server arată de ce.
 
+## Ordinea la prima punere în funcțiune
+
+**Încălziți cache-ul ÎNAINTE de a îndrepta domeniul către server.** Măsurat pe o
+pornire complet la rece (fără `cache.db`), 7 august 2026:
+
+| moment | ce se întâmplă |
+|---|---|
+| 0 s | serverul ascultă; pagina se încarcă instantaneu |
+| 0–~110 s | prima cerere `/api/overview` durează **111 s** — sub `proxy_read_timeout 180s`, dar nu cu mult |
+| ~6 min | `warmup_done: true`; `cache.db` ≈ 8 MB |
+| după warmup | `/api/anomalii`, `/api/statistici`, `/api/bilant-apa` răspund în **sub o secundă**; `/api/romania` în ~5 s |
+
+Cele 111 s sunt măsurate pe o mașină rapidă, cu latență mică spre surse. Pe un
+VPS cu latență mai mare, sau dacă o sursă răspunde greu, se poate depăși pragul
+de 180 s și primul vizitator primește 504. Nu e o defecțiune a aplicației, dar e
+o primă impresie proastă și se evită complet cu ordinea de mai jos:
+
+```bash
+# 1. porniți daemonul, cu DNS-ul încă neîndreptat spre server (sau nor gri)
+sudo -S supervisorctl start daemon-XXXXXX:*
+
+# 2. așteptați până se termină încălzirea (~6 minute)
+until curl -sf http://127.0.0.1:7300/api/health | grep -q '"warmup_done": true'; do
+  sleep 15; echo "încă se încălzește…"
+done
+
+# 3. abia acum activați norul portocaliu în Cloudflare / îndreptați DNS-ul
+```
+
+La repornirile ulterioare nu e nevoie: warmup-ul se sare dacă a rulat în
+ultimele 6 ore, iar `cache.db` rămâne pe disc. Contează doar la prima pornire
+și după o ștergere a cache-ului.
+
+Notă: aplicația își cadențează singură cererile către sursele oficiale (găleată
+cu jetoane, per host). Asta face încălzirea puțin mai lentă și e intenționat —
+la cache rece s-ar altfel trimite ~700 de cereri către open-meteo într-o rafală.
+
 ## Verificarea posturii de exploatare
 
 Documentația de mai jos descrie ce ar *trebui* configurat. Ce *este* configurat
