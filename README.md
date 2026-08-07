@@ -103,7 +103,7 @@ promptul, digestul exact, modul, modelul și citările în terminal și arhiveaz
 rezultatul local. `/api/analiza-ai` publică doar faptul că modul este manual;
 nici `?run=1` nu poate declanșa un apel extern.
 
-Verificare locală:
+Verificare locală (86 de teste, fără rețea, sub o secundă):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -143,7 +143,7 @@ dar ștergerea lui pierde snapshot-urile locale zilnice care nu pot fi refăcute
 | [NASA Earthdata CMR](https://cmr.earthdata.nasa.gov/search/) | prospețime și acoperire pentru SWOT RiverSP, SMAP, ICESat-2 ATL13 și NISAR SME2 | după misiune | metadate publice; valori opționale |
 | [GRDC](https://portal.grdc.bafg.de) (opțional, export local în `data/grdc/`) | serii zilnice de debit măsurat; aplicația folosește explicit Ceatal Izmail, GRDC 6742900 | istoric, interval specific stației | măsurat; uz necomercial, fără redistribuirea datelor brute |
 | Gravimetrie GRACE/GRACE-FO (SAGSA via hydroweb.next; necesită `pip3 install h5py`) | anomalia apei totale din bazin (suprafață+sol+subteran), km³, din 2002 | lunar, decalaj ~1 an | măsurat din orbită |
-| Zăpadă ERA5 (Open-Meteo, aceleași puncte-proxy) | ninsoarea iernii nov–mar vs. istoric, în tabelul de statistici | zilnic | reanaliză |
+| Zăpadă ERA5 (Open-Meteo, aceleași puncte-proxy) | ninsoarea iernii nov–mar vs. istoric, în tabelul de statistici; raportată în **centimetri** de zăpadă proaspătă (`cumul_cm`), nu în milimetri de apă echivalentă | zilnic | reanaliză |
 
 ### Import GRDC
 
@@ -161,8 +161,9 @@ clasice rămân o integrare locală opțională: uz necomercial, fără redistri
 fișierelor brute.
 
 Aplicația își construiește automat **arhiva locală**: un snapshot pe zi pentru
-AFDJ, RHMZ, Hydroinfo, DanubeHIS, DanubeSTREAM, SEN, ANAR, HydroWeb, OPERA și buletinele INHGA
-(`/api/istoric` arată stadiul).
+AFDJ, RHMZ, Hydroinfo, DanubeHIS, DanubeSTREAM, SEN, ANAR, HydroWeb, OPERA,
+avizele către navigatori, cele trei fluxuri DAMAS/OPCOM (consum, rezerve, PZU)
+și buletinele INHGA (`/api/istoric` arată stadiul).
 Cu fiecare zi de rulare, detectoarele capătă serie măsurată proprie.
 
 Pentru rapoartele SNN, titlul și URL-ul sunt detectate automat, dar starea și
@@ -208,22 +209,84 @@ Secțiunea „Anomalii față de istoric" rulează verificări automate
 1. **Climatologie** — percentila zilei calendaristice (fereastră ±7 zile) față de
    GloFAS 1991–anul trecut, în toate secțiunile transectului climatologic
    (Regensburg → Ceatal Izmail); serii de zile calendaristic consecutive sub P10.
+   Percentila nu se publică sub 30 de valori de referință: o distribuție săracă
+   ar produce un P0 sau P100 „încrezător" care nu înseamnă nimic.
 2. **Bilanț Baziaș→Gruia** — decalajul de propagare se estimează din corelația
-   variațiilor zilnice, apoi reziduul relativ al ultimelor 14 zile se compară cu
-   distribuția istorică a aceleiași luni (z-score). Semnalează o divergență
-   modelată persistentă; nu îi stabilește cauza.
+   variațiilor zilnice (sub un prag de corelație se folosește decalajul
+   documentat, nu unul potrivit pe zgomot), apoi media reziduului pe ultimele 14
+   zile *calendaristic consecutive* se compară cu **distribuția mediilor pe 14
+   zile din aceeași lună** din anii anteriori. Etalonul e deliberat de aceeași
+   natură cu mărimea testată: raportarea unei medii de fereastră la abaterea
+   standard a valorilor *zilnice* comprimă scorul spre zero și face testul
+   incapabil să se declanșeze. **Ambele serii vin din același model GloFAS**,
+   deci testul poate detecta doar o schimbare a consistenței interne a
+   modelului — nu poate dovedi și nici infirma o captare reală de apă.
 3. **Măsurat vs. model** — seria oficială INHGA (reconstruită din arhiva publică a
    buletinelor, descărcată automat la pornire) împărțită la modelul Copernicus;
-   bias-ul stabil e normal, ruptura bruscă e semnal.
+   bias-ul stabil e normal, ruptura bruscă e semnal. Ca mai sus, media ultimelor
+   7 observații se compară cu distribuția mediilor pe 7, nu cu împrăștierea
+   valorilor individuale.
 4. **Coerența precipitații↔debit** — euristic: percentila cumulului de ploi pe 90 de
-   zile în bazinul amonte vs. percentila debitului.
+   zile în bazinul amonte vs. percentila debitului. Fereastra înseamnă 90 de zile
+   *calendaristice*: una cu o zi lipsă se sare, ca să nu compare un cumul întins
+   pe 91+ zile cu ferestre istorice complete.
 5. **Contra-probe** — AFDJ↔DanubeSTREAM, altimetrie satelitară și perechi
-   măsurat↔model în Germania, Ungaria și Serbia.
+   măsurat↔model în Germania, Ungaria și Serbia. Perechile măsurat↔model testează
+   numai incompatibilitatea grosieră (bandă largă): o deplasare lentă a
+   raportului rămâne înăuntru și nu e detectată acolo — spre deosebire de
+   detectorul 3, care are test de ruptură.
 6. **Austria** — screening al trendurilor de nivel; fără curbe cotă–volum și
-   debite intrare/ieșire nu demonstrează și nu exclude retenția.
+   debite intrare/ieșire nu demonstrează și nu exclude retenția. Dacă debitul de
+   intrare dinspre Germania nu poate fi citit, starea rămâne „nedeterminat":
+   necunoscutul nu se contorizează ca semnal.
+
+Regulă transversală: **niciun superlativ fără numitorul lui.** „Recordul zilei"
+se publică doar împreună cu numărul real de ani care conțin acea zi
+calendaristică, iar bilanțul în km³ refuză anii incompleți — o serie cu goluri ar
+produce un deficit fabricat, într-o singură direcție.
 
 Fiecare verdict afișează metoda, cifrele și limitele — detectoarele produc probe
 verificabile, nu acuzații.
+
+## Securitate
+
+Repo-ul este public, deci postura merită scrisă explicit: oricine poate citi
+codul și verifica afirmațiile de mai jos.
+
+- **Zero dependențe.** Tot serverul rulează pe biblioteca standard Python.
+  Singura excepție e `h5py`, opțională și încărcată leneș doar pentru
+  gravimetria GRACE; dacă lipsește, cardul se dezactivează singur. Asta ține
+  suprafața de supply-chain la zero — proprietatea cea mai valoroasă a
+  proiectului și motivul principal pentru care nu migrează pe un framework web.
+- **Numai citire, numai loopback.** Serverul ascultă pe `127.0.0.1`, deci
+  originea nu e accesibilă direct; verbele care modifică întorc 405. Un GET
+  poate însă popula cache-ul și arhiva locală, deci „fără scriere din exterior"
+  ar fi o formulare falsă — vezi nota din DEPLOY.md.
+- **Parametri din listă scurtă.** `days`/`start` acceptă doar câteva valori
+  explicite. Mărginirea pe interval limita valoarea, nu numărul de valori
+  distincte, iar fiecare valoare înseamnă o cheie de cache și o cerere nouă spre
+  sursa oficială — adică un spațiu enumerabil.
+- **CSP fără `unsafe-inline`.** `default-src 'none'`, `script-src 'self'`,
+  `style-src 'self'`; markup-ul nu conține niciun atribut `style=`, iar valorile
+  calculate din date se aplică prin CSSOM. Anteturile se emit din
+  `send_response`, deci apar și pe erorile generate de biblioteca standard.
+- **Datele terțe sunt tratate ca ostile.** Tot ce vine din surse externe e
+  escapat la granița `fetch` înainte de orice sink DOM; adresele construite din
+  date trebuie să fie `https://` ca să devină legături; URL-urile primite de la
+  cataloage sunt validate pe host exact; iar textul terț care ajunge în promptul
+  LLM e mărginit ca lungime și declarat explicit drept date, nu instrucțiuni.
+- **TLS relaxat pentru exact un host.** RHMZ Serbia are lanțul de certificate
+  incomplet. Excepția e fixată pe acel host prin URL constant, redirect
+  restrâns la același host și interzicerea coborârii la `http://`, iar livrarea
+  respectivă nu contează singură ca verificare de integritate.
+- **Secretele nu intră în repo.** `data/keys/` e ignorat și nu a existat
+  niciodată în istoric; cheile nu ajung în `cache.db`, în răspunsuri sau în
+  mesajele de eroare. `ops/verify_deploy.sh` reverifică asta pe server.
+- **ECharts vendorizat cu `integrity=`** (SRI): un fișier înlocuit nu mai poate
+  fi executat.
+
+Dacă găsiți o problemă, deschideți un issue fără detalii de exploatare și
+cereți un canal privat.
 
 ## Structură
 
@@ -232,8 +295,11 @@ server.py        server HTTP (stdlib) + rutele /api/*
 connectors.py    conectorii către surse + cache SQLite cu TTL
 anomalii.py      detectoarele și screeningurile de anomalii
 romania.py       testul determinist România/Cernavodă și comparația istorică
-static/          frontend (HTML/CSS/JS + ECharts vendorizat)
-cache.db         cache local (generat la rulare)
+analiza_ai.py    stratul opțional de interpretare LLM (manual, niciodată din HTTP)
+static/          frontend (HTML/CSS/JS + ECharts vendorizat, cu SRI)
+tests/           suita de teste (86, fără rețea)
+ops/             backup verificat și verificarea posturii de deploy
+cache.db         cache local + arhiva zilnică (generat la rulare)
 ```
 
 ## API local
