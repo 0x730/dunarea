@@ -159,17 +159,54 @@ Pastilele din header-ul paginii arată live starea fiecărei surse; dacă vreuna
 e roșie permanent după ~5 minute de la pornire, `supervisorctl tail -f
 daemon-XXXXXX` pe server arată de ce.
 
+## Verificarea posturii de exploatare
+
+Documentația de mai jos descrie ce ar *trebui* configurat. Ce *este* configurat
+se verifică rulând pe server:
+
+```bash
+bash ops/verify_deploy.sh --origin-ip IP_SERVER --domain dunarea.exemplu.ro
+```
+
+Verifică portul aplicației (numai loopback), permisiunile cheilor, faptul că
+`data/keys` nu e urmărit de git, prospețimea și integritatea backupului, cronul,
+ufw, anteturile de securitate și — cel mai important — dacă IP-ul de origine
+răspunde direct pe 443. Ultima verificare e concludentă numai rulată din afara
+rețelei Cloudflare: dacă originea răspunde direct, oricine poate ocoli
+Cloudflare, limitarea de rată și tot ce e în față, cerând direct IP-ul.
+
 ## Note de exploatare
 
 - `cache.db` se creează singur pe server (nu vine din git). Poate fi șters,
   dar **evitați**: conține arhiva locală zilnică (AFDJ/RHMZ/DanubeSTREAM/SEN/
   INHGA/analize AI), care crește în valoare cu timpul. Ștergerea declanșează
   și o reconstrucție costisitoare (GRACE ~10 min, snap GloFAS ~2 min).
-- **Backup corect** (nu `cp` pe o bază vie — poate ieși ruptă):
+- **Backup corect.** `cp` pe baza vie e greșit de două ori: poate prinde
+  fișierul la mijlocul unei tranzacții, iar de când baza rulează în
+  `journal_mode=WAL` lasă în urmă ce nu e încă checkpointat în `cache.db-wal`.
+  Rețeta cu `sqlite3 ... ".backup"` are altă problemă: **utilitarul de linie de
+  comandă nu e instalat implicit** pe un Ubuntu minimal, deci cronul ar fi
+  eșuat tăcut, iar dumneavoastră ați fi crezut că aveți backupuri.
+
+  Folosiți scriptul din repo, care merge cu interpretorul deja instalat:
   ```bash
-  sqlite3 /home/forge/SITE/cache.db ".backup '/home/forge/backups/cache-$(date +\%F).db'"
+  # cron zilnic, ca utilizatorul forge:
+  15 3 * * * cd /home/forge/SITE && /usr/bin/python3 ops/backup.py \
+             --dest /home/forge/backups --keep-days 14 >> /home/forge/backup.log 2>&1
   ```
-  într-un cron zilnic, cu rotație la 14 zile.
+  Copiază online (fără oprirea serverului), convertește copia într-un singur
+  fișier, o verifică — integritate, structură, numărul de rânduri permanente —
+  și abia apoi o promovează atomic. Ieșire diferită de zero dacă ceva pică, deci
+  cronul vă poate anunța. Backupul primește 600, directorul 700.
+
+  **Probă de restaurare** — un backup neverificat este o ipoteză:
+  ```bash
+  python3 ops/backup.py --verify-only /home/forge/backups/cache-2026-08-07.db
+  # restaurare completă: opriți daemonul, înlocuiți cache.db, reporniți
+  ```
+  Probă făcută pe 2026-08-07: instanța pornită pe o copie restaurată a servit
+  aceleași valori ca originalul (14 secțiuni de climatologie, același z al
+  bilanțului) și a sărit warmup-ul, adică arhiva locală a supraviețuit intactă.
 - Cache-ul se curăță singur (rânduri expirate de peste 30 de zile, o dată pe
   zi); cheile permanente — arhiva locală — sunt protejate explicit.
 - Aplicația nu acceptă niciun verb care modifică (POST/PUT/PATCH/DELETE dau
