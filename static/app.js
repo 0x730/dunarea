@@ -824,7 +824,7 @@ async function renderDelta(afdj) {
     if (d.distributie?.valid) {
       rows.push(li("Chilia / Tulcea", `<b>${d.distributie.chilia_pct}%</b> / <b>${d.distributie.tulcea_pct}%</b> <span class="prov prov-calculat">calculat</span> din model`));
     } else {
-      rows.push(li("împărțirea pe brațe", `<span class="prov prov-lipsa">nu se poate calcula onest</span> — modelul rutează tot debitul pe o singură celulă la bifurcație; verificarea automată a respins rezultatul`));
+      rows.push(li("împărțirea pe brațe", `<span class="prov prov-lipsa">necalculabil</span> — modelul rutează tot debitul pe o singură celulă la bifurcație, iar verificarea automată a respins rezultatul; nu se poate calcula onest din datele publice`));
     }
     rows.push(li("reper istoric", `campaniile de măsurători au arătat de-a lungul timpului Chilia ≈ 50–58%, Tulcea ≈ 42–50% (în scădere pe Chilia, de la deceniu la deceniu) — a se citi rapoartele INHGA / Comisia Dunării, nu ca valoare de azi`));
     $("delta-intrare").innerHTML = rows.join("");

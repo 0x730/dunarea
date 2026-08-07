@@ -124,7 +124,10 @@ section > h2 {
 .prov {
   font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: 0.08em; padding: 1px 7px; border-radius: 3px;
-  white-space: nowrap; vertical-align: middle;
+  vertical-align: middle;
+  /* Fără `nowrap`: un chip lung nu are voie să împingă textul afară din card.
+     Cele scurte (MĂSURAT, MODEL) nu se rup oricum, fiindcă încap. */
+  display: inline-block; max-width: 100%; overflow-wrap: anywhere;
 }
 .prov-masurat  { border: 1px solid rgba(12,163,12,.55); color: #7fd07f; }
 .prov-model    { border: 1px dashed rgba(137,135,129,.8); color: var(--muted); }
@@ -324,7 +327,9 @@ table.data tr:last-child td { border-bottom: none; }
 }
 .facts li:last-child { border-bottom: none; }
 .facts .k { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 150px; }
-.facts .v { color: var(--ink-2); }
+/* min-width: 0 — fără el, un element flex nu coboară sub lățimea intrinsecă a
+   conținutului, deci orice etichetă lungă lățea rândul peste marginea cardului. */
+.facts .v { color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 .facts .v b { color: var(--ink); font-weight: 600; }
 
 /* ----------------------------------------------------------- anomalii */

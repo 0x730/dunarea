@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<title>preview</title>
+<!--
+  Șablonul imaginii de previzualizare pentru rețele sociale (1200×630).
+  Se randează în PNG cu Chrome headless — vezi ops/README.md.
+  Deliberat FĂRĂ cifre: imaginea e un fișier static comis în repo, iar o valoare
+  din august 2026 lipită aici ar minți la fiecare distribuire de după.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    background: #131312;
+    color: #e8e7df;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 64px 72px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    position: relative; overflow: hidden;
+  }
+  .mono { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+
+  h1 { font-size: 82px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+  h1 .thin { font-weight: 300; color: #898781; }
+  .km { font-size: 20px; color: #6f6d68; margin-top: 18px; letter-spacing: .04em; }
+
+  .claim { font-size: 34px; line-height: 1.32; max-width: 20ch; font-weight: 500; }
+  .claim b { color: #7fd07f; font-weight: 600; }
+
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip {
+    font-size: 17px; letter-spacing: .08em; text-transform: uppercase;
+    padding: 7px 14px; border-radius: 4px;
+  }
+  .masurat  { border: 1px solid rgba(12,163,12,.55);  color: #7fd07f; }
+  .model    { border: 1px dashed rgba(137,135,129,.9); color: #a8a69f; }
+  .calculat { border: 1px solid rgba(250,178,25,.5);  color: #fab219; }
+  .lipsa    { border: 1px solid rgba(208,59,59,.55);  color: #d03b3b; }
+
+  .foot { font-size: 19px; color: #6f6d68; letter-spacing: .02em; }
+
+  /* profilul fluviului — decor, nu date */
+  svg.river { position: absolute; right: -40px; bottom: 118px; opacity: .16; }
+</style>
+</head>
+<body>
+
+<svg class="river" width="620" height="300" viewBox="0 0 620 300" aria-hidden="true">
+  <polyline fill="none" stroke="#3987e5" stroke-width="3"
+    points="0,236 52,228 104,214 156,218 208,196 260,184 312,150 364,142 416,118 468,96 520,74 572,58 620,44"/>
+  <g fill="#3987e5">
+    <circle cx="104" cy="214" r="6"/><circle cx="208" cy="196" r="6"/>
+    <circle cx="312" cy="150" r="6"/><circle cx="416" cy="118" r="6"/>
+    <circle cx="520" cy="74" r="6"/>
+  </g>
+</svg>
+
+<div>
+  <h1>DUNĂREA <span class="thin">· monitor</span></h1>
+  <div class="km mono">km 2458 → km 0 · Ingolstadt → Sulina</div>
+</div>
+
+<div class="claim">
+  Fiecare cifră vine cu <b>proveniența ei</b> — și cu limita ei.
+</div>
+
+<div>
+  <div class="chips mono">
+    <span class="chip masurat">măsurat</span>
+    <span class="chip model">model</span>
+    <span class="chip calculat">calculat</span>
+    <span class="chip lipsa">nepublicat</span>
+  </div>
+  <div class="foot mono" style="margin-top:22px">
+    surse oficiale: INHGA · AFDJ · PEGELONLINE · RHMZ · Copernicus
+  </div>
+</div>
+
+</body>
+</html>
