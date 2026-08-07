@@ -16,9 +16,13 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
-REPORT_CACHE_KEY = "anomalii_report:v8"
-STATS_CACHE_KEY = "statistici:v4"
-BUDGET_CACHE_KEY = "bilant_apa:v3"
+# v9/v5/v4: etalonul z-scorului e acum distribuția mediilor pe fereastră (nu a
+# valorilor zilnice), zăpada e raportată în cm, streak-ul numără zile
+# calendaristice, bilanțul km³ refuză anii incompleți, iar percentilele cer un
+# minim de eșantioane. Rezultatele vechi nu mai sunt comparabile.
+REPORT_CACHE_KEY = "anomalii_report:v9"
+STATS_CACHE_KEY = "statistici:v5"
+BUDGET_CACHE_KEY = "bilant_apa:v4"
 
 
 # ------------------------------------------------------------- utilitare ---
@@ -32,12 +36,61 @@ def _mmdd(ds):
     return ds[5:]
 
 
+def _as_cm(blk):
+    """Redenumește câmpurile `_mm` ale unui bloc în `_cm`, fără conversie."""
+    if not isinstance(blk, dict):
+        return blk
+    return {(k[:-3] + "_cm" if k.endswith("_mm") else k): v for k, v in blk.items()}
+
+
+# Sub acest prag distribuția de referință e prea săracă pentru a susține o
+# percentilă: o singură valoare ar produce P0 sau P100 „încrezător".
+MIN_REF_SAMPLES = 30
+
+
 def _rank(value, ref):
     """percentila empirică a valorii în distribuția de referință (0–100)."""
-    if not ref:
+    if not ref or len(ref) < MIN_REF_SAMPLES:
         return None
     below = sum(1 for r in ref if r <= value)
     return round(100.0 * below / len(ref), 1)
+
+
+def _rolling_window_means(smap, window, month=None, exclude_year=None):
+    """Mediile ferestrelor de `window` zile CALENDARISTIC consecutive.
+
+    Etalonul corect pentru media unei ferestre nu e abaterea standard a
+    valorilor zilnice, ci distribuția mediilor de aceeași lungime: media a k
+    zile corelate variază mult mai puțin decât o zi, iar raportarea la SD-ul
+    zilnic comprimă z-ul spre zero de câteva ori.
+    Ferestrele cu o zi lipsă se sar — altfel „media pe 14 zile" ar fi media a
+    14 valori disponibile, întinsă peste mai multe săptămâni.
+    """
+    out = []
+    days = sorted(smap)
+    for i in range(window - 1, len(days)):
+        block = days[i - window + 1:i + 1]
+        first, last = date.fromisoformat(block[0]), date.fromisoformat(block[-1])
+        if (last - first).days != window - 1:
+            continue
+        if month is not None and last.month != month:
+            continue
+        if exclude_year is not None and last.year == exclude_year:
+            continue
+        out.append(mean(smap[d] for d in block))
+    return out
+
+
+def _contiguous_tail(smap, window):
+    """Ultimele `window` zile calendaristic consecutive, sau None dacă lipsesc."""
+    days = sorted(smap)
+    if len(days) < window:
+        return None
+    block = days[-window:]
+    first, last = date.fromisoformat(block[0]), date.fromisoformat(block[-1])
+    if (last - first).days != window - 1:
+        return None
+    return [smap[d] for d in block]
 
 
 def _doy_reference(smap, exclude_year, window=7):
@@ -99,10 +152,17 @@ def climatology(point_id):
         r = _rank(smap[ds], ref.get(_mmdd(ds), []))
         recent.append({"date": ds, "value": round(smap[ds], 1), "pct": r})
 
+    # Zile calendaristic consecutive, nu „valori disponibile consecutive": cu un
+    # gol în arhivă, „a 23-a zi la rând sub P10" putea acoperi 30 de zile reale.
     streak = 0
+    asteptata = None
     for item in reversed(recent):
+        zi = date.fromisoformat(item["date"])
+        if asteptata is not None and zi != asteptata:
+            break
         if item["pct"] is not None and item["pct"] < 10:
             streak += 1
+            asteptata = zi - timedelta(days=1)
         else:
             break
 
@@ -172,6 +232,10 @@ def balance():
         c = corr(db[:n], dg[lag:lag + n])
         if c > best_c:
             best_lag, best_c = lag, c
+    # Pornind de la -2, ORICE lag era adoptat, chiar cu o corelație de 0,03,
+    # și publicat ca „corelatie". Sub prag folosim decalajul documentat.
+    if best_c < 0.3:
+        best_lag = 1
 
     # reziduul relativ: (ieșire - intrare decalată) / intrare
     rel = {}
@@ -186,14 +250,17 @@ def balance():
     today = date.today()
     cur_month = today.month
     cur_year = today.year
-    hist = [v for ds, v in rel.items()
-            if int(ds[5:7]) == cur_month and not ds.startswith(str(cur_year))]
-    last14 = [rel[ds] for ds in sorted(rel)[-14:]]
-    if not hist or not last14:
+    # Etalon: mediile ferestrelor de 14 zile care se ÎNCHEIE în aceeași lună,
+    # din anii anteriori. Fereastra curentă e comparată cu obiecte de aceeași
+    # natură — nu cu abaterea standard a valorilor zilnice.
+    hist_means = _rolling_window_means(rel, 14, month=cur_month,
+                                       exclude_year=cur_year)
+    cur_window = _contiguous_tail(rel, 14)
+    if len(hist_means) < 10 or cur_window is None:
         raise RuntimeError("date insuficiente pentru reziduu")
 
-    mu, sd = mean(hist), pstdev(hist)
-    cur = mean(last14)
+    mu, sd = mean(hist_means), pstdev(hist_means)
+    cur = mean(cur_window)
     z = (cur - mu) / sd if sd > 0 else 0.0
 
     return {
@@ -202,7 +269,16 @@ def balance():
         "reziduu_istoric_pct": round(100 * mu, 2),
         "sd_pct": round(100 * sd, 2),
         "z": round(z, 2),
-        "fereastra": "media ultimelor 14 zile vs. aceeași lună, 2015–anul trecut",
+        "n_etalon": len(hist_means),
+        "tip_proba": "model_hidrologic",
+        "sursa": "GloFAS v4 — ambele secțiuni (Baziaș și Gruia)",
+        "fereastra": "media ultimelor 14 zile consecutive vs. mediile pe 14 zile "
+                     "din aceeași lună, 2015–anul trecut",
+        "metoda": "reziduu relativ (Gruia − Baziaș decalat) / Baziaș, standardizat "
+                  "față de distribuția mediilor pe 14 zile din aceeași lună. "
+                  "AMBELE serii vin din același model GloFAS: testul detectează "
+                  "o schimbare a consistenței interne a modelului, NU poate "
+                  "detecta o captare sau o deviere reală de apă la Porțile de Fier.",
     }
 
 
@@ -230,14 +306,18 @@ def measured_vs_model():
     # Ultimele șapte zile sunt fereastra testată, nu parte din etalon;
     # includerea lor în medie și abatere ar micșora artificial ruptura.
     baseline = rs[:-7]
-    if len(baseline) < 3:
+    # Etalonul e distribuția mediilor pe 7 observații, nu a valorilor
+    # individuale: altfel media testată se compară cu o SD prea mare și
+    # ruptura nu se declanșează practic niciodată.
+    baseline_means = [mean(baseline[i - 6:i + 1]) for i in range(6, len(baseline))]
+    if len(baseline_means) < 10:
         return {"insuficient": True, "n": len(ratios),
                 "nota": "prea puține zile anterioare ferestrei testate"}
-    mu, sd = mean(baseline), pstdev(baseline)
+    mu, sd = mean(baseline_means), pstdev(baseline_means)
     last7 = mean(rs[-7:])
     z = (last7 - mu) / sd if sd > 0 else 0.0
     return {
-        "n": len(ratios), "n_etalon": len(baseline),
+        "n": len(ratios), "n_etalon": len(baseline_means),
         "raport_mediu": round(mu, 3), "sd": round(sd, 3),
         "raport_ultimele7": round(last7, 3), "z": round(z, 2),
         "ultima_pereche_aceeasi_data": ratios[-1],
@@ -258,8 +338,15 @@ PRECIP_VS = [("bazin_superior", "amonte: Germania/Austria"),
 def _rolling90_percentile(dates, vals, end, exclude_year, window=5):
     """Același estimator pentru toate suprafețele: cumul de 90 zile și
     referință din ferestrele calendaristice ±window ale anilor anteriori."""
+    # `dates` conține doar zilele cu valoare: însumarea a 90 de POZIȚII putea
+    # întinde tăcut fereastra peste 91+ zile calendaristice și umfla cumulul,
+    # în timp ce ferestrele istorice, complete, rămâneau de 90.
     cum90 = {}
     for i in range(89, len(dates)):
+        first = date.fromisoformat(dates[i - 89])
+        last = date.fromisoformat(dates[i])
+        if (last - first).days != 89:
+            continue
         cum90[dates[i]] = sum(vals[i - 89:i + 1])
     cur = cum90.get(end)
     if cur is None:
@@ -342,7 +429,10 @@ def precip_stats():
 
         # 1–3 ianuarie: ERA5 (întârziat ~3 zile) e încă în anul trecut, deci
         # anul „curent" n-are date — raportăm anul precedent, complet
-        an = cy if cy in ytd or cy in winter else cy - 1
+        # `winter[cy]` există deja pe 1–3 ianuarie cu doar noiembrie+decembrie
+        # în el; dacă l-am lăsa să voteze, o iarnă de două luni s-ar compara cu
+        # ierni istorice de cinci.
+        an = cy if cy in ytd else cy - 1
         cur = ytd.get(an)
         hist_years = [y for y in sorted(ytd) if y < an]
         hist = [ytd[y] for y in hist_years]
@@ -373,9 +463,12 @@ def precip_stats():
                                  if hist_years else None),
             "ian_azi": block(cur, hist),
             "iarna": block(wcur, whist),
-            "zapada_iarna": block(wsnow.get(an),
-                                  [wsnow[y] for y in range(PRECIP_START + 1, an)
-                                   if y in wsnow]),
+            # snowfall_sum de la Open-Meteo e în CENTIMETRI de zăpadă proaspătă:
+            # helperul generic ar fi etichetat câmpurile `_mm`, greșit cu un
+            # factor de 10 pentru orice consumator al /api/statistici.
+            "zapada_iarna": _as_cm(block(
+                wsnow.get(an),
+                [wsnow[y] for y in range(PRECIP_START + 1, an) if y in wsnow])),
             "ultimele90": {"cumul_mm": round(cum90, 1) if cum90 is not None else None,
                            "pct": pct90,
                            "fereastra_referinta": "aceeași dată calendaristică ±5 zile",
@@ -497,12 +590,18 @@ def grdc_context():
     ref = [v for ds, v in serie.items()
            if abs(_doy_diff(ds[5:], mmdd)) <= 7]
     pct = _rank(azi[1], ref)
-    rec_min = min(((v, ds) for ds, v in serie.items() if ds[5:] == mmdd),
-                  default=None)
+    exact_zi = [(v, ds) for ds, v in serie.items() if ds[5:] == mmdd]
+    rec_min = min(exact_zi, default=None)
+    # Superlativul se publică numai cu numitorul lui adevărat: `mostre_referinta`
+    # numără fereastra ±7 zile, un set complet diferit.
+    if len(exact_zi) < 10:
+        rec_min = None
     g.update({
         "azi_model_m3s": round(azi[1], 1), "azi_data": azi[0],
         "percentila_vs_masurat": pct, "mostre_referinta": len(ref),
-        "record_minim_zi": {"m3s": rec_min[0], "data": rec_min[1]} if rec_min else None,
+        "record_minim_zi": ({"m3s": rec_min[0], "data": rec_min[1],
+                             "ani_cu_aceasta_zi": len(exact_zi)} if rec_min else None),
+        "ani_cu_aceasta_zi": len(exact_zi),
         "nota": "valoarea de azi e din model (GloFAS); istoricul e măsurat (GRDC) "
                 "— comparație orientativă între produse necalibrate unul față de celălalt",
     })
@@ -579,7 +678,9 @@ def germany_check():
             "verification_family": "gauge_de_at",
             "integrity_eligible": True,
             "metoda": "debit orar WSV la Hofkirchen vs. GloFAS în aceeași "
-                      "secțiune; bias-ul stabil de model e normal, ruptura nu"}
+                      "secțiune. Se testează DOAR incompatibilitatea grosieră "
+                      "(bandă 0,4–2,5): o deplasare lentă a raportului rămâne "
+                      "înăuntru și nu este detectată aici."}
 
 
 def serbia_check():
@@ -723,7 +824,12 @@ def austria_check():
     except Exception:
         pass
 
-    retentie = mediana > 15 and (intrare_pct is None or intrare_pct <= 0)
+    # Un fetch eșuat lăsa intrare_pct=None, iar condiția trata NECUNOSCUTUL
+    # drept îndeplinit: o eroare de rețea producea un semnal apropiat de o
+    # acuzație la adresa unei țări.
+    retentie = (mediana > 15 and intrare_pct is not None and intrare_pct <= 0)
+    stare_intrare = "necunoscuta" if intrare_pct is None else (
+        "in_crestere" if intrare_pct > 0 else "stationara_sau_in_scadere")
     return {
         "statii": trends, "mediana_trend_cm": mediana,
         "intrare_trend_pct": intrare_pct,
@@ -790,20 +896,29 @@ def water_budget():
     # volumul scurs prin râu până la aceeași dată (km³)
     def ytd_volume(pid):
         m = _series_map(C.glofas_archive(pid, CLIM_START)["data"])
-        cum = {}
+        cum, zile = {}, {}
         for ds, v in m.items():
             md = _mmdd(ds)
             if md == "02-29" or md > cutoff:
                 continue
             y = int(ds[:4])
             cum[y] = cum.get(y, 0.0) + v * 86400 / 1e9
-        hist_years = [y for y in sorted(cum) if y < cy]
+            zile[y] = zile.get(y, 0) + 1
+        # _series_map elimină tăcut zilele fără valoare: anul curent ar însuma
+        # ZILELE DISPONIBILE, iar mediana istorică ani compleți. Distorsiunea e
+        # într-o singură direcție — orice gol mărește „apa lipsă".
+        asteptate = max(zile.values()) if zile else 0
+        complet = [y for y, n in zile.items() if n >= asteptate]
+        hist_years = [y for y in sorted(cum) if y < cy and y in complet]
         hist = [cum[y] for y in hist_years]
         period = ({"requested_start": CLIM_START,
                    "effective_start": hist_years[0],
-                   "effective_end": hist_years[-1]}
+                   "effective_end": hist_years[-1],
+                   "zile_asteptate": asteptate,
+                   "zile_an_curent": zile.get(cy, 0)}
                   if hist_years else None)
-        return cum.get(cy), (median(hist) if hist else None), period
+        curent = cum.get(cy) if zile.get(cy, 0) >= asteptate else None
+        return curent, (median(hist) if hist else None), period
 
     q_pas_cur, q_pas_med, q_pas_period = ytd_volume("passau")
     q_baz_cur, q_baz_med, q_baz_period = ytd_volume("bazias")

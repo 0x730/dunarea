@@ -57,8 +57,14 @@ function showView(view, historyMode = null, scrollTop = false, preserveHash = fa
 
   const toc = $("view-toc");
   const headings = [...document.querySelectorAll(`section[data-view="${view}"] > h2`)];
-  toc.innerHTML = headings.map((heading) =>
-    `<a href="#${heading.parentElement.id}">${heading.textContent.trim()}</a>`).join("");
+  // Construit prin DOM, nu prin innerHTML: textContent-ul unui titlu deja
+  // randat e text DEZESCAPAT, iar reinjectarea lui ar executa HTML străin.
+  toc.replaceChildren(...headings.map((heading) => {
+    const link = document.createElement("a");
+    link.href = `#${heading.parentElement.id}`;
+    link.textContent = heading.textContent.trim();
+    return link;
+  }));
   document.title = `Dunărea — ${VIEW_LABELS[view]}`;
 
   if (historyMode) {
@@ -105,13 +111,46 @@ function sanitize(x) {
   if (typeof x === "string") return esc(x);
   if (Array.isArray(x)) return x.map(sanitize);
   if (x && typeof x === "object") {
-    const o = {};
+    // Object.create(null): cu un obiect obișnuit, atribuirea cheii "__proto__"
+    // ar invoca setterul de prototip și ar schimba prototipul rezultatului —
+    // JSON.parse o crease ca proprietate inertă, iar copierea o reactiva.
+    const o = Object.create(null);
     for (const k of Object.keys(x)) o[esc(k)] = sanitize(x[k]);
     return o;
   }
   return x;
 }
 const fmtV = (v, f = fmtN) => (v == null || Number.isNaN(v) ? "–" : f.format(v));
+
+// Putere nominală a celor două unități CANDU-6 de la Cernavodă. E o constantă
+// de proiect (nameplate), nu o măsurătoare, iar pragul „o singură unitate" se
+// derivă din ea — altfel cele două cifre pot ajunge să se contrazică.
+const CNE_NAMEPLATE_MW = 1300;
+const CNE_ONE_UNIT_MAX_MW = Math.round(CNE_NAMEPLATE_MW * 0.77);
+
+// Escaparea HTML nu spune nimic despre schema unui URL: "javascript:alert(1)"
+// nu conține niciun caracter escapat și trece intact prin sanitize(). Orice
+// href construit din date trece pe aici — sursele sunt terțe (WordPress ANAR,
+// HTML hidro.ro, JSON-uri de catalog), deci nu au voie să aleagă schema.
+const safeUrl = (u, fallback = null) => {
+  if (typeof u !== "string") return fallback;
+  // sanitize() a transformat deja & în &amp;; îl readucem pentru comparație.
+  const raw = u.replace(/&amp;/g, "&").trim();
+  return /^https:\/\/[^/\\]/i.test(raw) ? u : fallback;
+};
+
+// Ancoră gata construită, sau textul simplu când adresa nu e de încredere.
+const srcLink = (url, label) => {
+  const safe = safeUrl(url);
+  return safe
+    ? `<a href="${safe}" target="_blank" rel="noopener">${label}</a>`
+    : `${label} <span class="prov prov-lipsa">adresă neverificabilă</span>`;
+};
+
+// Căutare într-un obiect-hartă literal: fără hasOwn, cheia "constructor" venită
+// din date întoarce o funcție (adevărată la test, NaN la calcul).
+const lookup = (map, key, fallback = undefined) =>
+  (typeof key === "string" && Object.hasOwn(map, key)) ? map[key] : fallback;
 
 async function jget(url) {
   const r = await fetch(url);
@@ -236,7 +275,7 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   });
 
   (hidmet?.statii || []).forEach((s) => {
-    const km = RS_KM[s.statie];
+    const km = lookup(RS_KM, s.statie);
     if (!km) return;
     if (s.debit_m3s != null)
       measured.push({ km, q: s.debit_m3s, name: s.statie + " (RS)", src: "RHMZ Serbia (zilnic)", extra: s.nivel_cm != null ? `nivel ${fmtN.format(s.nivel_cm)} cm` : "" });
@@ -317,16 +356,16 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
 
   // mire doar-nivel
   ticks.forEach((t, i) => {
-    svg += `<line class="pf-tick" data-i="t${i}" x1="${x(t.km)}" y1="${Y0 - 7}" x2="${x(t.km)}" y2="${Y0}" stroke="${MUTED}" stroke-width="2" opacity="0.7" style="cursor:crosshair"/>`;
+    svg += `<line class="pf-tick" data-i="t${i}" x1="${x(t.km)}" y1="${Y0 - 7}" x2="${x(t.km)}" y2="${Y0}" stroke="${MUTED}" stroke-width="2" opacity="0.7" class="crosshair"/>`;
   });
 
   // linia modelului + punctele
   if (linePts) svg += `<polyline points="${linePts}" fill="none" stroke="${BLUE}" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.75"/>`;
   model.forEach((p, i) => {
-    svg += `<circle class="pf-pt" data-i="m${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="4.5" fill="#1a1a19" stroke="${BLUE}" stroke-width="1.8" style="cursor:crosshair"/>`;
+    svg += `<circle class="pf-pt" data-i="m${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="4.5" fill="#1a1a19" stroke="${BLUE}" stroke-width="1.8" class="crosshair"/>`;
   });
   measured.forEach((p, i) => {
-    svg += `<circle class="pf-pt" data-i="M${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="5" fill="${BLUE}" stroke="#1a1a19" stroke-width="1.5" style="cursor:crosshair"/>`;
+    svg += `<circle class="pf-pt" data-i="M${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="5" fill="${BLUE}" stroke="#1a1a19" stroke-width="1.5" class="crosshair"/>`;
   });
   svg += `</svg>`;
   $("profil-holder").innerHTML = svg;
@@ -378,7 +417,7 @@ function renderAfdjTable(afdj) {
     .sort((a, b) => a.cota_cm - b.cota_cm)
     .slice(0, 5);
   const coteNegativeHtml = coteNegative.length
-    ? `<p class="sub" style="margin:10px 0 0"><b>Cote negative în ultima citire</b>
+    ? `<p class="sub m-10-0-0"><b>Cote negative în ultima citire</b>
         (selecție, față de zero-ul propriei mire):
         ${coteNegative.map((s) => `<b>${s.statie}</b> ${fmtN.format(s.cota_cm)} cm`).join(" · ")}.
         Valorile negative nu înseamnă albie secată, nu sunt direct comparabile între stații
@@ -402,7 +441,7 @@ function renderHidmetTable(h) {
   $("tabel-hidmet").innerHTML = `<table class="data">
     <thead><tr><th>Stație</th><th class="num">nivel cm</th><th class="num">24 h</th><th class="num">Q m³/s</th><th class="num">apă</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="sub" style="margin:8px 0 0">Observație: <b>${h.data || "dată neidentificată"}</b>${h.observation_time ? ` · ${h.observation_time}` : ""}.
+    <p class="sub m-8-0-0">Observație: <b>${h.data || "dată neidentificată"}</b>${h.observation_time ? ` · ${h.observation_time}` : ""}.
       „·" = debitul nu se publică pentru stația respectivă.${h.transport_verified === false
         ? `<br><span class="down">Limită de integritate:</span> ${h.transport_warning}` : ""}</p>`;
 }
@@ -416,12 +455,12 @@ async function renderAvize() {
       <tr><td class="name">${a.tara} · ${a.motiv}${a.limitari?.length
           ? ` <span class="prov prov-calculat">${a.limitari.map((l) => `${l.cod} ${l.valoare}${l.unitate || ""}`).join(", ")}</span>` : ""}</td>
         <td class="num">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
-        <td style="font-size:12.5px; color:var(--ink-2)">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
+        <td class="detail-sm">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
         <td class="num">${a.din || ""}</td></tr>`).join("");
     $("tabel-avize").innerHTML = `<div class="table-scroll"><table class="data">
       <thead><tr><th>Aviz</th><th class="num">sector</th><th>conținut</th><th class="num">din</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="name">niciun aviz prioritar activ pe sectorul RO/BG</td></tr>`}</tbody></table>
-      <p class="sub" style="margin:8px 0 0">${d.active} avize active pe tot fluviul ·
+      <p class="sub m-8-0-0">${d.active} avize active pe tot fluviul ·
         ${Object.entries(d.pe_tari).map(([t, n]) => `${t}:${n}`).join(" ")} ·
         afișate: cele prioritare (niveluri scăzute, restricții, dragaje, obstacole) de pe sectorul RO/BG ·
         sursă: rețeaua DanubeSTREAM, standard „Notices to Skippers"</p></div>`;
@@ -572,12 +611,13 @@ async function renderPFChart() {
     const today = new Date().toISOString().slice(0, 10);
     const idx = ba.time.filter((t) => t <= today);
     const gmap = Object.fromEntries(gr.time.map((t, i) => [t, gr.discharge[i]]));
+    const bmap = Object.fromEntries(ba.time.map((t, i) => [t, ba.discharge[i]]));
     const opt = baseOpt();
     opt.grid.right = 110;
     opt.xAxis.data = idx.map((t) => t.slice(5));
     opt.yAxis.name = "m³/s"; opt.yAxis.nameTextStyle = { color: MUTED, fontFamily: MONO };
     opt.series = [
-      { name: "Baziaș (model GloFAS)", type: "line", data: idx.map((t, i) => ba.discharge[i]), symbol: "none",
+      { name: "Baziaș (model GloFAS)", type: "line", data: idx.map((t) => bmap[t] ?? null), symbol: "none",
         lineStyle: { width: 2, color: BLUE }, itemStyle: { color: BLUE },
         endLabel: { show: true, color: BLUE, fontSize: 11, formatter: "Baziaș · model" } },
       { name: "Gruia (model GloFAS)", type: "line", data: idx.map((t) => gmap[t]), symbol: "none",
@@ -695,12 +735,12 @@ async function renderAnomalii() {
     const a = c.azi || {};
     const p = a.pct;
     return `<div class="anom-cell"${c.nota ? ` title="${c.nota}"` : ""}>
-      <div class="bar" style="background:${p != null ? divergingColor(p) : "var(--grid)"}"></div>
+      <div class="bar" data-bar-c="${p != null ? divergingColor(p) : "var(--grid)"}"></div>
       <div class="n">${c.name}</div>
       <div class="p">P${p != null ? fmt1.format(p) : "?"} <small>· ${a.value != null ? fmtN.format(a.value) + " m³/s" : ""}</small></div>
       <div class="d">${c.streak_sub_p10 > 0 ? `${c.streak_sub_p10} zile sub P10` : "peste P10"} · mai mic doar în ${c.ani_mai_mici}/${c.ani_referinta} ani</div>
-      <div style="margin-top:6px">${sevChip(c.severitate)}${c.nota ? ` <span class="sev sev-atentie">⚛ CNE</span>` : ""}</div>
-      ${c.nota ? `<div class="d" style="margin-top:6px">${c.nota}</div>` : ""}
+      <div class="mt-6">${sevChip(c.severitate)}${c.nota ? ` <span class="sev sev-atentie">⚛ CNE</span>` : ""}</div>
+      ${c.nota ? `<div class="d mt-6">${c.nota}</div>` : ""}
     </div>`;
   }).join("");
 
@@ -876,8 +916,9 @@ async function renderAnomalii() {
       <p class="met">${a.metoda} Surse oficiale austriece pentru verificare fină:
         <a href="https://ehyd.gv.at" target="_blank" rel="noopener">eHYD</a> ·
         <a href="https://www.doris.bmk.gv.at" target="_blank" rel="noopener">DoRIS</a> ·
-        <a href="https://www.verbund.com/en/group/news-press/press-releases/2026/5/13/corporate-news-results-quarter-12026" target="_blank" rel="noopener">VERBUND, T1 2026</a>
-        (coeficient hidro 0,78, cu 22 puncte procentuale sub media multianuală).</p>
+        <a href="https://www.verbund.com/en/group/news-press/press-releases/2026/5/13/corporate-news-results-quarter-12026" target="_blank" rel="noopener">VERBUND — rezultate trimestriale</a>.
+        <span class="prov prov-lipsa">reper static</span> Raportul T1 2026 dădea un coeficient
+        hidro de 0,78; cifra nu se actualizează odată cu acest panou și trebuie recitită la sursă.</p>
     </div>`);
   }
 
@@ -928,7 +969,7 @@ async function renderStatistici() {
     ? `reanaliza ERA5 · referință efectivă ${rainPeriod.effective_start}–${rainPeriod.effective_end}`
     : "reanaliza ERA5 · referință efectivă indisponibilă";
 
-  $("tabel-stat-debit").innerHTML = `<div style="overflow-x:auto"><table class="data">
+  $("tabel-stat-debit").innerHTML = `<div class="scroll-x"><table class="data">
     <thead><tr><th>Secțiune</th><th class="num">km</th><th class="num">ultima zi m³/s</th>
       <th class="num">normala zilei</th><th class="num">abatere</th>
       <th class="num">percentilă</th><th class="num">zile&lt;P10</th>
@@ -945,7 +986,7 @@ async function renderStatistici() {
     </tbody></table></div>`;
 
   const b = (x) => x || {};
-  $("tabel-stat-precip").innerHTML = `<div style="overflow-x:auto"><table class="data">
+  $("tabel-stat-precip").innerHTML = `<div class="scroll-x"><table class="data">
     <thead><tr><th>Zonă</th><th class="num">ian→ultima dată mm</th><th class="num">mediană</th>
       <th class="num">abatere</th><th class="num">ani mai uscați</th>
       <th class="num">iarnă mm</th><th class="num">mediană</th><th class="num">abatere</th>
@@ -960,10 +1001,10 @@ async function renderStatistici() {
         <td class="num">${b(r.iarna).cumul_mm != null ? fmtN.format(r.iarna.cumul_mm) : "–"}</td>
         <td class="num">${b(r.iarna).mediana_mm != null ? fmtN.format(r.iarna.mediana_mm) : "–"}</td>
         <td class="num">${pctSign(b(r.iarna).abatere_pct)}</td>
-        <td class="num">${b(r.zapada_iarna).cumul_mm != null ? `${fmtN.format(r.zapada_iarna.cumul_mm)} cm ${pctSign(r.zapada_iarna.abatere_pct)}` : "–"}</td>
+        <td class="num">${b(r.zapada_iarna).cumul_cm != null ? `${fmtN.format(r.zapada_iarna.cumul_cm)} cm ${pctSign(r.zapada_iarna.abatere_pct)}` : "–"}</td>
         <td class="num">${b(r.ultimele90).pct != null ? "P" + fmt1.format(r.ultimele90.pct) : "–"}</td></tr>`).join("")}
     </tbody></table>
-    <p class="sub" style="margin:8px 0 0">date până la ${d.precipitatii[0]?.pana_la || "–"} (ERA5 are câteva zile întârziere) ·
+    <p class="sub m-8-0-0">date până la ${d.precipitatii[0]?.pana_la || "–"} (ERA5 are câteva zile întârziere) ·
       „ani mai uscați" = câți ani din referință au avut mai puțină apă în aceeași fereastră ·
       ninsoare = suma ERA5 în cm de zăpadă proaspătă, nu stratul rămas pe sol și nu rezerva de apă din zăpadă</p></div>`;
 }
@@ -984,14 +1025,14 @@ async function renderBilantApa() {
   const maxRef = Math.max(b.ploaie_normal_km3, b.ploaie_km3);
   const bar = (val, normal, color) => {
     const w = (x) => Math.max(1, Math.round(100 * x / maxRef));
-    return `<div style="margin:4px 0 10px">
-      <div style="height:9px;width:${w(normal)}%;background:var(--grid);border-radius:4px"></div>
-      <div style="height:9px;width:${w(val)}%;background:${color};border-radius:4px;margin-top:2px"></div>
+    return `<div class="m-4-0-10">
+      <div class="bar-track" data-bar-w="${w(normal)}"></div>
+      <div class="bar-fill" data-bar-w="${w(val)}" data-bar-c="${color}"></div>
     </div>`;
   };
   const row = (label, val, normal, color, note) => `
-    <tr><td class="name" style="width:26%">${label}<br><span style="color:var(--muted);font-size:12px">${note || ""}</span></td>
-        <td style="width:44%">${bar(val, normal, color)}</td>
+    <tr><td class="name w-26">${label}<br><span class="c-muted-sm">${note || ""}</span></td>
+        <td class="w-44">${bar(val, normal, color)}</td>
         <td class="num"><b>${fmt1.format(val)}</b> km³</td>
         <td class="num">${fmt1.format(normal)} km³</td>
         <td class="num">${pctSign(Math.round(1000 * (val - normal) / normal) / 10)}</td></tr>`;
@@ -999,18 +1040,18 @@ async function renderBilantApa() {
   const abaterePct = Math.round(100 * (bz.volum_km3 - bz.normal_km3) / bz.normal_km3);
   const analysisYear = Number(d.pana_la.slice(0, 4));
   const volumStatus = abaterePct < 0
-    ? `<b style="color:var(--serious)">deficit ${fmt1.format(bz.lipsa_km3)} km³ (${Math.abs(abaterePct)}%)</b>`
+    ? `<b class="c-serious">deficit ${fmt1.format(bz.lipsa_km3)} km³ (${Math.abs(abaterePct)}%)</b>`
     : abaterePct > 0
-      ? `<b style="color:var(--good)">surplus ${fmt1.format(-bz.lipsa_km3)} km³ (${abaterePct}%)</b>`
+      ? `<b class="c-good">surplus ${fmt1.format(-bz.lipsa_km3)} km³ (${abaterePct}%)</b>`
       : `<b>la nivelul medianei</b>`;
   const fereastra = `1 ian – ${d.pana_la.slice(8)}.${d.pana_la.slice(5, 7)}`;
   $("bilant-card").innerHTML = `
-    <p style="margin:4px 0 16px;font-size:15px;color:var(--ink)">
+    <p class="lede-inline">
       Prin Baziaș au trecut, în intervalul <b>${fereastra}</b>, <b>${fmt1.format(bz.volum_km3)} km³</b>,
       față de <b>${fmt1.format(bz.normal_km3)} km³</b> — mediana <b>exact aceluiași interval</b> din anii 1991–${analysisYear - 1} —
       ${volumStatus}. Mai jos este screeningul P−Q pentru bazinul superior
       (aceeași fereastră pentru toți anii):</p>
-    <div style="overflow-x:auto"><table class="data">
+    <div class="scroll-x"><table class="data">
       <thead><tr><th>Rând din bilanț</th><th>normal (gri) vs. ${analysisYear}</th>
         <th class="num">${analysisYear} (${fereastra})</th><th class="num">normal (${fereastra})</th><th class="num">abatere</th></tr></thead>
       <tbody>
@@ -1021,7 +1062,7 @@ async function renderBilantApa() {
         ${row("③ Rezidual P−Q", b.atmosfera_sol_km3, b.atmosfera_sol_normal_km3, "#898781",
               "ET + stocuri + schimburi + erori")}
       </tbody></table></div>
-    <p class="sub" style="margin:12px 0 0">${(() => {
+    <p class="sub m-12-0-0">${(() => {
       const dP = b.ploaie_km3 - b.ploaie_normal_km3;
       const dQ = b.rau_passau_km3 - b.rau_normal_km3;
       const dR = b.atmosfera_sol_km3 - b.atmosfera_sol_normal_km3;
@@ -1060,16 +1101,16 @@ async function renderContraProbe(afdj, portal) {
     const rows = d.mire
       .filter((m) => sel.some((s) => deacc(m.statie).includes(deacc(s))))
       .slice(0, 6)
-      .map((m) => `<tr><td class="name">${m.statie} <span style="color:var(--muted)">${m.tara}</span></td>
+      .map((m) => `<tr><td class="name">${m.statie} <span class="c-muted">${m.tara}</span></td>
         <td class="num">${m.km != null ? fmtN.format(m.km) : ""}</td>
         <td class="num">${fmtV(m.cota_cm)}</td>
         <td class="num">${(m.masurat_utc || "").slice(11, 16)} UTC</td></tr>`).join("");
     $("cp-danubeportal").innerHTML = `<table class="data">
       <thead><tr><th>Miră</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">ora</th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <p class="sub" style="margin:10px 0 0">${d.mire.length} mire active ·
+      <p class="sub m-10-0-0">${d.mire.length} mire active ·
         ${Object.entries(tari).map(([t, n]) => `${t}:${n}`).join(" ")}</p>
-      ${compar.length ? `<p class="sub" style="margin:6px 0 0">Cross-check RO: ${compar.length} stații comune cu AFDJ,
+      ${compar.length ? `<p class="sub m-6-0-0">Cross-check RO: ${compar.length} stații comune cu AFDJ,
         abatere maximă <b>${maxAbat} cm</b>${maxAbat <= 15 ? " — sursele se confirmă reciproc ✓" : " — de investigat diferența (momente de citire diferite?)"}</p>` : ""}`;
     pill("DanubeSTREAM", d.stale ? "stale" : "ok");
   } catch (e) {
@@ -1080,8 +1121,8 @@ async function renderContraProbe(afdj, portal) {
   // 2. SEN Transelectrica
   try {
     const s = await jget("/api/sen");
-    const nuclNote = s.nuclear_mw != null && s.nuclear_mw < 1000
-      ? ` — <b>≈ o singură unitate în funcțiune</b> (plină putere ar fi ~1.300 MW; cauza — planificată sau nu — nu e în aceste date)` : "";
+    const nuclNote = s.nuclear_mw != null && s.nuclear_mw < CNE_ONE_UNIT_MAX_MW
+      ? ` — <b>≈ o singură unitate în funcțiune</b> (ambele unități la putere nominală ar da ~${fmtN.format(CNE_NAMEPLATE_MW)} MW; cauza — planificată sau nu — nu e în aceste date)` : "";
     $("cp-sen").innerHTML = [
       li("hidro (toată țara)", `<b>${fmtV(s.hidro_mw)} MW</b> din ${fmtV(s.productie_mw)} MW producție · consum ${fmtV(s.consum_mw)} MW`),
       li("nuclear · CNE", `<b>${fmtV(s.nuclear_mw)} MW</b>${nuclNote}`),
@@ -1114,7 +1155,7 @@ async function renderContraProbe(afdj, portal) {
       $("cp-dahiti").innerHTML = `<div class="table-scroll"><table class="data">
         <thead><tr><th>Stație virtuală</th><th class="num">nivel</th><th class="num">Δ cm</th><th class="num">percentila lunii</th><th class="num">data · calitate</th></tr></thead>
         <tbody>${rows}</tbody></table>
-        <p class="sub" style="margin:8px 0 0"><b>${h.statii_eligibile}/${ok.length}</b> observații eligibile ·
+        <p class="sub m-8-0-0"><b>${h.statii_eligibile}/${ok.length}</b> observații eligibile ·
         ${h.segmente_eligibile?.length || 0}/3 segmente · acoperire km ${h.acoperire_km?.[0] ?? "–"}–${h.acoperire_km?.[1] ?? "–"}.<br>
         nivelurile sunt față de geoid (alt reper decât mirele) — relevante sunt <b>variația și percentila proprie</b>, care pot fi
         comparate cu mirele oficiale · Δ = față de trecerea anterioară · stațiile excluse nu intră în detector.</p></div>`;
@@ -1166,7 +1207,7 @@ async function renderContraProbe(afdj, portal) {
     const layers = c.straturi || {};
     $("cp-copernicus-land").innerHTML = Object.entries(layers).map(([kind, x]) =>
       li(kind === "snow" ? "zăpadă" : "sol", x.activ
-        ? `<b>${x.data}</b> · ${x.title} · vechime ${x.vechime_zile} zile${x.quality_notice ? ` · <a href="${x.quality_notice}" target="_blank" rel="noopener">buletin calitate</a>` : ""}`
+        ? `<b>${x.data}</b> · ${x.title} · vechime ${x.vechime_zile} zile${x.quality_notice ? ` · ${srcLink(x.quality_notice, "buletin calitate")}` : ""}`
         : `<span class="prov prov-lipsa">indisponibil</span> ${x.motiv || ""}`)).join("") +
       li("rol", c.nota);
     [["snow", "clms-snow-meta", "clms-snow-map"],
@@ -1267,6 +1308,10 @@ async function renderMvMChart() {
     const today = new Date().toISOString().slice(0, 10);
     const days = mo.time.filter((t) => t <= today);
     const oMap = Object.fromEntries(of.serie.map((r) => [r.date, r.debit_m3s]));
+    // Ambele serii se caută DUPĂ DATĂ. Indexarea pozițională într-o listă deja
+    // filtrată ar decala modelul față de măsurătoare la orice timestamp
+    // dezordonat — exact divergența pe care graficul o caută.
+    const mMap = Object.fromEntries(mo.time.map((t, i) => [t, mo.discharge[i]]));
     const opt = baseOpt();
     opt.grid.right = 40;
     opt.xAxis.data = days.map((t) => t.slice(5));
@@ -1274,7 +1319,7 @@ async function renderMvMChart() {
     opt.series = [
       { name: "INHGA (măsurat)", type: "line", data: days.map((t) => oMap[t] ?? null),
         symbol: "none", connectNulls: true, lineStyle: { width: 2.2, color: BLUE }, itemStyle: { color: BLUE } },
-      { name: "GloFAS (model)", type: "line", data: days.map((t, i) => mo.discharge[i]),
+      { name: "GloFAS (model)", type: "line", data: days.map((t) => mMap[t] ?? null),
         symbol: "none", lineStyle: { width: 1.6, type: "dashed", color: MUTED }, itemStyle: { color: MUTED } },
     ];
     opt.legend.data = ["INHGA (măsurat)", "GloFAS (model)"];
@@ -1387,11 +1432,16 @@ async function renderSinteza(inhga) {
   if (an) {
     const checks = [];
     const add = (nume, ok) => { if (ok != null) checks.push({ nume, ok }); };
-    add("bilanț Porțile de Fier", an.bilant ? Math.abs(an.bilant.z) <= 1.5 : null);
-    add("INHGA↔model", an.masurat_vs_model && !an.masurat_vs_model.insuficient ? Math.abs(an.masurat_vs_model.z) <= 1.5 : null);
-    add("mire încrucișate", an.mire_crosscheck ? an.mire_crosscheck.mediana_abatere_cm <= 10 : null);
-    add("ploi↔debit", an.precipitatii?.zone?.length
-      ? !(an.precipitatii.debit_pct <= 10 && Math.min(...an.precipitatii.zone.map((z) => z.pct ?? 100)) > 20) : null);
+    // JS evaluează `null <= 10` ca TRUE: fără num(), un câmp absent trecea drept
+    // verificare PROMOVATĂ și intra în „toate verificările sunt în limite”.
+    const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const underLimit = (v, limit) => (num(v) === null ? null : num(v) <= limit);
+    add("bilanț Porțile de Fier", underLimit(Math.abs(num(an.bilant?.z) ?? NaN), 1.5));
+    add("INHGA↔model", an.masurat_vs_model && !an.masurat_vs_model.insuficient
+      ? underLimit(Math.abs(num(an.masurat_vs_model.z) ?? NaN), 1.5) : null);
+    add("mire încrucișate", underLimit(an.mire_crosscheck?.mediana_abatere_cm, 10));
+    add("ploi↔debit", an.precipitatii?.zone?.length && num(an.precipitatii.debit_pct) !== null
+      ? !(num(an.precipitatii.debit_pct) <= 10 && Math.min(...an.precipitatii.zone.map((z) => z.pct ?? 100)) > 20) : null);
     // satelitul rămâne shadow: un nivel mic nu este o verificare de integritate „trecută”
     const verificationFamilies = new Set();
     const addIndependent = (name, check) => {
@@ -1451,7 +1501,7 @@ async function renderEdo() {
     };
     attach("cdi", "edo-cdi-meta", "edo-cdi-map");
     attach("soil", "edo-soil-meta", "edo-soil-map");
-    $("edo-note").innerHTML = `Sursă: <a href="${d.url}" target="_blank" rel="noopener">Copernicus Emergency Management Service — EDO WMS</a>.
+    $("edo-note").innerHTML = `Sursă: ${srcLink(d.url, "Copernicus Emergency Management Service — EDO WMS")}.
       Hărțile sunt context spațial datat și nu intră în verdictele automate.`;
     pill("EDO", d.stale ? "stale" : "ok");
   } catch (e) {
@@ -1476,7 +1526,7 @@ const RO_CLAIM_STYLE = {
 };
 
 function roClaimChip(status) {
-  const [style, label] = RO_CLAIM_STYLE[status] || ["info", status || "necunoscut"];
+  const [style, label] = lookup(RO_CLAIM_STYLE, status) || ["info", status || "necunoscut"];
   return `<span class="sev sev-${style}">${label}</span>`;
 }
 
@@ -1490,7 +1540,7 @@ const RO_OPERATION_STYLE = {
 };
 
 function roOperationChip(status) {
-  const [style, label] = RO_OPERATION_STYLE[status] || ["info", status || "necunoscut"];
+  const [style, label] = lookup(RO_OPERATION_STYLE, status) || ["info", status || "necunoscut"];
   return `<span class="sev sev-${style}">${label}</span>`;
 }
 
@@ -1558,7 +1608,7 @@ async function renderRomania() {
 
   const en = d.energy || {};
   const reportLink = en.snn_report_url
-    ? `<a href="${en.snn_report_url}" target="_blank" rel="noopener">${en.snn_report_title || "raport SNN"}</a>`
+    ? srcLink(en.snn_report_url, en.snn_report_title || "raport SNN")
     : "raport comparabil indisponibil";
   $("ro-cne-facts").innerHTML = [
     li("ultimul raport relevant", `${reportLink}${en.snn_report_date ? ` · ${en.snn_report_date}` : ""}`),
@@ -1598,15 +1648,15 @@ async function renderRomania() {
       <thead><tr><th>An / data probei</th><th>Context documentat</th><th>Acțiunea CNE</th><th>Ce putem conchide</th><th>Sursă și acoperire</th></tr></thead>
       <tbody>${operationRows.map((row) => {
         const source = row.source?.url
-          ? `<a href="${row.source.url}" target="_blank" rel="noopener">${row.source.label || "sursa oficială"}</a>`
+          ? srcLink(row.source.url, row.source.label || "sursa oficială")
           : `<span class="prov prov-lipsa">sursă curentă indisponibilă</span>`;
         const flow = row.model_context || {};
         let flowSummary = `<span class="prov prov-lipsa">debit GloFAS indisponibil în fereastră</span>`;
         if (flow.available) {
           if (flow.start === flow.end) {
-            flowSummary = `<b>${fmtN.format(flow.start_value_m3s)} m³/s</b>${flow.percentile != null ? ` · P${fmtV(flow.percentile, fmt1)}` : ""}${flow.days_below_p10 != null ? ` · ${flow.days_below_p10} zile sub P10` : ""}`;
+            flowSummary = `<b>${fmtV(flow.start_value_m3s)} m³/s</b>${flow.percentile != null ? ` · P${fmtV(flow.percentile, fmt1)}` : ""}${flow.days_below_p10 != null ? ` · ${flow.days_below_p10} zile sub P10` : ""}`;
           } else {
-            const startValue = flow.start_value_m3s != null ? `${fmtN.format(flow.start_value_m3s)} m³/s la început` : "început indisponibil";
+            const startValue = flow.start_value_m3s != null ? `${fmtV(flow.start_value_m3s)} m³/s la început` : "început indisponibil";
             const minimum = flow.minimum
               ? `<b>min. ${fmtN.format(flow.minimum.value_m3s)} m³/s</b> la ${flow.minimum.date.slice(5)}`
               : "minim indisponibil";
@@ -1616,7 +1666,7 @@ async function renderRomania() {
         }
         const gauge = row.gauge_context || {};
         const gaugeSource = gauge.source?.url
-          ? `<a href="${gauge.source.url}" target="_blank" rel="noopener">${gauge.source.label || "sursa cotei"}</a>`
+          ? srcLink(gauge.source.url, gauge.source.label || "sursa cotei")
           : "sursă măsurată indisponibilă";
         const gaugeFacts = (gauge.facts || []).map((fact) => {
           const factDates = fact.dates?.length ? fact.dates.join(", ") : fact.date;
@@ -1648,7 +1698,7 @@ async function renderRomania() {
   const transparency = d.cernavoda?.parameter_transparency || {};
   const old = transparency.historical_2011 || {};
   const oldSource = old.source?.url
-    ? `<a href="${old.source.url}" target="_blank" rel="noopener">${old.source.label || "SNN"}</a>`
+    ? srcLink(old.source.url, old.source.label || "SNN")
     : "sursă indisponibilă";
   $("ro-historical-thresholds").innerHTML = old.published ? `
     <ul class="facts">
@@ -1711,7 +1761,7 @@ async function renderRomania() {
     <p><b>${energyClaim.conclusion}</b></p>
     <p class="claim-limit">${energyClaim.limit}</p>
     <ul class="check-list">
-      <li class="ok">starea unităților: verificată separat prin SNN, dacă raportul este proaspăt</li>
+      <li class="${en.snn_status_fresh && !en.snn_needs_review && !en.snn_stale_cache ? "ok" : "missing"}">starea unităților: ${en.snn_needs_review ? "raport SNN nou, încă nerevizuit" : en.snn_stale_cache ? "raport servit din cache expirat" : en.snn_status_fresh ? "verificată prin raportul SNN curent" : "raportul SNN poate fi vechi"}</li>
       <li class="${energyHistory.enough_for_comparison ? "ok" : "missing"}">istoric din același endpoint: ${fmtV(energyHistory.days)} / ${fmtV(energyHistory.minimum_days)} zile${energyHistory.enough_for_comparison ? " · prag minim atins, cu limita fotografiilor zilnice" : " · încă se acumulează"}</li>
       <li class="${consumptionDay.available ? "ok" : "missing"}">consum realizat/prognozat DAMAS: ${consumptionDay.available ? `${fmtV(consumptionDay.realized_intervals)}/${fmtV(consumptionDay.forecast_intervals)} intervale pentru ${consumptionDay.delivery_date}` : "indisponibil acum"}</li>
       <li class="${reserveDay.available ? "ok" : "missing"}">rezerve contractate: ${reserveDay.available ? `rezultate de achiziție integrate pentru ${reserveDay.delivery_date}; nu reprezintă marja rămasă` : "indisponibile acum"}</li>
@@ -1741,7 +1791,7 @@ async function renderRomania() {
     return `<li><span><b>${basin.label}</b><small>${basis}${caveat}</small></span><strong>${bandLabel(basin.band_pct)}</strong></li>`;
   }).join("");
   const tributarySource = tributaries.url
-    ? `<a href="${tributaries.url}" target="_blank" rel="noopener">${tributaries.title || "buletin INHGA"}</a>`
+    ? srcLink(tributaries.url, tributaries.title || "buletin INHGA")
     : "sursă indisponibilă";
   const forecastPanel = tributaries.available && tributaryMonth ? `
     <h4 class="tributary-section-title">Prognoza hidrologică a lunii</h4>
@@ -1768,7 +1818,7 @@ async function renderRomania() {
     const previous = section.previous_year_same_window || {};
     const climate = climateByRiver[section.river_id];
     const source = section.url
-      ? `<a href="${section.url}" target="_blank" rel="noopener">${section.station}</a>`
+      ? srcLink(section.url, section.station)
       : section.station;
     const lag = section.lag_days > 2
       ? ` <span class="prov prov-lipsa">întârziere ${section.lag_days} zile</span>` : "";
@@ -1795,10 +1845,10 @@ async function renderRomania() {
   const failedMeasured = Object.keys(observed.failed_sections || {})
     .map((id) => missingLabels[id] || id).join(", ");
   const observedSource = observed.source_url
-    ? `<a href="${observed.source_url}" target="_blank" rel="noopener">${observed.provider || "DanubeHIS"}</a>`
+    ? srcLink(observed.source_url, observed.provider || "DanubeHIS")
     : (observed.provider || "DanubeHIS");
   const climateSource = modelClimate.source_url
-    ? `<a href="${modelClimate.source_url}" target="_blank" rel="noopener">${modelClimate.source || "GloFAS"}</a>`
+    ? srcLink(modelClimate.source_url, modelClimate.source || "GloFAS")
     : (modelClimate.source || "GloFAS");
   const climateNote = modelClimate.available
     ? `${climateSource} · ${modelClimate.reference || "referință multidecenală"}.<br><b>Limită model:</b> ${modelClimate.limit}`
@@ -1824,8 +1874,8 @@ async function renderRomania() {
   const reservoirs = water.reservoirs || {};
   const restrictions = water.restrictions || {};
   const waterSource = water.url
-    ? `<a href="${water.url}" target="_blank" rel="noopener">comunicatul ANAR</a>`
-    : `<a href="${water.management_page_url || "https://rowater.ro/activitatea-institutiei/departamente/managementul-situatiilor-de-urgenta/"}" target="_blank" rel="noopener">pagina ANAR verificată</a>`;
+    ? srcLink(water.url, "comunicatul ANAR")
+    : srcLink(safeUrl(water.management_page_url, "https://rowater.ro/activitatea-institutiei/departamente/managementul-situatiilor-de-urgenta/"), "pagina ANAR verificată");
   if (!water.available) {
     $("ro-water-resources").innerHTML = `<div class="err-box">Contextul național ANAR nu este disponibil: ${water.reason || "nu a fost găsit un comunicat relevant"}. Nicio valoare istorică nu este relabelată drept stare curentă.</div>`;
   } else {
@@ -1926,7 +1976,7 @@ async function renderMissingData() {
         <dt>Ce trebuie</dt><dd>${entry.need || "–"}</dd>
         <dt>Ce avem</dt><dd>${values.length ? values.map(([key, value]) => `<span><b>${key.replaceAll("_", " ")}:</b> ${registerValue(value)}</span>`).join("") : "nimic comparabil încă"}</dd>
         <dt>Ce lipsește</dt><dd>${entry.gap || "–"}</dd>
-        <dt>Surse verificate</dt><dd>${sources.length ? sources.map((source) => `<a href="${source.url}" target="_blank" rel="noopener">${source.label || source.url}</a>${source.coverage ? `<small>${source.coverage}</small>` : ""}`).join("") : "nicio adresă publică stabilă"}</dd>
+        <dt>Surse verificate</dt><dd>${sources.length ? sources.map((source) => `${srcLink(source.url, source.label || source.url)}${source.coverage ? `<small>${source.coverage}</small>` : ""}`).join("") : "nicio adresă publică stabilă"}</dd>
       </dl>
     </article>`;
   }).join("")}</div>`;
@@ -1960,10 +2010,28 @@ async function main() {
 }
 
 // un renderer care crapă nu are voie să blocheze restul paginii
+// Valorile care vin din date se aplică prin CSSOM (setProperty), nu prin
+// atribute style= în markup. CSSOM NU intră sub `style-src`, deci politica
+// poate rămâne `style-src 'self'`: cât timp există fie și un singur style=
+// inline, directiva ar trebui să permită `unsafe-inline` și n-ar mai
+// constrânge nimic.
+function applyDataStyles(root = document) {
+  for (const el of root.querySelectorAll("[data-bar-w]")) {
+    el.style.setProperty("--bar-w", `${el.dataset.barW}%`);
+  }
+  for (const el of root.querySelectorAll("[data-bar-c]")) {
+    el.style.setProperty("--bar-c", el.dataset.barC);
+  }
+}
+
 const safeRun = (fn) => {
   try {
     const p = fn();
-    if (p && typeof p.catch === "function") p.catch(() => {});
+    if (p && typeof p.then === "function") {
+      p.then(() => applyDataStyles(), () => {});
+    } else {
+      applyDataStyles();
+    }
   } catch (e) { /* izolat */ }
 };
 

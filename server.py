@@ -29,7 +29,10 @@ import connectors as C
 import romania
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+# realpath: candidatul e comparat tot cu realpath. Pe un deploy cu director de
+# release prin symlink, o cale nerezolvată aici ar face containment-ul să pice
+# pentru ORICE fișier, iar staticele ar da 404 în tăcere.
+STATIC_DIR = os.path.realpath(os.path.join(BASE_DIR, "static"))
 PORT = int(os.environ.get("PORT", "7300"))
 
 MIME = {
@@ -72,7 +75,13 @@ def _public_payload(value):
         parts = urlsplit(value)
         query = [(key, item) for key, item in parse_qsl(parts.query, keep_blank_values=True)
                  if key.lower() not in _SENSITIVE_QUERY_KEYS]
-        return urlunsplit((parts.scheme, parts.netloc, parts.path,
+        # user:parolă@host e tot o credențială; netloc-ul se reconstruiește
+        # fără ea, nu se copiază ca atare.
+        host = parts.hostname or ""
+        if ":" in host:                      # IPv6 literal
+            host = f"[{host}]"
+        netloc = f"{host}:{parts.port}" if parts.port else host
+        return urlunsplit((parts.scheme, netloc, parts.path,
                            urlencode(query, doseq=True), parts.fragment))
     except ValueError:
         return value
@@ -82,22 +91,39 @@ def api_overview(q):
     return C.overview()
 
 
-def _int_clamp(q, name, default, lo, hi):
-    """Parametrii din URL determină chei de cache și cereri către sursele
-    oficiale — se mărginesc pe AMBELE capete, ca nimeni să nu poată umple
-    cache-ul sau bombarda sursele prin enumerare."""
+# Parametrii din URL determină chei de cache și cereri către sursele oficiale.
+# Mărginirea pe interval limitează VALOAREA, nu numărul de valori distincte —
+# fiecare valoare acceptată e o cheie de cache nouă și o cerere nouă către
+# sursă, deci un interval larg rămâne enumerabil (≈6.000 de chei, sute de MB).
+# Repo-ul fiind public, spațiul acela se citește direct din sursă. Acceptăm
+# doar liste scurte, care acoperă tot ce cere interfața.
+GLOFAS_RECENT_DAYS = frozenset({10, 30, 60, 90, 92})
+GLOFAS_START_YEARS = frozenset({1984, 1991, 2000, 2015})
+PRECIP_START_YEARS = frozenset({1950, 1991, 2015})
+PEGEL_SERIES_DAYS = frozenset({10, 30})
+INHGA_SERIES_DAYS = frozenset({30, 90, 92, 365})
+
+
+def _int_choice(q, name, default, allowed):
+    """Acceptă doar valorile din listă; orice altceva e cerere invalidă."""
+    raw = q.get(name, [None])[0]
+    if raw is None or raw == "":
+        return default
     try:
-        v = int(q.get(name, [str(default)])[0])
+        value = int(raw)
     except (TypeError, ValueError):
-        v = default
-    return max(lo, min(hi, v))
+        raise BadRequest(f"{name} invalid")
+    if value not in allowed:
+        raise BadRequest(
+            f"{name} acceptă doar: {', '.join(str(v) for v in sorted(allowed))}")
+    return value
 
 
 def api_glofas_recent(q):
     pid = q.get("point", ["bazias"])[0]
     if pid not in C.GLOFAS_POINTS:
         raise BadRequest(f"punct necunoscut: {pid}")
-    days = _int_clamp(q, "days", 60, 1, 92)
+    days = _int_choice(q, "days", 60, GLOFAS_RECENT_DAYS)
     r = C.glofas_recent(pid, past_days=days, forecast_days=7)
     return {"point": C.GLOFAS_POINTS[pid] | {"id": pid}, **r["data"],
             "stale": r["stale"]}
@@ -107,7 +133,7 @@ def api_glofas_years(q):
     pid = q.get("point", ["bazias"])[0]
     if pid not in C.GLOFAS_POINTS:
         raise BadRequest(f"punct necunoscut: {pid}")
-    start_year = _int_clamp(q, "start", 2015, 1984, date.today().year)
+    start_year = _int_choice(q, "start", 2015, GLOFAS_START_YEARS)
     r = C.glofas_archive(pid, start_year)
     return {"point": C.GLOFAS_POINTS[pid] | {"id": pid}, **r["data"],
             "stale": r["stale"]}
@@ -117,7 +143,7 @@ def api_precip(q):
     pid = q.get("point", ["oltenia"])[0]
     if pid not in C.PRECIP_POINTS:
         raise BadRequest(f"punct necunoscut: {pid}")
-    start_year = _int_clamp(q, "start", 2015, 1950, date.today().year)
+    start_year = _int_choice(q, "start", 2015, PRECIP_START_YEARS)
     r = C.era5_precip(pid, start_year)
     return {**r["data"], "stale": r["stale"]}
 
@@ -136,7 +162,7 @@ def api_pegel_series(q):
     if uuid not in known:
         raise BadRequest("uuid necunoscut pentru Dunăre")
     param = q.get("param", ["W"])[0]
-    days = _int_clamp(q, "days", 10, 1, 30)
+    days = _int_choice(q, "days", 10, PEGEL_SERIES_DAYS)
     r = C.pegelonline_series(uuid, param, days)
     return {**r["data"], "stale": r["stale"]}
 
@@ -245,7 +271,7 @@ def api_anomalii(q):
 
 
 def api_inhga_serie(q):
-    return {"serie": C.inhga_series(_int_clamp(q, "days", 90, 1, 365))}
+    return {"serie": C.inhga_series(_int_choice(q, "days", 90, INHGA_SERIES_DAYS))}
 
 
 def _stats_cached():
@@ -385,8 +411,16 @@ def api_missing_data(q):
         land = C.copernicus_land_context()["data"]
     except Exception:
         land = {"straturi": {}}
-    grdc = C.grdc_series()
-    entsoe = C.entsoe_irongates()
+    # Aceeași tratare ca vecinii de mai sus: un fișier GRDC malformat sau un
+    # ENTSO-E căzut nu are voie să dea 500 pe tot registrul „Date lipsă".
+    try:
+        grdc = C.grdc_series()
+    except Exception:
+        grdc = {"activ": False, "motiv": "seria GRDC nu a putut fi citită acum"}
+    try:
+        entsoe = C.entsoe_irongates()
+    except Exception:
+        entsoe = {"activ": False}
 
     reservoir_complete = (water.get("current") and
                           reservoirs.get("fill_pct") is not None and
@@ -395,7 +429,16 @@ def api_missing_data(q):
         "partial" if water.get("current") else "missing")
     sections_available = int(observed.get("sections_available") or
                              len(observed.get("sections") or []))
-    systems_selected = int(tributaries.get("selected_systems") or 9)
+    # Ținta e numărul de sisteme măsurate urmărite, nu numărul (variabil) de
+    # bazine parsate din buletinul lunar INHGA.
+    systems_selected = int(observed.get("measured_systems_target")
+                           or (len(C.DANUBEHIS_RO_TRIBUTARY_SECTIONS)
+                               + len(C.DANUBEHIS_RO_TRIBUTARY_MISSING)))
+    # `[] or fallback` ar întoarce fallback-ul: o listă goală înseamnă „niciun
+    # sistem nu lipsește", nu „nu știu".
+    missing_declared = observed.get("missing_systems")
+    systems_missing = list(missing_declared if missing_declared is not None
+                           else C.DANUBEHIS_RO_TRIBUTARY_MISSING)
     decision_missing = [item for item in transparency.get("decision_parameters") or []
                         if item.get("status") != "available"]
     catalog_sources = satellite.get("sources") or {}
@@ -514,12 +557,16 @@ def api_missing_data(q):
         {
             "id": "tributary_gauges", "category": "România · afluenți",
             "title": "Debite măsurate aproape de confluențe",
-            "status": "available" if sections_available >= systems_selected else "partial",
+            # Cât timp există sisteme fără secțiune publică, lacuna NU e închisă,
+            # oricâte secțiuni ar livra DanubeHIS.
+            "status": ("available"
+                       if sections_available >= systems_selected and not systems_missing
+                       else "partial"),
             "need": "debit măsurat comparabil pentru cele nouă sisteme selectate, cât mai aproape de Dunăre",
             "why": "arată ce a intrat efectiv în sectorul românesc, separat de prognoză și model",
             "what_we_have": {"measured_sections": sections_available,
-                             "selected_systems": systems_selected,
-                             "missing_systems": observed.get("missing_systems") or []},
+                             "measured_systems_target": systems_selected,
+                             "missing_systems": systems_missing},
             "gap": observed.get("limit") or "secțiunile disponibile au acoperire parțială",
             "sources_checked": [{"label": observed.get("provider") or "DanubeHIS / NIHWM",
                                  "url": observed.get("source_url")}],
@@ -736,7 +783,10 @@ def api_analiza_ai(q):
     return analiza_ai.analiza(run=False)
 
 
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+# `style-src 'self'` fără 'unsafe-inline': markup-ul nu mai conține niciun
+# atribut style=, iar valorile calculate din date se aplică prin CSSOM
+# (applyDataStyles în app.js), care nu intră sub această directivă.
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; "
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
        "form-action 'none'; frame-ancestors 'none'")
 
@@ -756,6 +806,24 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # liniște în consolă
 
+    def send_response(self, code, message=None):
+        """Anteturile de securitate se emit aici, nu în _send.
+
+        `send_error` din stdlib (501 metodă necunoscută, 505 versiune, 414 URI
+        prea lung, 400 sintaxă) își construiește singur răspunsul HTML și nu
+        trece prin _send — fără această suprascriere, exact acele răspunsuri
+        plecau fără CSP, fără nosniff și fără Referrer-Policy, contrazicând
+        afirmația din DEPLOY.md.
+        """
+        super().send_response(code, message)
+        # a doua linie de apărare: chiar dacă un text extern ar scăpa
+        # neescapat în pagină, CSP-ul îi interzice execuția
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+
     def _send(self, code, body, ctype="application/json; charset=utf-8",
               head_only=False, cache_control="no-store", extra_headers=None):
         public = body if isinstance(body, bytes) else _public_payload(body)
@@ -764,13 +832,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", cache_control)
-        # a doua linie de apărare: chiar dacă un text extern ar scăpa
-        # neescapat în pagină, CSP-ul îi interzice execuția
-        self.send_header("Content-Security-Policy", CSP)
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -781,12 +842,24 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
+    def _has_body(self):
+        """Aplicația e numai-citire: nicio rută nu citește un corp de cerere.
+
+        Lăsat necitit pe o conexiune keep-alive, corpul e interpretat de stdlib
+        drept următoarea cerere — un singur POST devine zeci de răspunsuri și
+        ocolește complet limitarea de rată din nginx. Închidem conexiunea în
+        loc să ne bazăm pe proxy pentru propria încadrare a mesajelor.
+        """
+        return bool(self.headers.get("Content-Length")
+                    or self.headers.get("Transfer-Encoding"))
+
     def do_HEAD(self):
         self.do_GET(head_only=True)
 
     def _method_not_allowed(self):
+        self.close_connection = True
         self._send(405, {"error": "method not allowed"},
-                   extra_headers={"Allow": "GET, HEAD"})
+                   extra_headers={"Allow": "GET, HEAD", "Connection": "close"})
 
     do_POST = _method_not_allowed
     do_PUT = _method_not_allowed
@@ -795,6 +868,12 @@ class Handler(BaseHTTPRequestHandler):
     do_OPTIONS = _method_not_allowed
 
     def do_GET(self, head_only=False):
+        if self._has_body():
+            self.close_connection = True
+            self._send(400, {"error": "corp de cerere neacceptat"},
+                       head_only=head_only,
+                       extra_headers={"Connection": "close"})
+            return
         parsed = urlparse(self.path)
         path = parsed.path
 

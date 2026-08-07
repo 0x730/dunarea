@@ -44,10 +44,18 @@ def _db():
     # Cache-ul poate conține răspunsuri obținute cu credențiale de operator.
     # Chiar dacă payloadurile publice sunt igienizate, fișierul local nu trebuie
     # să fie lizibil de alți utilizatori ai serverului.
+    # WAL în loc de jurnalul „delete": acesta din urmă crea cache.db-journal cu
+    # umask-ul procesului (de regulă 0644), purtând exact conținutul pe care
+    # chmod-ul de mai jos îl protejează. Fișierele -wal/-shm se strâng odată.
     try:
-        os.chmod(DB_PATH, 0o600)
-    except OSError:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
         pass
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(DB_PATH + suffix, 0o600)
+        except OSError:
+            pass
     conn.execute(
         "CREATE TABLE IF NOT EXISTS cache ("
         " key TEXT PRIMARY KEY, fetched_at REAL, ttl REAL, payload TEXT)"
@@ -134,7 +142,10 @@ def cache_gc(max_age_expirat=30 * 86400):
                 conn.execute("DELETE FROM cache WHERE key=?", (key,))
                 sterse += 1
         # prefixe abandonate de versiuni vechi ale codului
-        for mort in ("grav:%", "era5:%", "era5v2:%", "era5pt:v3:%",
+        # ATENȚIE: aici intră numai prefixe ABANDONATE. „era5pt:v3:%" a fost
+        # scos — e chiar cheia pe care o scrie era5_point() astăzi, iar GC-ul
+        # zilnic i-ar fi șters cache-ul la fiecare rulare.
+        for mort in ("grav:%", "era5:%", "era5v2:%",
                      "era5batch:v1:regional:%", "era5batch:v1:upper:%"):
             sterse += conn.execute("DELETE FROM cache WHERE key LIKE ?",
                                    (mort,)).rowcount
@@ -185,6 +196,13 @@ def history_snapshots(source):
             data = json.loads(payload)
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
+        # Arhiva locală s-a acumulat în timp și unele surse și-au schimbat forma
+        # (RHMZ: listă la început, dict acum). Consumatorii primesc forma
+        # declarată, nu una ghicită — restul rămâne accesibil ca payload brut.
+        if isinstance(data, dict):
+            data.setdefault("_forma", "dict")
+        elif isinstance(data, list):
+            data = {"_forma": "lista", "elemente": data}
         out.append({"date": stamp, "data": data})
     return out
 
@@ -267,22 +285,76 @@ def _fetch_and_store(key, ttl, fetch_fn, stale_ok):
 
 # ----------------------------------------------------------------- http ----
 
+# Un upstream ostil sau stricat poate răspunde cu gigaocteți; fără plafon,
+# firul care servește cererea îi ține pe toți în memorie și unii ajung base64
+# în cache.db. Limitele sunt generoase față de ce trimit sursele reale.
+MAX_TEXT_BYTES = 8 * 1024 * 1024
+MAX_BINARY_BYTES = 32 * 1024 * 1024
+MAX_DATASET_BYTES = 96 * 1024 * 1024   # netCDF/HDF5 (GRACE)
+PNG_MAX_PIXELS = 4_000_000             # ~2000×2000; hărțile reale sunt mult sub
+
+# Anteturi care nu au voie să treacă spre alt host la redirect.
+_SENSITIVE_HEADERS = ("authorization", "x-api-key", "cookie", "proxy-authorization")
+
+
+def _read_bounded(resp, max_bytes):
+    """Citește cel mult max_bytes; depășirea e eroare, nu trunchiere tăcută."""
+    raw = resp.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise RuntimeError(
+            f"răspuns upstream peste limita admisă de {max_bytes} octeți")
+    return raw
+
+
 class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
     """Cu verificarea TLS relaxată, un redirect către alt host ar duce
-    contextul nesigur oriunde. Permitem redirect doar pe același host."""
+    contextul nesigur oriunde. Permitem redirect doar pe același host și numai
+    pe HTTPS — altfel un singur 302 coboară descărcarea la text clar, unde un
+    atacator nu mai are nici măcar nevoie să termine TLS-ul."""
 
     def __init__(self, host):
         self.host = host
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if urllib.parse.urlparse(newurl).hostname != self.host:
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme != "https" or parsed.hostname != self.host:
             raise urllib.error.HTTPError(
-                newurl, code, "redirect către alt host respins (TLS relaxat)",
+                newurl, code,
+                "redirect respins: alt host sau coborâre la text clar (TLS relaxat)",
                 headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def http_get(url, timeout=25, insecure=False, binary=False):
+class _StripAuthOnCrossHost(urllib.request.HTTPRedirectHandler):
+    """Redirect care nu duce credențialele altundeva.
+
+    `HTTPRedirectHandler` din stdlib copiază toate anteturile pe cererea
+    redirecționată, indiferent de host, și acceptă și http. Cum activele
+    HydroWeb sunt „semnate și efemere" — forma tipică a unor adrese presemnate
+    servite printr-un 302 — cheia ar ajunge la operatorul de stocare în operare
+    perfect normală.
+    """
+
+    def __init__(self, host):
+        self.host = host
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urllib.parse.urlparse(newurl)
+        if parsed.scheme != "https":
+            raise urllib.error.HTTPError(
+                newurl, code, "redirect respins: coborâre la text clar",
+                headers, fp)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and parsed.hostname != self.host:
+            for name in list(new.headers):
+                if name.lower() in _SENSITIVE_HEADERS:
+                    del new.headers[name]
+        return new
+
+
+def http_get(url, timeout=25, insecure=False, binary=False, max_bytes=None):
+    limit = max_bytes if max_bytes is not None else (
+        MAX_BINARY_BYTES if binary else MAX_TEXT_BYTES)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     if insecure:
         ctx = ssl.create_default_context()
@@ -292,17 +364,15 @@ def http_get(url, timeout=25, insecure=False, binary=False):
             urllib.request.HTTPSHandler(context=ctx),
             _SameHostRedirect(urllib.parse.urlparse(url).hostname))
         with opener.open(req, timeout=timeout) as resp:
-            raw = resp.read()
-        return raw if binary else raw.decode("utf-8", errors="replace")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read()
-    if binary:
-        return raw
-    return raw.decode("utf-8", errors="replace")
+            raw = _read_bounded(resp, limit)
+    else:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = _read_bounded(resp, limit)
+    return raw if binary else raw.decode("utf-8", errors="replace")
 
 
-def http_json(url, timeout=25):
-    return json.loads(http_get(url, timeout=timeout))
+def http_json(url, timeout=25, max_bytes=None):
+    return json.loads(http_get(url, timeout=timeout, max_bytes=max_bytes))
 
 
 def _validated_https_url(url, allowed_hosts):
@@ -918,6 +988,10 @@ def inhga_danube_tributaries():
     def fetch():
         listing = http_get(INHGA_MONTHLY_LIST, timeout=30)
         url, listing_title = _inhga_monthly_latest_url(listing)
+        # href-ul vine din HTML-ul unui sit WordPress public: fără această
+        # barieră, orice ancoră plantată acolo devine un GET făcut de server,
+        # inclusiv file:// sau o adresă din rețeaua internă.
+        url = _validated_https_url(url, {"www.hidro.ro", "hidro.ro"})
         page = http_get(url, timeout=30)
         return _parse_inhga_monthly_tributaries(page, url, listing_title)
 
@@ -1273,7 +1347,10 @@ def _parse_danubehis_q_chart(page):
         if not isinstance(item, list) or len(item) < 2:
             continue
         try:
-            stamp = datetime.fromtimestamp(float(item[0]) / 1000, timezone.utc)
+            # Ziua se stabilește în ora României, ca orice altă noțiune de „zi
+            # curentă" din aplicație: în UTC, o valoare de seara ar cădea în
+            # ziua următoare vara.
+            stamp = datetime.fromtimestamp(float(item[0]) / 1000, ROMANIA_TZ)
             value = float(item[1])
         except (TypeError, ValueError, OSError, OverflowError):
             continue
@@ -1401,6 +1478,14 @@ def danubehis_romanian_tributaries():
 
 def _glofas_tributary_climate_summary(spec, payload, as_of, window=7):
     """Context climatic intern modelului, fără amestec cu debitul măsurat."""
+    # Răspunsul multi-punct e împerecheat pozițional cu lista cerută: o
+    # reordonare ar lipi tăcut percentila Jiului de Olt. Verificăm că celula
+    # întoarsă e într-adevăr cea cerută — eroare de proveniență la nivel de râu.
+    for axis, asked in (("latitude", spec["lat"]), ("longitude", spec["lon"])):
+        got = payload.get(axis)
+        if not isinstance(got, (int, float)) or abs(got - asked) > 0.2:
+            raise RuntimeError(
+                f"GloFAS a întors altă celulă pentru {spec['station']} ({axis})")
     daily = payload.get("daily") or {}
     values = {
         stamp: value for stamp, value in zip(
@@ -1519,7 +1604,15 @@ EDO_MAP_SPECS = {
 }
 
 
+_EDO_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def _parse_edo_status(capabilities, service_page=""):
+    # ET nu rezolvă entități externe (fără XXE), dar expansiunea internă de
+    # entități rămâne posibilă; plafonul de dimensiune din http_get o menține
+    # neinteresantă, iar aici refuzăm explicit un document cu declarație DTD.
+    if re.search(r"<!DOCTYPE", capabilities[:4096], re.I):
+        raise RuntimeError("XML respins: declarație DTD neașteptată")
     root = ET.fromstring(capabilities)
     by_layer = {}
     for layer in root.iter("Layer"):
@@ -1531,7 +1624,11 @@ def _parse_edo_status(capabilities, service_page=""):
         latest = None
         if extent is not None and extent.text:
             parts = extent.text.strip().split("/")
-            latest = parts[1] if len(parts) >= 2 else parts[0]
+            candidate = parts[1] if len(parts) >= 2 else parts[0]
+            # Valoarea ajunge în cheia de cache; fără această formă fixă, un
+            # upstream care variază șirul TIME creează un rând nou la fiecare
+            # reîmprospătare, fiecare cu un PNG base64 în el.
+            latest = candidate if _EDO_DAY_RE.fullmatch(candidate or "") else None
         by_layer[name] = latest
 
     out = {}
@@ -1825,8 +1922,16 @@ def _normal_text(value):
 
 
 def _anar_number(pattern, text):
+    """`_num` elimină TOATE punctele (separator de mii în română). Pe text liber
+    de comunicat, „2.4 miliarde" ar deveni 24 — plauzibil și complet greșit.
+    Un singur punct urmat de una-două zecimale se citește ca zecimal."""
     match = re.search(pattern, text, re.I)
-    return _num(match.group(1)) if match else None
+    if not match:
+        return None
+    raw = match.group(1)
+    if re.fullmatch(r"\d+\.\d{1,2}", raw or ""):
+        return float(raw)
+    return _num(raw)
 
 
 def _parse_anar_water_resources_posts(posts, today=None):
@@ -1990,6 +2095,11 @@ def sen_live():
             except (TypeError, ValueError):
                 out[name] = None
         out["actualizat"] = flat.get("row1_HARTASEN_DATA")
+        # Consumul are un ciclu diurn de aproape 2×. Fără ora capturii,
+        # mediana peste fotografii luate la ore diferite amestecă fazele și
+        # nimeni nu poate verifica asta ulterior.
+        out["snapshot_local_time"] = datetime.now(ROMANIA_TZ).isoformat(
+            timespec="minutes")
         daily_snapshot("sen", out)  # ultima valoare a zilei rămâne în arhivă
         return out
 
@@ -2015,8 +2125,12 @@ def sen_history_context(min_days=14):
     cu aceste fotografii punctuale.
     """
     snapshots = history_snapshots("sen")
-    rows = [{"date": item["date"], **(item["data"] or {})} for item in snapshots]
+    rows = [{"date": item["date"], **(item["data"] or {})} for item in snapshots
+            if isinstance(item.get("data"), dict)]
     enough = len(rows) >= min_days
+    hours = sorted({row["snapshot_local_time"][11:13] for row in rows
+                    if isinstance(row.get("snapshot_local_time"), str)
+                    and len(row["snapshot_local_time"]) >= 13})
 
     def series(name):
         return [float(row[name]) for row in rows
@@ -2038,6 +2152,11 @@ def sen_history_context(min_days=14):
         "minimum_days": min_days,
         "from": rows[0]["date"] if rows else None,
         "to": rows[-1]["date"] if rows else None,
+        # Orele la care au fost luate fotografiile: dacă se întind pe mai multe
+        # ore, medianele amestecă faze diferite ale ciclului diurn. Publicat ca
+        # să fie verificabil, nu ascuns.
+        "snapshot_hours": hours,
+        "snapshot_hours_span": (int(hours[-1]) - int(hours[0])) if hours else None,
         "metrics": metrics,
         "sources": [
             {"label": "Transelectrica — Rapoarte zilnice", "url": SEN_DAILY_REPORTS_URL,
@@ -2097,6 +2216,30 @@ def _summary(values, digits=1):
             "max": round(max(values), digits)}
 
 
+def _damas_interval_minutes(rows, default=15):
+    """Pasul real al intervalelor, dedus din `timeInterval`.
+
+    Presupunerea fixă de 15 minute subestima energia de patru ori dacă
+    furnizorul livra rânduri orare, iar câmpul o declara tot „15".
+    """
+    steps = []
+    for row in rows:
+        interval = row.get("timeInterval") or {}
+        try:
+            start = datetime.fromisoformat(
+                str(interval.get("from")).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(
+                str(interval.get("to")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        minutes = round((end - start).total_seconds() / 60)
+        if minutes > 0:
+            steps.append(minutes)
+    if not steps:
+        return default
+    return max(set(steps), key=steps.count)
+
+
 def _summarize_damas_consumption(payload, delivery_date):
     rows = sorted(
         (row for row in _payload_rows(payload)
@@ -2117,19 +2260,21 @@ def _summarize_damas_consumption(payload, delivery_date):
                    if isinstance(row.get("grossRealizedConsumption"), (int, float))), None)
     expected = len(forecast_values)
     observed = len(realized_values)
+    step_minutes = _damas_interval_minutes(rows)
+    hours = step_minutes / 60
     return {
         "available": bool(forecast_values or realized_values),
         "delivery_date": delivery_date,
-        "interval_minutes": 15,
+        "interval_minutes": step_minutes,
         "forecast_intervals": expected,
         "realized_intervals": observed,
         "coverage_pct": round(100 * observed / expected, 1) if expected else None,
         "complete": bool(expected and observed == expected),
         "forecast_mw": _summary(forecast_values),
         "realized_mw": _summary(realized_values),
-        "forecast_energy_gwh": (round(sum(forecast_values) * 0.25 / 1000, 3)
+        "forecast_energy_gwh": (round(sum(forecast_values) * hours / 1000, 3)
                                   if forecast_values else None),
-        "realized_energy_gwh": (round(sum(realized_values) * 0.25 / 1000, 3)
+        "realized_energy_gwh": (round(sum(realized_values) * hours / 1000, 3)
                                   if realized_values else None),
         "mean_forecast_error_pct": (round(100 * sum(actual - planned
                                              for planned, actual in paired)
@@ -2177,6 +2322,18 @@ def _summarize_damas_reserves(payload, delivery_date):
                             if isinstance(value, (int, float))]
             if not rows or not satisfaction:
                 continue
+            # Câmpul vecin `tenderDemand` e în MW. Unitatea lui
+            # `tenderSatisfiedDemand` nu e declarată nicăieri în payload: dacă
+            # vine tot în MW, tratarea lui ca raport 0–1 dă „35000%" și, mai
+            # rău, `all_reported_fully_satisfied=True` — booleanul ar eșua în
+            # direcția liniștitoare. Îl normalizăm pe perechi.
+            if max(satisfaction) > 1.5:
+                pairs = [(float(s), float(d)) for s, d in zip(satisfied, demand)
+                         if isinstance(s, (int, float))
+                         and isinstance(d, (int, float)) and d]
+                if not pairs:
+                    continue
+                satisfaction = [s / d for s, d in pairs]
             services.append({
                 "service": service.get("serviceCode"),
                 "intervals": len(satisfaction),
@@ -2618,13 +2775,17 @@ def _hydroweb_key():
     return ""
 
 
-def _hydroweb_get(url, key, raw=False):
+def _hydroweb_get(url, key, raw=False, max_bytes=None):
     _validated_https_url(url, {"hydroweb.next.theia-land.fr"})
     req = urllib.request.Request(url, headers={
         "User-Agent": HYDROWEB_UA, "Accept": "application/json,text/plain",
         "X-API-Key": key})
-    with urllib.request.urlopen(req, timeout=40) as r:
-        data = r.read()
+    # Opener propriu: cheia nu pleacă spre alt host dacă activul e servit
+    # printr-un redirect către stocarea semnată.
+    opener = urllib.request.build_opener(
+        _StripAuthOnCrossHost(urllib.parse.urlparse(url).hostname))
+    with opener.open(req, timeout=40) as r:
+        data = _read_bounded(r, max_bytes if max_bytes is not None else MAX_TEXT_BYTES)
     return data if raw else json.loads(data)
 
 
@@ -2858,16 +3019,22 @@ def _png_rgba_stats(raw):
                 ">IIBBBBB", data)
             if depth != 8 or color_type != 6 or interlace != 0:
                 raise ValueError("PNG GIBS cu format neașteptat")
+            # Dimensiunile se verifică ÎNAINTE de decomprimare: altfel un IDAT
+            # de câteva sute de kiloocteți se poate umfla la sute de megaocteți
+            # în memoria firului care servește cererea.
+            if width * height > PNG_MAX_PIXELS:
+                raise ValueError("PNG peste dimensiunea admisă")
         elif kind == b"IDAT":
             chunks.append(data)
         elif kind == b"IEND":
             break
     if not width or not height or not chunks:
         raise ValueError("PNG incomplet")
-    decoded = zlib.decompress(b"".join(chunks))
     bpp, stride = 4, width * 4
     expected = height * (stride + 1)
-    if len(decoded) != expected:
+    decompressor = zlib.decompressobj()
+    decoded = decompressor.decompress(b"".join(chunks), expected + 1)
+    if len(decoded) != expected or not decompressor.eof:
         raise ValueError("dimensiune PNG neașteptată")
     previous = bytearray(stride)
     pixels = []
@@ -3430,7 +3597,8 @@ def hydroweb_gravimetry(luni=290):
             if not nc:
                 continue
             try:
-                vals = _grav_month_values(_hydroweb_get(nc["href"], key, raw=True))
+                vals = _grav_month_values(_hydroweb_get(
+                    nc["href"], key, raw=True, max_bytes=MAX_DATASET_BYTES))
                 cache_put(f"grav2:{luna}", vals, 10 ** 9)
                 serie.append({"luna": luna, **vals})
             except Exception:
@@ -3509,6 +3677,17 @@ def _grdc_parse_file(path):
 
 
 def grdc_series(station_id=GRDC_CEATAL_ID):
+    """Rezultatul e cache-uit: altfel fiecare cerere reparsa toate fișierele.
+
+    Azi directorul e gol, deci costul e zero — dar exportul GRDC pe care
+    DEPLOY.md îi cere operatorului să-l urce are zeci de ani de valori zilnice,
+    iar /api/grdc e public.
+    """
+    return cached(f"grdc:v1:{station_id}", 24 * 3600,
+                  lambda: _grdc_series_uncached(station_id))["data"]
+
+
+def _grdc_series_uncached(station_id):
     if not os.path.isdir(GRDC_DIR):
         return {"activ": False, "motiv": "director data/grdc/ inexistent"}
     files = [f for f in sorted(os.listdir(GRDC_DIR))

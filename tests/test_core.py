@@ -7,6 +7,8 @@ import struct
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.request
 import zlib
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -155,7 +157,11 @@ class MissingDataRegistryTests(unittest.TestCase):
             },
             "romanian_tributaries": {
                 "selected_systems": 9,
-                "observed_sections": {"sections_available": 9, "sections": []},
+                # Toate sistemele urmărite au secțiune măsurată și niciunul nu
+                # lipsește — singurul caz în care lacuna e într-adevăr închisă.
+                "observed_sections": {"sections_available": 9, "sections": [],
+                                      "measured_systems_target": 9,
+                                      "missing_systems": []},
             },
             "energy": {
                 "hydro_mw": 1200,
@@ -201,6 +207,32 @@ class MissingDataRegistryTests(unittest.TestCase):
         self.assertEqual(result["summary"], {
             "available": 3, "partial": 4, "missing": 1,
         })
+
+    def test_tributary_gap_stays_open_while_systems_have_no_public_section(self):
+        """Oricâte secțiuni ar livra DanubeHIS, sistemele fără secțiune publică
+        țin lacuna deschisă — altfel registrul se contrazice pe el însuși."""
+        report = {
+            "romanian_tributaries": {
+                "observed_sections": {
+                    "sections_available": 9, "sections": [],
+                    "measured_systems_target": 9,
+                    "missing_systems": ["nera", "cerna", "arges", "ialomita"],
+                },
+            },
+        }
+        with mock.patch.object(server, "api_romania", return_value=report), \
+                mock.patch.object(C, "earthdata_satellite_catalog", return_value={
+                    "data": {"sources": {}, "download_configurat": False}}), \
+                mock.patch.object(C, "copernicus_land_context", return_value={
+                    "data": {"straturi": {"soil": {"activ": False}}}}), \
+                mock.patch.object(C, "grdc_series", return_value={"activ": False}), \
+                mock.patch.object(C, "entsoe_irongates", return_value={"activ": False}):
+            result = server.api_missing_data({})
+
+        entry = next(e for e in result["entries"] if e["id"] == "tributary_gauges")
+        self.assertEqual(entry["status"], "partial")
+        self.assertEqual(entry["what_we_have"]["missing_systems"],
+                         ["nera", "cerna", "arges", "ialomita"])
 
 
 class RomaniaProportionalityTests(unittest.TestCase):
@@ -642,7 +674,7 @@ class RomaniaProportionalityTests(unittest.TestCase):
         cern["data"] = "2026-08-04"
 
         out = romania.build_report(stats, self.archive(), afdj, inhga,
-                                   sen, self.snn())
+                                   sen, self.snn(), "2026-08-05")
         current = out["cernavoda"]["operational_history"][-1]
 
         self.assertEqual(out["generated"], "2026-08-05")
@@ -664,7 +696,8 @@ class RomaniaProportionalityTests(unittest.TestCase):
         archive["time"].append("2026-08-05")
         archive["discharge"].append(2700.0)
 
-        out = romania.build_report(stats, archive, afdj, inhga, sen, self.snn())
+        out = romania.build_report(stats, archive, afdj, inhga, sen, self.snn(),
+                                   "2026-08-05")
         current = out["cernavoda"]["operational_history"][-1]
 
         self.assertEqual(out["data_as_of"]["glofas"], "2026-08-05")
@@ -1055,7 +1088,8 @@ class ConnectorTests(unittest.TestCase):
         self.assertNotIn("som es", basins)
 
     def test_inhga_monthly_connector_fails_closed_without_stale_fallback(self):
-        listing = ('<article><h2 class="entry-title"><a href="https://example/monthly">'
+        listing = ('<article><h2 class="entry-title">'
+                   '<a href="https://www.hidro.ro/monthly">'
                    'Prognoza hidrologică lunară</a></h2></article>')
         page = ('<span class="entry-title">Prognoza lunară</span>'
                 '<span class="updated">2026-07-31T10:00:00+03:00</span>'
@@ -1074,6 +1108,74 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(cache.call_args.args[:2],
                          ("inhga_tributaries:v1", 6 * 3600))
         self.assertFalse(cache.call_args.kwargs["stale_ok"])
+
+    def test_inhga_monthly_refuses_href_pointing_off_host(self):
+        """href-ul vine din HTML public: nu are voie să devină un GET oriunde."""
+        for href in ("https://evil.example/monthly",
+                     "file:///etc/passwd",
+                     "http://127.0.0.1:7300/api/raport",
+                     "https://www.hidro.ro.evil.example/monthly"):
+            listing = ('<article><h2 class="entry-title">'
+                       f'<a href="{href}">Prognoza hidrologică lunară</a>'
+                       '</h2></article>')
+
+            def no_cache(key, ttl, fetch_fn, stale_ok=True):
+                return {"data": fetch_fn(), "stale": False}
+
+            with mock.patch.object(C, "cached", side_effect=no_cache), \
+                    mock.patch.object(C, "http_get",
+                                      side_effect=[listing, "nu ar trebui cerut"]) as get:
+                with self.assertRaises(RuntimeError):
+                    C.inhga_danube_tributaries()
+            # o singură cerere: listingul. Pagina nu a fost descărcată.
+            self.assertEqual(get.call_count, 1)
+
+    def test_cross_host_redirect_drops_the_api_key(self):
+        """Un activ semnat servit prin 302 nu are voie să ducă cheia altundeva."""
+        handler = C._StripAuthOnCrossHost("hydroweb.next.theia-land.fr")
+        req = urllib.request.Request(
+            "https://hydroweb.next.theia-land.fr/asset",
+            headers={"X-API-Key": "cheie-secreta", "User-Agent": "x"})
+
+        moved = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://cdn.example/signed-asset")
+        kept = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://hydroweb.next.theia-land.fr/b")
+
+        headers_moved = {k.lower(): v for k, v in moved.headers.items()}
+        headers_kept = {k.lower(): v for k, v in kept.headers.items()}
+        self.assertNotIn("x-api-key", headers_moved)
+        self.assertEqual(headers_kept.get("x-api-key"), "cheie-secreta")
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(req, None, 302, "Found", {},
+                                     "http://hydroweb.next.theia-land.fr/b")
+
+    def test_relaxed_tls_redirect_refuses_cleartext_downgrade(self):
+        handler = C._SameHostRedirect("www.hidmet.gov.rs")
+        req = urllib.request.Request("https://www.hidmet.gov.rs/a")
+        for target in ("http://www.hidmet.gov.rs/a",
+                       "https://www.hidmet.gov.rs.evil.example/a"):
+            with self.assertRaises(urllib.error.HTTPError):
+                handler.redirect_request(req, None, 302, "Found", {}, target)
+
+    def test_response_size_is_bounded(self):
+        class _Resp:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def read(self, amt=None):
+                return self.payload[:amt] if amt is not None else self.payload
+
+        self.assertEqual(C._read_bounded(_Resp(b"abc"), 10), b"abc")
+        with self.assertRaises(RuntimeError):
+            C._read_bounded(_Resp(b"x" * 5000), 100)
+
+    def test_png_decoder_refuses_a_decompression_bomb(self):
+        header = struct.pack(">IIBBBBB", 40000, 40000, 8, 6, 0, 0, 0)
+        raw = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(header)) + b"IHDR" \
+            + header + b"\x00\x00\x00\x00"
+        with self.assertRaises(ValueError):
+            C._png_rgba_stats(raw)
 
     def test_inhga_bulletin_refresh_window_is_thirty_minutes(self):
         cached = {"data": {}, "stale": False, "cache_age_s": 0}

@@ -5,6 +5,8 @@ Nu încearcă să demonstreze o narațiune; fiecare concluzie se schimbă odată
 intrările și revine la „date insuficiente” când lipsește veriga necesară.
 """
 
+import re
+import unicodedata
 from datetime import date
 
 
@@ -194,6 +196,9 @@ HISTORICAL_2011_THRESHOLDS = {
 
 
 def _number(value):
+    # bool e subclasă de int: True ar trece drept nivel/debit valid.
+    if isinstance(value, bool):
+        return None
     return value if isinstance(value, (int, float)) else None
 
 
@@ -205,6 +210,17 @@ def _series_map(archive):
     }
 
 
+def _plain(value):
+    """Minuscule fără diacritice — potriviri robuste pe textul buletinelor."""
+    decomposed = unicodedata.normalize("NFKD", value if isinstance(value, str) else "")
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).lower()
+
+
+# „bala" ca subșir prinde „balastiere", termen de rutină în buletinele despre
+# albie. Cerem numele brațului ca sintagmă, cu limite de cuvânt.
+_BALA_BRANCH_RE = re.compile(r"\bbratul\s+bala\b")
+
+
 def _iso_date(value):
     if not isinstance(value, str):
         return None
@@ -212,6 +228,28 @@ def _iso_date(value):
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+SNN_FRESH_MAX_AGE_DAYS = 3
+
+
+def _snn_accepted(snn_status, snn_stale, as_of=None):
+    """Raportul SNN poate fi citat ca stare CURENTĂ a unităților.
+
+    `status_fresh` e calculat de conector la momentul preluării și îngheață în
+    cache: dacă sursa cade, un raport vechi de săptămâni continuă să se declare
+    proaspăt. Recalculăm din data raportului și cerem explicit ca payload-ul să
+    nu fie servit din cache expirat.
+    """
+    if not snn_status.get("status_available") or snn_status.get("needs_review"):
+        return False
+    if snn_stale:
+        return False
+    published = _iso_date(snn_status.get("date"))
+    if published is None:
+        return False
+    age = ((as_of or date.today()) - published).days
+    return 0 <= age <= SNN_FRESH_MAX_AGE_DAYS
 
 
 def _model_evidence_date(cern, archive, generated_on):
@@ -363,10 +401,7 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
                "url": report.get("url")} if report.get("url") else None)
     u1 = snn_status.get("u1")
     u2 = snn_status.get("u2")
-    accepted = (snn_status.get("status_available")
-                and snn_status.get("status_fresh")
-                and not snn_status.get("needs_review")
-                and not snn_stale)
+    accepted = _snn_accepted(snn_status, snn_stale, generated_on)
     stopped_for_water = (accepted and snn_status.get("water_related")
                          and "oprit" in (u1 or "").lower())
 
@@ -657,13 +692,22 @@ def _tributary_observation_context(source, generated_on):
             "sections": [],
         }
     newest = max((row.get("latest") or {}).get("date") for row in accepted)
+    # Sistemele fără secțiune publică vin de la conector; ținta e suma dintre
+    # secțiunile urmărite și acestea, calculată din date, nu scrisă de mână.
+    missing = list(source.get("missing_systems") or [])
+    target = len(source.get("sections") or []) + len(missing)
     return {
         **{key: value for key, value in source.items() if key != "sections"},
         "available": True,
         "sections": accepted,
         "latest_date": newest,
         "sections_available": len(accepted),
-        "selected_systems": 9,
+        # Ținta reală de sisteme MĂSURATE (secțiuni livrate + sisteme fără
+        # secțiune publică), nu numărul de bazine din prognoza lunară INHGA:
+        # sunt două mulțimi diferite, iar confuzia dintre ele declara închisă
+        # lacuna „debite măsurate aproape de confluențe".
+        "measured_systems_target": target,
+        "missing_systems": list(missing),
     }
 
 
@@ -711,8 +755,12 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                  tributaries=None, tributary_observations=None,
                  tributary_model_climatology=None, water_resources=None,
                  sen_history=None, energy_market=None):
-    generated_on = date.fromisoformat(
-        as_of or stats.get("generat") or date.today().isoformat())
+    # Raportul se generează ACUM. `stats["generat"]` e data instantaneului de
+    # statistici (TTL 6 h, servit și stale): folosit ca „azi", rămâne în urmă
+    # noaptea și respinge ca „din viitor" surse care livrează legitim date de
+    # azi. `as_of` rămâne pentru teste și pentru regenerări istorice.
+    generated_on = date.fromisoformat(as_of or date.today().isoformat())
+    stats_generated_on = _iso_date(stats.get("generat")) or generated_on
     debit_rows = stats.get("debit") or []
     cern = next((row for row in debit_rows if "Cernavod" in row.get("name", "")), {})
     bazias_model = next((row for row in debit_rows if "Bazia" in row.get("name", "")), {})
@@ -873,12 +921,26 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
                         water_resources.get("current"))
     anar_reservoirs = water_resources.get("reservoirs") or {}
     anar_restrictions = water_resources.get("restrictions") or {}
-    if anar_current and (anar_reservoirs.get("sufficient_for_centralized_supply") is True
-                         or anar_restrictions.get("drinking_water") is False):
-        ro_text += (" ANAR raportează totodată volume suficiente pentru alimentarea "
-                    "centralizată și nicio restricție pentru apa populației; aceasta "
-                    "limitează eticheta de criză națională uniformă, fără a anula "
-                    "restricțiile sectoriale.")
+    if anar_current:
+        # Fiecare clauză se emite numai din flagul ei, explicit. `None` înseamnă
+        # „ANAR nu a spus", niciodată „ANAR a spus că nu" — garda de dinainte era
+        # un SAU, iar textul afirma ambele fapte în numele instituției.
+        supply = anar_reservoirs.get("sufficient_for_centralized_supply")
+        drinking = anar_restrictions.get("drinking_water")
+        reported = []
+        if supply is True:
+            reported.append("volume suficiente pentru alimentarea centralizată")
+        elif supply is False:
+            reported.append("volume insuficiente pentru alimentarea centralizată")
+        if drinking is False:
+            reported.append("nicio restricție pentru apa populației")
+        elif drinking is True:
+            reported.append("restricții în vigoare pentru apa populației")
+        if reported:
+            ro_text += " ANAR raportează totodată " + " și ".join(reported) + "."
+            if supply is not False and drinking is not True:
+                ro_text += (" Aceasta limitează eticheta de criză națională uniformă, "
+                            "fără a anula restricțiile sectoriale.")
     claims.append(_claim(
         "romania_scope", "Criză hidrologică în toată România?", ro_status, ro_text,
         rain_evidence,
@@ -912,15 +974,14 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         "history": sen_history,
         "market": energy_market,
     }
-    stopped_for_water = (snn_status.get("status_available")
-                         and snn_status.get("status_fresh")
-                         and snn_status.get("water_related")
-                         and "oprit" in (snn_status.get("u1") or ""))
+    snn_accepted = _snn_accepted(snn_status, snn_stale, generated_on)
+    stopped_for_water = (snn_accepted and snn_status.get("water_related")
+                         and "oprit" in (snn_status.get("u1") or "").lower())
     if stopped_for_water:
         cne_status = "confirmed"
         cne_text = ("Există o consecință energetică reală: SNN raportează U1 oprită din cauza "
                     f"parametrilor legați de apă, iar SEN arată {unit_equivalent} nucleară în producție.")
-    elif snn_status.get("needs_review") or snn_stale or not snn_status.get("status_fresh"):
+    elif not snn_accepted:
         cne_status = "insufficient"
         cne_text = "Starea CNE nu poate fi afirmată curent: raportul SNN este nou, vechi sau servit din cache stale."
     elif nuclear is not None and nuclear >= 1100:
@@ -991,8 +1052,10 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
         cern, cern_gauge, measured, monthly_mean, nuclear, snn_status)
     current_intake_level = _number(snn_status.get("intake_basin_level_mdmb"))
     official_bulletin_text = [str(item) for item in inhga.get("text_oficial") or []]
-    bala_caveat = any("bala" in item.lower() and "cernavod" in item.lower()
-                       for item in official_bulletin_text)
+    # Evaluat pe textul unit: avertismentul real poate fi împărțit pe două
+    # paragrafe, iar varianta per-paragraf îl rata.
+    bulletin_blob = _plain(" ".join(official_bulletin_text))
+    bala_caveat = bool(_BALA_BRANCH_RE.search(bulletin_blob)) and "cernavod" in bulletin_blob
 
     missing = []
     reservoir_complete = (anar_current and

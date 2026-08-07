@@ -337,7 +337,8 @@ table.data tr:last-child td { border-bottom: none; }
 
 .anom-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 12px; align-items: start; }
 .anom-cell { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px 10px; }
-.anom-cell .bar { height: 6px; border-radius: 3px; margin-bottom: 10px; }
+.anom-cell .bar { height: 6px; border-radius: 3px; margin-bottom: 10px;
+                  background: var(--bar-c, var(--grid)); }
 .anom-cell .n { color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.3; }
 .anom-cell .p { font-family: var(--mono); font-size: 20px; color: var(--ink); margin-top: 4px; }
 .anom-cell .p small { font-size: 11px; color: var(--muted); }
@@ -529,3 +530,47 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
   .card, .profil-box { transition: border-color 0.2s; }
   .card:hover, .profil-box:hover { border-color: rgba(255, 255, 255, 0.18); }
 }
+
+/* --------------------------------------------------------------------------
+   Utilitare care înlocuiesc atributele style= inline.
+   Scopul e ca politica CSP să poată renunța la `style-src 'unsafe-inline'`:
+   cât timp există fie și un singur style= în markup, directiva trebuie să
+   permită inline și nu mai constrânge nimic. Valorile dinamice (lățimi de
+   bară, culori calculate) se aplică prin CSSOM — el nu intră sub style-src.
+   -------------------------------------------------------------------------- */
+.sp-20 { height: 20px; }
+.sp-22 { height: 22px; }
+.sp-26 { height: 26px; }
+.mt-16 { margin-top: 16px; }
+.mt-6  { margin-top: 6px; }
+.mb-2  { margin-bottom: 2px; }
+.m-8-0-0  { margin: 8px 0 0; }
+.m-10-0-0 { margin: 10px 0 0; }
+.m-12-0-0 { margin: 12px 0 0; }
+.m-6-0-0  { margin: 6px 0 0; }
+.m-4-0-10 { margin: 4px 0 10px; }
+.lede-inline { margin: 4px 0 16px; font-size: 15px; color: var(--ink); }
+.c-blue    { color: var(--blue); }
+.c-muted   { color: var(--muted); }
+.c-good    { color: var(--good); }
+.c-serious { color: var(--serious); }
+.c-muted-sm { color: var(--muted); font-size: 12px; }
+.detail-sm  { font-size: 12.5px; color: var(--ink-2); }
+.scroll-x { overflow-x: auto; }
+.crosshair { cursor: crosshair; }
+.w-26 { width: 26%; }
+.w-44 { width: 44%; }
+
+/* Reperele de pe harta EDO: poziția e o constantă de layout, nu o valoare
+   venită din date, deci stă în CSS, nu într-un atribut style=. */
+.edo-place.p-passau    { --x: 25%; --y: 18%; }
+.edo-place.p-viena     { --x: 38%; --y: 25%; }
+.edo-place.p-budapesta { --x: 50%; --y: 32%; }
+.edo-place.p-bazias    { --x: 62%; --y: 45%; }
+.edo-place.p-delta     { --x: 94%; --y: 60%; }
+
+/* Barele de proporție: lungimea și culoarea vin din date și se aplică prin
+   setProperty(), deci markup-ul rămâne fără style=. */
+.bar-track { height: 9px; background: var(--grid); border-radius: 4px; }
+.bar-fill  { height: 9px; border-radius: 4px; margin-top: 2px;
+             width: var(--bar-w, 0%); background: var(--bar-c, var(--grid)); }
