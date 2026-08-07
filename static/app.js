@@ -1967,14 +1967,14 @@ async function renderRomania() {
       <br>${climate.model_date} · ${climate.reference_years} ani · ±${climate.calendar_window_days} zile</small>`
       : `<span class="table-detail">indisponibil</span>`;
     return `<tr>
-      <td class="name"><b>${section.river}</b><br><span class="table-detail">${source}</span></td>
-      <td class="num"><b>${fmtV(latest.value_m3s, fmt2)}</b><br><small>${latest.date || "–"}${lag}</small></td>
-      <td class="num">${climateCell}</td>
-      <td class="num">${fmtV(ytd.median_m3s, fmt2)}${previousNote}</td>
-      <td class="num">${fmtV(month.median_m3s, fmt2)}<br><small>${month.month || "–"}</small></td>
-      <td class="num">${fmtV(ytd.min_m3s, fmt2)}–${fmtV(ytd.max_m3s, fmt2)}</td>
-      <td class="num">${fmtV(ytd.coverage_pct, fmt1)}%<br><small>${ytd.days || 0}/${ytd.expected_days || "?"} zile</small></td>
-      <td><span class="table-detail">${section.coverage || "secțiune parțială"}</span></td>
+      <td class="name" data-label="Râu / secțiune"><b>${section.river}</b><br><span class="table-detail">${source}</span></td>
+      <td class="num" data-label="Ultimul Q (m³/s)"><b>${fmtV(latest.value_m3s, fmt2)}</b><br><small>${latest.date || "–"}${lag}</small></td>
+      <td class="num" data-label="Raritate GloFAS (model)">${climateCell}</td>
+      <td class="num" data-label="Mediană ian.–azi (m³/s)">${fmtV(ytd.median_m3s, fmt2)}${previousNote}</td>
+      <td class="num" data-label="Mediană lună (m³/s)">${fmtV(month.median_m3s, fmt2)}<br><small>${month.month || "–"}</small></td>
+      <td class="num" data-label="Min–max (m³/s)">${fmtV(ytd.min_m3s, fmt2)}–${fmtV(ytd.max_m3s, fmt2)}</td>
+      <td class="num" data-label="Acoperire">${fmtV(ytd.coverage_pct, fmt1)}%<br><small>${ytd.days || 0}/${ytd.expected_days || "?"} zile</small></td>
+      <td data-label="Ce acoperă"><span class="table-detail">${section.coverage || "secțiune parțială"}</span></td>
     </tr>`;
   }).join("");
   const missingMeasured = (observed.missing_systems || [])
@@ -1992,11 +1992,11 @@ async function renderRomania() {
     : `<b>Context GloFAS indisponibil:</b> ${modelClimate.reason || "seria nu a putut fi verificată"}.`;
   const observedPanel = observed.available && observedRows ? `
     <h4 class="tributary-section-title">Debite măsurate până acum · context GloFAS separat</h4>
-    <div class="table-scroll"><table class="data tributary-observed-table">
+    <div class="table-scroll"><table class="data tributary-observed-table stack-mobile">
       <thead><tr><th>Râu / secțiune</th><th class="num">ultimul Q<br>m³/s</th>
         <th class="num">raritate GloFAS<br><small>model</small></th>
-        <th class="num">mediană ian.–azi</th><th class="num">mediană lună</th>
-        <th class="num">min–max</th><th class="num">acoperire</th><th>Ce acoperă</th></tr></thead>
+        <th class="num">mediană ian.–azi<br>m³/s</th><th class="num">mediană lună<br>m³/s</th>
+        <th class="num">min–max<br>m³/s</th><th class="num">acoperire</th><th>Ce acoperă</th></tr></thead>
       <tbody>${observedRows}</tbody>
     </table></div>
     <p class="sub">${observedSource} · ${observed.kind || "debit la secțiune"}.<br>
