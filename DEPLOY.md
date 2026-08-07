@@ -54,6 +54,10 @@ daemonul și îi afli numele.)
   ```
   PORT=7300
   MONITOR_TZ=Europe/Bucharest
+  # jurnal: erorile și cererile lente se scriu întotdeauna; puneți
+  # MONITOR_ACCESS_LOG=1 numai când depanați, altfel inundă supervisorul
+  # MONITOR_ACCESS_LOG=1
+  # MONITOR_SLOW_MS=5000
   HYDROWEB_KEY=cheia_ta_hydroweb
   AI_API_KEY=cheia_openai            # activează analiza narativă
   AI_MODEL=gpt-4o-mini               # opțional
@@ -139,9 +143,17 @@ către aplicație.
 ## 5. Verificare după deploy
 
 ```bash
+curl -s https://dunarea.exemplu.ro/api/health         # → stare proces
 curl -s https://dunarea.exemplu.ro/api/istoric        # → JSON cu arhiva
 curl -s -o /dev/null -w "%{http_code}\n" https://dunarea.exemplu.ro/   # → 200
 ```
+
+`/api/health` e ieftin și **nu** interoghează nicio sursă externă: raportează
+doar uptime-ul, dacă warmup-ul s-a terminat și vechimea raportului de anomalii.
+Potrivit ca health check pentru supervisor sau pentru un monitor extern — un
+endpoint care ar declanșa fetch-uri ar fi și o pârghie de amplificare, și ar
+raporta „bolnav" când de fapt doar o sursă e jos. Prospețimea fiecărei surse
+rămâne în `/api/overview`.
 
 Pastilele din header-ul paginii arată live starea fiecărei surse; dacă vreuna
 e roșie permanent după ~5 minute de la pornire, `supervisorctl tail -f
@@ -176,3 +188,9 @@ daemon-XXXXXX` pe server arată de ce.
   statut manual, iar patru teste blochează regresia.
 - Dependența `h5py` (doar pentru gravimetria GRACE) e opțională: dacă
   instalarea eșuează, cardul respectiv se dezactivează singur, restul merge.
+- `static/vendor/echarts.min.js` e livrat cu `integrity=` (SRI). Dacă
+  actualizați biblioteca, recalculați hash-ul și înlocuiți-l în `index.html`,
+  altfel browserul refuză să execute scriptul și graficele dispar:
+  ```bash
+  openssl dgst -sha384 -binary static/vendor/echarts.min.js | openssl base64 -A
+  ```

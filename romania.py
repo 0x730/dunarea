@@ -763,7 +763,6 @@ def build_report(stats, archive, afdj, inhga, sen, snn, as_of=None,
     stats_generated_on = _iso_date(stats.get("generat")) or generated_on
     debit_rows = stats.get("debit") or []
     cern = next((row for row in debit_rows if "Cernavod" in row.get("name", "")), {})
-    bazias_model = next((row for row in debit_rows if "Bazia" in row.get("name", "")), {})
     model_as_of = _model_evidence_date(cern, archive, generated_on)
     hist = historical_cernavoda(archive, model_as_of)
     cern_gauge = _find_station(afdj, "cernavoda")

@@ -7,9 +7,11 @@ Opțional: PORT=8080 python3 server.py
 """
 
 import base64
+import datetime
 import json
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -35,6 +37,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.realpath(os.path.join(BASE_DIR, "static"))
 PORT = int(os.environ.get("PORT", "7300"))
 
+# Jurnal: erorile și cererile lente se scriu întotdeauna; access log-ul complet
+# se activează la cerere, ca să nu inunde consola supervisorului.
+ACCESS_LOG = os.environ.get("MONITOR_ACCESS_LOG", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+SLOW_REQUEST_MS = float(os.environ.get("MONITOR_SLOW_MS", "5000"))
+STARTED_AT = time.time()
+
 MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -54,6 +64,32 @@ _SENSITIVE_QUERY_KEYS = {
     "token", "api_key", "apikey", "access_token", "securitytoken",
     "signature", "x-amz-signature", "x-api-key",
 }
+# Lista de nume exacte e o listă de respingere: o sursă viitoare care numește
+# altfel parametrul ar trece pe lângă ea. O completăm cu potrivire pe CUVINTE
+# din numele parametrului, nu pe subșiruri — „keywords" nu trebuie confundat cu
+# „key", altfel am tăia parametri legitimi dintr-un URL-sursă. Nu filtrăm după
+# forma valorii: un identificator lung și legitim (UUID, nume de strat) ar fi
+# șters, iar un link de sursă care nu mai reproduce pagina originală strică
+# exact proveniența pe care aplicația o promite.
+_SENSITIVE_KEY_WORDS = frozenset({
+    "token", "key", "secret", "signature", "sign", "auth", "passwd",
+    "password", "credential", "credentials", "session", "sig",
+})
+_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|\d+")
+
+
+def _key_words(key):
+    """Cuvintele dintr-un nume de parametru: separatoare ȘI camelCase."""
+    words = set()
+    for part in re.split(r"[^A-Za-z0-9]+", key or ""):
+        words.update(word.lower() for word in _WORD_RE.findall(part))
+    return words
+
+
+def _is_sensitive_param(key, value):
+    lowered = (key or "").lower()
+    return (lowered in _SENSITIVE_QUERY_KEYS
+            or bool(_key_words(key) & _SENSITIVE_KEY_WORDS))
 
 
 def _public_payload(value):
@@ -74,7 +110,7 @@ def _public_payload(value):
     try:
         parts = urlsplit(value)
         query = [(key, item) for key, item in parse_qsl(parts.query, keep_blank_values=True)
-                 if key.lower() not in _SENSITIVE_QUERY_KEYS]
+                 if not _is_sensitive_param(key, item)]
         # user:parolă@host e tot o credențială; netloc-ul se reconstruiește
         # fără ea, nu se copiază ca atare.
         host = parts.hostname or ""
@@ -85,6 +121,34 @@ def _public_payload(value):
                            urlencode(query, doseq=True), parts.fragment))
     except ValueError:
         return value
+
+
+def api_health(q):
+    """Stare a procesului, ieftină și fără efecte.
+
+    Deliberat NU atinge nicio sursă externă și nu declanșează niciun fetch: un
+    endpoint de sănătate care poate provoca muncă e o pârghie de amplificare,
+    iar unul care așteaptă după un upstream căzut raportează „bolnav" când de
+    fapt doar sursa e jos. Citește numai starea locală.
+    """
+    warm = C.cache_get("warmup_done", max_age=10 ** 9)
+    report = C.cache_get(anomalii.REPORT_CACHE_KEY, max_age=10 ** 9)
+    now = time.time()
+
+    def age_s(entry):
+        age = (entry or {}).get("age")
+        return round(age, 1) if isinstance(age, (int, float)) else None
+
+    return {
+        "status": "ok",
+        "uptime_s": round(now - STARTED_AT, 1),
+        "warmup_done": bool(warm),
+        "anomaly_report_age_s": age_s(report),
+        "generated": datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds"),
+        "nota": ("stare locală a procesului; nu interoghează sursele externe. "
+                 "Prospețimea fiecărei surse se vede în /api/overview."),
+    }
 
 
 def api_overview(q):
@@ -724,6 +788,7 @@ def api_points(q):
 
 
 ROUTES = {
+    "/api/health": api_health,
     "/api/overview": api_overview,
     "/api/glofas/recent": api_glofas_recent,
     "/api/glofas/years": api_glofas_years,
@@ -804,7 +869,31 @@ class Handler(BaseHTTPRequestHandler):
         return self.server_version
 
     def log_message(self, fmt, *args):
-        pass  # liniște în consolă
+        pass  # jurnalul propriu, structurat, se scrie în _log_request
+
+    def handle_one_request(self):
+        self._started_at = time.monotonic()
+        super().handle_one_request()
+
+    def _log_request(self, code, started_at):
+        """Jurnal structurat, o linie pe cerere.
+
+        Tăcerea totală de dinainte însemna că o defecțiune în producție nu lăsa
+        nicio urmă. Ținem consola curată prin selecție, nu prin mutism: erorile
+        și cererile lente se scriu întotdeauna, restul numai dacă operatorul
+        cere explicit un access log complet.
+        """
+        elapsed_ms = (time.monotonic() - started_at) * 1000 if started_at else 0.0
+        interesting = code >= 400 or elapsed_ms >= SLOW_REQUEST_MS
+        if not (ACCESS_LOG or interesting):
+            return
+        # Calea se ia din request, nu din vreo valoare reflectată, și se
+        # trunchiază: un URI lung nu are voie să umple jurnalul.
+        path = (self.path or "")[:200].replace("\n", " ").replace("\r", " ")
+        level = "eroare" if code >= 500 else "atentie" if interesting else "info"
+        print(f'{datetime.datetime.now(datetime.timezone.utc).isoformat()} '
+              f'{level} {self.command} {path} {code} {elapsed_ms:.0f}ms',
+              file=sys.stderr, flush=True)
 
     def send_response(self, code, message=None):
         """Anteturile de securitate se emit aici, nu în _send.
@@ -816,6 +905,7 @@ class Handler(BaseHTTPRequestHandler):
         afirmația din DEPLOY.md.
         """
         super().send_response(code, message)
+        self._log_request(code, getattr(self, "_started_at", None))
         # a doua linie de apărare: chiar dacă un text extern ar scăpa
         # neescapat în pagină, CSP-ul îi interzice execuția
         self.send_header("Content-Security-Policy", CSP)

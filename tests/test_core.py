@@ -135,6 +135,32 @@ class PublicApiSecurityTests(unittest.TestCase):
         self.assertEqual(out["items"][0]["source_url"], "https://example.org/data?safe=yes")
         self.assertNotIn("secret", json.dumps(out))
 
+    def test_credential_scrub_matches_words_not_substrings(self):
+        """Un parametru legitim nu are voie să fie tăiat dintr-un URL-sursă:
+        linkul trebuie să reproducă pagina originală, altfel proveniența, care
+        e chiar produsul aplicației, devine neverificabilă."""
+        for key in ("api_key", "securityToken", "apikey", "X-Amz-Signature",
+                    "access-token", "sig"):
+            self.assertTrue(server._is_sensitive_param(key, "x"), key)
+        for key in ("keywords", "layers", "time", "bbox", "designation",
+                    "station", "uuid"):
+            self.assertFalse(server._is_sensitive_param(key, "x" * 40), key)
+
+    def test_health_endpoint_touches_no_external_source(self):
+        """Un endpoint de sănătate care poate provoca muncă e o pârghie de
+        amplificare; acesta citește numai starea locală."""
+        def explode(*a, **k):
+            raise AssertionError("health nu are voie să atingă o sursă externă")
+
+        with mock.patch.object(C, "http_get", side_effect=explode), \
+                mock.patch.object(C, "http_json", side_effect=explode), \
+                mock.patch.object(C, "cached", side_effect=explode):
+            out = server.api_health({})
+
+        self.assertEqual(out["status"], "ok")
+        self.assertIn("uptime_s", out)
+        self.assertIn("warmup_done", out)
+
     def test_dynamic_external_url_requires_expected_https_host(self):
         self.assertEqual(
             C._validated_https_url("https://hydroweb.next.theia-land.fr/a", {
@@ -1766,6 +1792,87 @@ class AiAnalysisAuditTests(unittest.TestCase):
         self.assertIn("SITUAȚIA\nFapt.", normalized)
         self.assertIn("CE AR SCHIMBA CONCLUZIA\nAlt fapt.", normalized)
         self.assertIn("CAUZE PROBABILE", missing)
+
+
+class WindowStatisticsTests(unittest.TestCase):
+    """Etalonul unui z pe fereastră e distribuția mediilor de aceeași lungime."""
+
+    @staticmethod
+    def _series(days, start="2020-01-01", step=1.0):
+        first = date.fromisoformat(start)
+        return {(first + timedelta(days=i)).isoformat(): i * step
+                for i in range(days)}
+
+    def test_rolling_means_skip_windows_with_a_gap(self):
+        smap = self._series(40)
+        del smap["2020-01-20"]           # un gol în mijloc
+        means = anomalii._rolling_window_means(smap, 14)
+        # nicio fereastră nu are voie să acopere golul
+        self.assertTrue(means)
+        full = anomalii._rolling_window_means(self._series(40), 14)
+        self.assertLess(len(means), len(full))
+
+    def test_rolling_means_filter_by_month_and_exclude_year(self):
+        smap = self._series(800)          # acoperă martie 2020, 2021 și 2022
+        all_march = anomalii._rolling_window_means(smap, 14, month=3)
+        means = anomalii._rolling_window_means(
+            smap, 14, month=3, exclude_year=2021)
+        self.assertTrue(means)
+        self.assertLess(len(means), len(all_march))
+        # ferestrele rămase se încheie toate în martie, niciuna în 2021
+        self.assertEqual(len(all_march) - len(means), 31)
+
+    def test_contiguous_tail_refuses_a_broken_run(self):
+        smap = self._series(20)
+        self.assertEqual(len(anomalii._contiguous_tail(smap, 14)), 14)
+        del smap["2020-01-15"]
+        self.assertIsNone(anomalii._contiguous_tail(smap, 14))
+        self.assertIsNone(anomalii._contiguous_tail(self._series(5), 14))
+
+    def test_rank_refuses_a_degenerate_reference(self):
+        self.assertIsNone(anomalii._rank(1.0, [1.0, 2.0]))
+        self.assertIsNotNone(anomalii._rank(1.0, list(range(40))))
+
+    def test_snn_is_not_accepted_from_a_stale_or_unreviewed_report(self):
+        today = date(2026, 8, 7)
+        fresh = {"status_available": True, "needs_review": False,
+                 "date": "2026-08-06"}
+        self.assertTrue(romania._snn_accepted(fresh, False, today))
+        # cache expirat: prospețimea înghețată la preluare nu mai contează
+        self.assertFalse(romania._snn_accepted(fresh, True, today))
+        self.assertFalse(romania._snn_accepted(
+            {**fresh, "needs_review": True}, False, today))
+        # raport vechi de două săptămâni
+        self.assertFalse(romania._snn_accepted(
+            {**fresh, "date": "2026-07-24"}, False, today))
+        self.assertFalse(romania._snn_accepted({"status_available": True},
+                                               False, today))
+
+    def test_third_party_text_reaching_the_prompt_is_bounded(self):
+        payload = {"eroare": "x" * 5000, "lista": ["y" * 5000],
+                   "control": "a\x00b\x1fc", "numar": 12.5}
+        out = analiza_ai._defang(payload)
+        self.assertLessEqual(len(out["eroare"]), analiza_ai.MAX_PROMPT_STRING + 20)
+        self.assertLessEqual(len(out["lista"][0]), analiza_ai.MAX_PROMPT_STRING + 20)
+        self.assertNotIn("\x00", out["control"])
+        self.assertNotIn("\x1f", out["control"])
+        self.assertEqual(out["numar"], 12.5)
+
+    def test_damas_interval_is_read_not_assumed(self):
+        hourly = [{"timeInterval": {"from": "2026-08-05T00:00:00Z",
+                                    "to": "2026-08-05T01:00:00Z"}}]
+        quarter = [{"timeInterval": {"from": "2026-08-05T00:00:00Z",
+                                     "to": "2026-08-05T00:15:00Z"}}]
+        self.assertEqual(C._damas_interval_minutes(hourly), 60)
+        self.assertEqual(C._damas_interval_minutes(quarter), 15)
+        self.assertEqual(C._damas_interval_minutes([]), 15)
+
+    def test_anar_decimal_is_not_read_as_thousands(self):
+        pattern = r"([\d.,]+)\s*miliarde"
+        self.assertEqual(C._anar_number(pattern, "2.4 miliarde m3"), 2.4)
+        self.assertEqual(C._anar_number(pattern, "2,4 miliarde m3"), 2.4)
+        # separatorul de mii în română rămâne interpretat corect
+        self.assertEqual(C._num("1.450"), 1450.0)
 
 
 class CalendarTests(unittest.TestCase):

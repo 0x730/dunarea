@@ -238,7 +238,7 @@ cache.db         cache local (generat la rulare)
 
 ## API local
 
-`/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
+`/api/health` · `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
 `/api/inhga/afluenti-dunare` ·
 `/api/danubehis/afluenti-romania` ·
 `/api/glofas/afluenti-romania` ·
