@@ -6,6 +6,7 @@ separarea onestă între „anormal față de istoric, dar explicabil" (secetă)
 detectoarele produc cifre verificabile, nu concluzii.
 """
 
+import threading
 from datetime import date, timedelta
 from statistics import mean, median, pstdev
 
@@ -16,6 +17,8 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
+# v11: rapoartele expun acum `surse_din_cache`/`intrari_din_cache` — schema
+# payloadului s-a schimbat, deci un răspuns vechi ar masca tăcut câmpurile noi.
 # v10: textul CLIM_NOTES pentru Cernavodă nu mai afirmă generic, la prezent, o
 # limitare a funcționării — afirmațiile vizibile fac parte din payload, deci o
 # corecție de text cere la fel de mult o cheie nouă ca o schimbare de calcul.
@@ -23,12 +26,41 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 # valorilor zilnice), zăpada e raportată în cm, streak-ul numără zile
 # calendaristice, bilanțul km³ refuză anii incompleți, iar percentilele cer un
 # minim de eșantioane. Rezultatele vechi nu mai sunt comparabile.
-REPORT_CACHE_KEY = "anomalii_report:v10"
-STATS_CACHE_KEY = "statistici:v5"
-BUDGET_CACHE_KEY = "bilant_apa:v4"
+REPORT_CACHE_KEY = "anomalii_report:v11"
+STATS_CACHE_KEY = "statistici:v6"
+BUDGET_CACHE_KEY = "bilant_apa:v5"
 
 
 # ------------------------------------------------------------- utilitare ---
+
+# Rapoartele derivate despachetau fiecare conector cu `["data"]` și aruncau
+# flagul `stale`. Rezultatul: `stale: false` pe /api/anomalii însemna doar
+# „recalculat în ultimele 6 ore" — rămânea fals și când TOATE intrările veneau
+# din cache expirat. Colectorul de mai jos reține ce sursă a venit din cache,
+# ca verdictele să poată declara pe ce s-au sprijinit.
+_stale_ctx = threading.local()
+
+
+def _track_reset():
+    _stale_ctx.names = set()
+
+
+def _tracked():
+    return sorted(getattr(_stale_ctx, "names", set()) or set())
+
+
+def _d(result, name):
+    """Despachetează un rezultat de conector, reținând dacă era din cache."""
+    if isinstance(result, dict) and "data" in result:
+        if result.get("stale"):
+            names = getattr(_stale_ctx, "names", None)
+            if names is None:
+                names = set()
+                _stale_ctx.names = names
+            names.add(name)
+        return result["data"]
+    return result
+
 
 def _series_map(arch):
     """arhivă GloFAS → dict {data_iso: valoare}, fără None."""
@@ -139,7 +171,7 @@ CLIM_NOTES = {
 
 
 def climatology(point_id):
-    arch = C.glofas_archive(point_id, CLIM_START)["data"]
+    arch = _d(C.glofas_archive(point_id, CLIM_START), f"glofas:{point_id}")
     smap = _series_map(arch)
     if not smap:
         raise RuntimeError("serie goală")
@@ -211,8 +243,8 @@ def climatology(point_id):
 # ------------------------------------- 2. bilanțul Baziaș→Gruia (cu lag) ---
 
 def balance():
-    b = _series_map(C.glofas_archive("bazias", BAL_START)["data"])
-    g = _series_map(C.glofas_archive("gruia", BAL_START)["data"])
+    b = _series_map(_d(C.glofas_archive("bazias", BAL_START), "glofas:bazias"))
+    g = _series_map(_d(C.glofas_archive("gruia", BAL_START), "glofas:gruia"))
     dates = sorted(set(b) & set(g))
     if len(dates) < 400:
         raise RuntimeError("serii prea scurte pentru bilanț")
@@ -296,7 +328,7 @@ def measured_vs_model():
                 "n": len(official),
                 "nota": "arhiva buletinelor INHGA încă se descarcă în fundal — "
                         "revino în câteva minute"}
-    m = _series_map(C.glofas_archive("bazias", date.today().year - 1)["data"])
+    m = _series_map(_d(C.glofas_archive("bazias", date.today().year - 1), "glofas:bazias"))
     ratios = []
     for row in official:
         mv = m.get(row["date"])
@@ -366,7 +398,7 @@ def precip_coherence(discharge_pct):
     """Percentila cumulului de precipitații pe 90 de zile vs. istoric
     (aceeași fereastră calendaristică din anii anteriori)."""
     out = []
-    all_points = C.era5_precip_all(2000)["data"]
+    all_points = _d(C.era5_precip_all(2000), "era5")
     for pid, label in PRECIP_VS:
         try:
             d = all_points[pid]
@@ -399,7 +431,7 @@ def precip_stats():
     out = []
     today = date.today()
     cy = today.year
-    all_points = C.era5_precip_all(PRECIP_START)["data"]
+    all_points = _d(C.era5_precip_all(PRECIP_START), "era5")
     for pid, p in C.PRECIP_POINTS.items():
         d = all_points[pid]
         snow_raw = d.get("snow") or []
@@ -483,6 +515,7 @@ def precip_stats():
 
 
 def full_stats():
+    _track_reset()
     debit = []
     for pid in CLIM_POINTS:
         try:
@@ -521,6 +554,8 @@ def full_stats():
     precip_reference = (f"{precip_period['effective_start']}–{precip_period['effective_end']}"
                         if precip_period else "perioadă indisponibilă")
     return {"generat": date.today().isoformat(),
+            "surse_din_cache": _tracked(),
+            "intrari_din_cache": bool(_tracked()),
             "debit": debit, "precipitatii": precipitation,
             "reference_periods": {"glofas": debit_period,
                                   "era5": precip_period},
@@ -546,8 +581,8 @@ def crosscheck_mire():
     navigație DanubeSTREAM, cvasi-orar). Diferențe mari persistente ar însemna
     că unul dintre sisteme greșește sau raportează altceva."""
     afdj = {_norm_name(s["statie"]): s
-            for s in C.afdj_cote()["data"]["statii"] if s.get("cota_cm") is not None}
-    portal = C.danubeportal_gauges()["data"]["mire"]
+            for s in _d(C.afdj_cote(), "afdj")["statii"] if s.get("cota_cm") is not None}
+    portal = _d(C.danubeportal_gauges(), "danubeportal")["mire"]
     perechi = []
     for m in portal:
         if m["tara"] != "RO":
@@ -586,6 +621,7 @@ def grdc_context():
         return g
     serie = g.pop("_serie")
     r = C.glofas_recent("ceatal_izmail", past_days=7, forecast_days=0)
+    _d(r, "glofas:ceatal_izmail")
     azi = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
     if not azi:
         g["nota"] = "fără valoare curentă de comparat"
@@ -667,12 +703,13 @@ def satellite_check():
 def germany_check():
     """Mira măsurată german (PEGELONLINE, Hofkirchen) vs. modelul în același
     punct — a treia pereche măsurat/model, pe alt teritoriu și alt operator."""
-    st = C.pegelonline_stations()["data"]
+    st = _d(C.pegelonline_stations(), "pegelonline")
     hof = next((s for s in st if "hofkirchen" in s["name"].lower() and s.get("q")), None)
     if not hof:
         raise RuntimeError("stația Hofkirchen fără debit în PEGELONLINE")
     masurat = hof["q"]["value"]
     r = C.glofas_recent("hofkirchen", past_days=7, forecast_days=0)
+    _d(r, "glofas:hofkirchen")
     latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
     if not latest or not masurat:
         raise RuntimeError("valori lipsă pentru comparație")
@@ -690,7 +727,7 @@ def germany_check():
 
 def serbia_check():
     """Debitele măsurate sârbești (RHMZ) vs. modelul la Novi Sad."""
-    rhmz = C.hidmet_report()["data"]
+    rhmz = _d(C.hidmet_report(), "rhmz")
     rs = rhmz["statii"]
     rhmz_ns = next((s for s in rs if s["statie"] == "Novi Sad"
                     and s.get("debit_m3s")), None)
@@ -702,7 +739,7 @@ def serbia_check():
         # RHMZ are un lanț TLS incomplet. Preferăm livrarea HTTPS verificabilă
         # OVF/Hydroinfo; dacă lipsește, valoarea RHMZ rămâne doar context.
         try:
-            hu = C.hydroinfo_danube()["data"]["statii"]
+            hu = _d(C.hydroinfo_danube(), "hydroinfo")["statii"]
             ns = next((s for s in hu if s["statie"] == "Novi Sad"
                        and s.get("debit_m3s")), None)
         except Exception:
@@ -718,6 +755,7 @@ def serbia_check():
     if not ns:
         raise RuntimeError("Novi Sad fără debit publicat azi în RHMZ/Hydroinfo")
     r = C.glofas_recent("novi_sad", past_days=7, forecast_days=0)
+    _d(r, "glofas:novi_sad")
     latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
     if not latest:
         raise RuntimeError("GloFAS Novi Sad indisponibil")
@@ -739,13 +777,13 @@ def hungary_check():
     direct = None
     normalized = None
     try:
-        stations = C.hydroinfo_danube()["data"]["statii"]
+        stations = _d(C.hydroinfo_danube(), "hydroinfo")["statii"]
         direct = next((s for s in stations if s["statie"] == "Budapest"
                        and s.get("debit_m3s")), None)
     except Exception:
         pass
     try:
-        stations = C.danubehis_danube()["data"]["statii"]
+        stations = _d(C.danubehis_danube(), "danubehis")["statii"]
         normalized = next((s for s in stations if s["statie"] == "Budapest"
                            and s.get("debit_m3s")), None)
     except Exception:
@@ -754,6 +792,7 @@ def hungary_check():
     if not budapest:
         raise RuntimeError("Budapest fără debit în Hydroinfo și DanubeHIS")
     r = C.glofas_recent("budapesta", past_days=7, forecast_days=0)
+    _d(r, "glofas:budapesta")
     latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
     if not latest or not latest[1]:
         raise RuntimeError("GloFAS Budapesta indisponibil")
@@ -791,7 +830,7 @@ def austria_check():
     Mirele VIA DONAU sunt orare și publice prin PEGELONLINE, dar fără curbe
     cotă-volum și debite intrare/ieșire nu pot demonstra ori exclude retenția.
     """
-    st = C.pegelonline_stations()["data"]
+    st = _d(C.pegelonline_stations(), "pegelonline")
     at = [s for s in st if s.get("agency") == "VIA DONAU" and s.get("w")]
     if len(at) < 4:
         raise RuntimeError("prea puține mire austriece disponibile")
@@ -799,7 +838,7 @@ def austria_check():
     trends = []
     for s in at:
         try:
-            ser = C.pegelonline_series(s["uuid"], "W", 30)["data"]
+            ser = _d(C.pegelonline_series(s["uuid"], "W", 30), "pegelonline")
             vals = [v for v in ser["values"] if v is not None]
             if len(vals) < 200:
                 continue
@@ -821,7 +860,7 @@ def austria_check():
     intrare_pct = None
     try:
         hof = next(s for s in st if "hofkirchen" in s["name"].lower())
-        q = C.pegelonline_series(hof["uuid"], "Q", 30)["data"]
+        q = _d(C.pegelonline_series(hof["uuid"], "Q", 30), "pegelonline")
         qv = [v for v in q["values"] if v is not None]
         n = max(24, len(qv) // 30)
         q0, q1 = sum(qv[:n]) / n, sum(qv[-n:]) / n
@@ -857,13 +896,14 @@ AREA_PASSAU_KM2 = 76650  # bazinul hidrografic al Dunării la Achleiten/Passau
 
 
 def water_budget():
+    _track_reset()
     cy = date.today().year
 
     # ploaia în bazinul superior: media a 6 puncte-proxy (câmpie + alpin),
     # cumulată de la 1 ianuarie, fără 29 februarie (ferestre identice)
     per_punct = []
     end = None
-    all_points = C.era5_upper_basin(PRECIP_START)["data"]
+    all_points = _d(C.era5_upper_basin(PRECIP_START), "era5")
     for tag, lat, lon in C.UPPER_BASIN_POINTS:
         d = all_points[tag]
         pairs = [(t, v) for t, v in zip(d["time"], d["precip"]) if v is not None]
@@ -900,7 +940,7 @@ def water_budget():
 
     # volumul scurs prin râu până la aceeași dată (km³)
     def ytd_volume(pid):
-        m = _series_map(C.glofas_archive(pid, CLIM_START)["data"])
+        m = _series_map(_d(C.glofas_archive(pid, CLIM_START), f"glofas:{pid}"))
         cum, zile = {}, {}
         for ds, v in m.items():
             md = _mmdd(ds)
@@ -947,6 +987,8 @@ def water_budget():
 
     r1 = lambda x: round(x, 1)
     return {
+        "surse_din_cache": _tracked(),
+        "intrari_din_cache": bool(_tracked()),
         "pana_la": end,
         "bazin_superior": {
             "arie_km2": AREA_PASSAU_KM2,
@@ -996,6 +1038,7 @@ def _sev_clim(c):
 
 
 def report():
+    _track_reset()
     rep = {"generat": date.today().isoformat(), "climatologie": [],
            "bilant": None, "masurat_vs_model": None, "precipitatii": None,
            "erori": {}}
@@ -1043,4 +1086,9 @@ def report():
     except Exception as exc:
         rep["erori"]["precipitatii"] = str(exc)
 
+    # Ce intrări au venit din cache expirat. Fără asta, `stale: false` pe
+    # răspuns însemna doar „raportul e recalculat recent", nu „datele sunt
+    # proaspete" — două lucruri diferite, iar al doilea e cel citit de om.
+    rep["surse_din_cache"] = _tracked()
+    rep["intrari_din_cache"] = bool(rep["surse_din_cache"])
     return rep

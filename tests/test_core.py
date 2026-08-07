@@ -1829,6 +1829,25 @@ class WindowStatisticsTests(unittest.TestCase):
         self.assertIsNone(anomalii._contiguous_tail(smap, 14))
         self.assertIsNone(anomalii._contiguous_tail(self._series(5), 14))
 
+    def test_report_declares_which_inputs_came_from_cache(self):
+        """`stale: false` pe raport înseamnă doar „recalculat recent". Dacă
+        intrările au venit din cache expirat, verdictele se sprijină pe date
+        vechi cu raportul proaspăt — iar asta trebuie spus, nu dedus."""
+        anomalii._track_reset()
+        self.assertEqual(anomalii._tracked(), [])
+        # o sursă proaspătă nu se contorizează
+        self.assertEqual(anomalii._d({"data": 1, "stale": False}, "proaspata"), 1)
+        self.assertEqual(anomalii._tracked(), [])
+        # două surse expirate, una repetată
+        anomalii._d({"data": 1, "stale": True}, "afdj")
+        anomalii._d({"data": 1, "stale": True}, "rhmz")
+        anomalii._d({"data": 1, "stale": True}, "afdj")
+        self.assertEqual(anomalii._tracked(), ["afdj", "rhmz"])
+        # o valoare fără înveliș trece neatinsă
+        self.assertEqual(anomalii._d({"x": 1}, "brut"), {"x": 1})
+        anomalii._track_reset()
+        self.assertEqual(anomalii._tracked(), [])
+
     def test_rank_refuses_a_degenerate_reference(self):
         self.assertIsNone(anomalii._rank(1.0, [1.0, 2.0]))
         self.assertIsNotNone(anomalii._rank(1.0, list(range(40))))

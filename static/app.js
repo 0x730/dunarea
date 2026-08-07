@@ -1306,7 +1306,7 @@ async function renderContraProbe(afdj, portal) {
     });
     $("cp-opera").innerHTML = [
       ...zoneRows,
-      li("statut", `<span class="prov prov-calculat">shadow</span> ${o.nota}`),
+      li("statut", `<span class="prov prov-calculat">în umbră</span> ${o.nota}`),
       li("independență", o.independenta),
     ].join("");
     const lower = o.zones?.dunarea_de_jos;
@@ -1314,7 +1314,7 @@ async function renderContraProbe(afdj, portal) {
      ["hls", "opera-hls-meta", "opera-hls-map"]].forEach(([kind, metaId, imageId]) => {
       const obs = lower?.[kind];
       if (!obs?.data) return;
-      $(metaId).textContent = `${obs.product} · ${obs.data} · ${obs.quality_flags?.length ? obs.quality_flags.join(", ") : "quality flags: none"}`;
+      $(metaId).textContent = `${obs.product} · ${obs.data} · ${obs.quality_flags?.length ? obs.quality_flags.join(", ") : "fără semnalizări de calitate"}`;
       $(imageId).src = `/api/opera/map?layer=${kind}&zone=dunarea_de_jos`;
     });
   } catch (e) {
@@ -1346,7 +1346,7 @@ async function renderContraProbe(afdj, portal) {
     const c = await jget("/api/satellite-catalog");
     $("cp-satellite-catalog").innerHTML = Object.values(c.sources || {}).map((s) =>
       li(s.title || "sursă", s.activ
-        ? `<b>${s.data}</b> · ${s.signal} · <span class="prov prov-calculat">catalog only</span>`
+        ? `<b>${s.data}</b> · ${s.signal} · <span class="prov prov-document">doar în catalog</span>`
         : `<span class="prov prov-lipsa">fără granule recente</span> ${s.motiv || ""}`)).join("") +
       li("descărcare", c.download_configurat
         ? "Earthdata token detectat; ingestia valorilor rămâne separată și testată per produs"
@@ -1606,11 +1606,16 @@ async function renderSinteza(inhga) {
           ? Math.round(varsta / 60) + " min"
           : Math.round(varsta / 3600) + " h"}`;
   const stale = an?.stale ? " · servit din cache, sursa nu a răspuns" : "";
+  // `stale` de pe raport spune doar dacă RAPORTUL e recalculat recent. Dacă
+  // intrările lui au venit din cache expirat, verdictele se sprijină pe date
+  // vechi chiar cu raportul proaspăt — și asta trebuie spus, nu dedus.
+  const inCache = an?.surse_din_cache?.length
+    ? ` · intrări din cache: ${an.surse_din_cache.join(", ")}` : "";
   $("sinteza-card").innerHTML = `
     <div class="chips">${chips.join("")}</div>
     ${parts.map((p) => `<p>${p}</p>`).join("")}
     <div class="cine">concluzie compusă automat din reguli explicite și valorile de mai jos ·
-      ${prospetime}${stale} · pagina se reîmprospătează la 5 minute, verdictele cel mult la 6 ore ·
+      ${prospetime}${stale}${inCache} · pagina se reîmprospătează la 5 minute, verdictele cel mult la 6 ore ·
       fără interpretare AI</div>`;
 }
 
@@ -1834,7 +1839,7 @@ async function renderRomania() {
     : "sursă indisponibilă";
   $("ro-historical-thresholds").innerHTML = old.published ? `
     <ul class="facts">
-      ${li("nivel la comunicat", `<b>${fmtV(old.intake_basin_level_mdmb, fmt2)} mdMB</b>`)}
+      ${li("nivel la comunicat", `<b>${fmtV(old.intake_basin_level_mdmb, fmt2)} mdMB</b><br><span class="table-detail">mdMB — metri deasupra nivelului Mării Baltice, sistemul de referință al cotelor lucrărilor hidrotehnice; nu este cotă la miră și nu se compară cu centimetrii AFDJ</span>`)}
       ${li("interval uzual publicat", `<b>${fmtV(old.usual_level_mdmb?.min, fmt1)}–${fmtV(old.usual_level_mdmb?.max, fmt1)} mdMB</b>`)}
       ${(old.shutdown_levels_mdmb || []).map((threshold) => li(threshold.scope,
         `<b>${fmtV(threshold.value, fmt2)} mdMB</b>`)).join("")}
@@ -2219,6 +2224,16 @@ async function refreshData() {
   const hydroinfo = hydroinfoR.status === "fulfilled" ? hydroinfoR.value : null;
   const danubehis = danubehisR.status === "fulfilled" ? danubehisR.value : null;
 
+  // overview() colectează erori per sursă; până acum nu le citea nimeni, deci
+  // dacă 6 din 28 de puncte GloFAS cădeau, profilul se desena mai scurt fără
+  // niciun semn că lipsește ceva.
+  const eroriSurse = Object.entries(ov.errors || {});
+  const notaErori = $("profil-erori");
+  if (notaErori) {
+    notaErori.innerHTML = eroriSurse.length
+      ? `<span class="prov prov-lipsa">${eroriSurse.length} ${eroriSurse.length === 1 ? "sursă lipsește" : "surse lipsesc"}</span> din profil: ${eroriSurse.map(([k]) => k).join(", ")} — graficul e desenat fără ele.`
+      : "";
+  }
   pill("INHGA", ov.inhga ? (ov.inhga.stale ? "stale" : "ok") : "err");
   pill("AFDJ", afdj ? (afdj.stale ? "stale" : "ok") : "err");
   pill("PEGELONLINE", ov.pegelonline ? (ov.pegelonline.stale ? "stale" : "ok") : "err");

@@ -198,6 +198,7 @@
     GloFAS este o celulă de model de aproximativ 5 km, nu aceeași măsurătoare.</p>
   <div class="profil-box">
     <div id="profil-holder"><div class="loading">se încarcă profilul…</div></div>
+    <p class="sub" id="profil-erori"></p>
     <div id="profil-tip"></div>
     <div class="profil-legend">
       <span><span class="sw c-blue">●</span>debit măsurat (m³/s)</span>
@@ -321,7 +322,7 @@
   <p class="eyebrow">memoria fluviului</p>
   <h2>Comparație cu anii trecuți</h2>
   <p class="section-note">Debit zilnic pe ani suprapuși, cu banda min–max și mediana
-    2015–2025 ca reper. Sursa este modelul GloFAS (Copernicus)
+    anilor recenți ca reper (intervalul exact apare în legenda graficului). Sursa este modelul GloFAS (Copernicus)
     <span class="prov prov-model">model</span> — consecvent în timp, deci potrivit pentru
     comparații între ani, chiar dacă cifra absolută poate diferi de măsurătoarea INHGA.
     Precipitațiile vin din reanaliza ERA5 (Copernicus), cumulate de la 1 ianuarie.</p>
@@ -398,7 +399,7 @@
       <div id="cp-dahiti"><div class="loading">se încarcă…</div></div>
     </div>
     <div class="card">
-      <h3>Suprafața apei — NASA OPERA <span class="prov prov-calculat">shadow · radar + optic</span></h3>
+      <h3>Suprafața apei — NASA OPERA <span class="prov prov-calculat">în umbră · radar + optic</span></h3>
       <p class="sub"><a href="https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1" target="_blank" rel="noopener">DSWx-S1</a>
         + DSWx-HLS prin NASA GIBS — clase publicate de NASA/JPL; nu clasificăm noi imaginile</p>
       <ul class="facts" id="cp-opera"><li><span class="loading">se caută ultima trecere utilă…</span></li></ul>
@@ -551,6 +552,9 @@
         proprie.</li>
       <li><span class="prov prov-lipsa">nepublicat</span> valoarea nu apare în niciun flux
         public identificat; spunem unde s-ar putea cere.</li>
+      <li><span class="prov prov-calculat">în umbră</span> sursa e integrată și afișată, dar
+        nu intră în niciun verdict automat — fie n-are încă referință proprie, fie ar dubla
+        o familie de probe deja numărată.</li>
     </ul>
   </div>
   <div class="card">
@@ -580,11 +584,11 @@
         <tr><td class="what">Satelit ↔ râu</td>
           <td>hydroweb.next/CNES (Sentinel-3/6, SWOT)</td>
           <td>stații stratificate pe cursul principal; numai observații ≤35 zile, incertitudine ≤0,25 m și istoric lunar suficient</td>
-          <td>shadow/context; reper geoid, nu debit; stațiile apropiate și DAHITI pe aceleași misiuni nu sunt voturi independente</td></tr>
+          <td>în umbră (context, nu vot); reper geoid, nu debit; stațiile apropiate și DAHITI pe aceleași misiuni nu sunt voturi independente</td></tr>
         <tr><td class="what">Suprafața apei</td>
           <td>NASA OPERA DSWx-S1 + DSWx-HLS</td>
           <td>ultima scenă cu acoperire utilă pe trei zone fixe; clasele open water/inundated vegetation publicate de NASA/JPL</td>
-          <td>shadow până există baseline sezonier; radarul și opticul sunt senzori diferiți, dar împart familia de algoritmi OPERA</td></tr>
+          <td>în umbră până există o referință sezonieră; radarul și opticul sunt senzori diferiți, dar împart familia de algoritmi OPERA</td></tr>
         <tr><td class="what">Zăpadă și sol</td>
           <td>Copernicus Land/CDSE: SCE 500 m + SSM 1 km</td>
           <td>catalog STAC și hartă publică datată pe bazin; quality notice atașat produsului</td>

@@ -1088,11 +1088,19 @@ def maintenance_watcher():
         _t.sleep(1800)
         n += 1
         try:
-            C.inhga_bulletin()      # ține seria oficială la zi fără repornire
-            C.inhga_danube_tributaries()
-            C.danubehis_romanian_tributaries()
-            C.anar_water_resources()
-            if n % 48 == 0:         # o dată pe zi: curățenie în cache
+            # Buletinul INHGA apare o dată pe zi, dar TTL-ul lui e de 30 min —
+            # exact cadența acestei bucle, deci îl reîncărcam de 48 de ori pe zi
+            # indiferent de trafic. Suntem oaspeți pe API-urile oficiale: îl
+            # reîmprospătăm doar cât timp buletinul zilei încă nu a apărut.
+            bul = C.cache_get(C.INHGA_CACHE_KEY, max_age=10 ** 9)
+            azi = date.today().isoformat()
+            if not bul or (bul.get("data") or {}).get("data_buletin") != azi:
+                C.inhga_bulletin()   # ține seria oficială la zi fără repornire
+            # Surse cu cadență lunară/săptămânală: o dată pe zi e suficient.
+            if n % 48 == 0:
+                C.inhga_danube_tributaries()
+                C.danubehis_romanian_tributaries()
+                C.anar_water_resources()
                 C.glofas_romanian_tributary_climatology()
                 C.cache_gc()
         except Exception:
