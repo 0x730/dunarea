@@ -1,14 +1,66 @@
-# date locale regenerabile
-cache.db
-server.log
-__pycache__/
-*.pyc
+# Repo PUBLIC: orice fișier comis aici rămâne definitiv în istoric, în forkuri
+# și în arhive terțe. Regulile de mai jos sunt scrise larg intenționat — e mai
+# ieftin să adaugi o excepție decât să retragi un secret publicat.
 
-# secrete — NU se comit niciodată; pe server vin din env-ul daemonului Forge
+# --- secrete -----------------------------------------------------------------
+# Directorul e sursa primară; tiparele de sub el prind și un fișier rătăcit
+# în altă parte a arborelui.
 data/keys/
+data/certs/
+*.key
+*.pem
+*.p12
+*.pfx
+*.token
+*.credentials
+.env
+.env.*
+!.env.example
 
-# fișiere mari cerute manual (GRDC) — se urcă direct pe server dacă există;
-# instrucțiunile de import rămân versionate
+# --- date locale regenerabile -------------------------------------------------
+cache.db
+*.db
+*.sqlite
+*.sqlite3
+# backupurile de cache (rețeta din DEPLOY.md scrie cache-AAAA-LL-ZZ.db)
+cache-*.db
+# fișierele auxiliare SQLite poartă ACELEAȘI date ca baza (WAL de la
+# journal_mode=WAL, plus jurnalul vechi de tip delete)
+*.db-wal
+*.db-shm
+*.db-journal
+server.log
+*.log
+data/tmp/
+
+# --- fișiere mari cerute manual ------------------------------------------------
+# GRDC se urcă direct pe server; instrucțiunile de import rămân versionate.
 data/grdc/*
 !data/grdc/README.md
-data/tmp/
+
+# --- rapoarte interne ----------------------------------------------------------
+# Un audit de securitate descrie găuri încă nereparate: pe un repo public el e
+# un ghid de exploatare. Rămâne local până când reparațiile sunt livrate.
+audit/
+*.audit.md
+AUDIT*.md
+SECURITY-REVIEW*.md
+
+# --- Python --------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# --- editor și sistem de operare -------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+*.bak
+*.orig
+*.rej
