@@ -3,6 +3,31 @@
 
 "use strict";
 
+/* Compatibilitate. Proiectul nu are pas de build, deci ce scriem aici ajunge
+   direct în browser. Sintaxa modernă (`?.`, `??`) fixează un prag pe care nu-l
+   putem coborî fără transpilare: Chrome 80 / Firefox 74 / Safari 13.1 (2020).
+   Metodele de mai jos sunt însă doar funcții — le completăm, ca versiunile
+   dintre acel prag și 2022 să meargă în loc să rămână cu pagina blocată pe
+   „se încarcă". `Object.hasOwn` era cel mai periculos: e folosit în rutare,
+   adică în PRIMA funcție care rulează, deci lipsa lui însemna pagină moartă,
+   nu funcționalitate redusă. */
+if (!Object.hasOwn) {
+  Object.hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+}
+if (!Array.prototype.at) {
+  Array.prototype.at = function (n) {
+    n = Math.trunc(n) || 0;
+    if (n < 0) n += this.length;
+    return (n < 0 || n >= this.length) ? undefined : this[n];
+  };
+}
+if (!Element.prototype.replaceChildren) {
+  Element.prototype.replaceChildren = function (...nodes) {
+    while (this.firstChild) this.removeChild(this.firstChild);
+    nodes.forEach((node) => this.appendChild(node));
+  };
+}
+
 const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });

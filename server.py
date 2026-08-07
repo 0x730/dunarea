@@ -881,6 +881,11 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "DanubeMonitor"
     sys_version = ""
     timeout = 30  # un client lent nu blochează un fir la nesfârșit
+    # Anteturile și corpul pleacă în două write-uri separate. Cu algoritmul
+    # Nagle activ (implicitul stdlib), al doilea segment așteaptă ACK-ul
+    # primului, iar ACK-ul întârziat al clientului adaugă ~40 ms fiecărui
+    # răspuns mic — adică exact răspunsurilor JSON pe care le dăm cel mai des.
+    disable_nagle_algorithm = True
 
     def version_string(self):
         return self.server_version

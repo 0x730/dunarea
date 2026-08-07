@@ -288,6 +288,23 @@ codul și verifica afirmațiile de mai jos.
 Dacă găsiți o problemă, deschideți un issue fără detalii de exploatare și
 cereți un canal privat.
 
+## Cerințe de browser
+
+Proiectul nu are pas de build, deci codul scris ajunge direct în browser.
+Pragul real e fixat de sintaxă (`?.`, `??`), care nu se poate completa cu
+polyfill fără transpilare: **Chrome 80 / Firefox 74 / Safari 13.1** (2020).
+Metodele mai noi folosite (`Object.hasOwn`, `Array.prototype.at`,
+`Element.replaceChildren`) sunt completate în `app.js`, ca versiunile dintre
+acel prag și 2022 să funcționeze normal. `:has()` din CSS e folosit o singură
+dată, pentru fișele de pe mobil, și degradează curat: fără el, tabelul rămâne
+derulabil pe orizontală, ca înainte.
+
+Fără JavaScript pagina nu poate afișa cifre, dar rutele API rămân accesibile
+direct — `/api/raport` întoarce instantaneul complet în JSON.
+
+Verificat în Chrome 151 (desktop și 390px). Firefox și Safari nu au fost
+testate direct: nu sunt disponibile în mediul de dezvoltare.
+
 ## Structură
 
 ```
