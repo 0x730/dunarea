@@ -206,7 +206,8 @@ Secțiunea „Anomalii față de istoric" rulează verificări automate
 (`anomalii.py`, endpoint `/api/anomalii`, recalculat la 6 h):
 
 1. **Climatologie** — percentila zilei calendaristice (fereastră ±7 zile) față de
-   GloFAS 1991–anul trecut, în 5 secțiuni; serii de zile consecutive sub P10.
+   GloFAS 1991–anul trecut, în toate secțiunile transectului climatologic
+   (Regensburg → Ceatal Izmail); serii de zile calendaristic consecutive sub P10.
 2. **Bilanț Baziaș→Gruia** — decalajul de propagare se estimează din corelația
    variațiilor zilnice, apoi reziduul relativ al ultimelor 14 zile se compară cu
    distribuția istorică a aceleiași luni (z-score). Semnalează o divergență
@@ -249,5 +250,17 @@ cache.db         cache local (generat la rulare)
 `/api/glofas/recent?point=&days=` · `/api/glofas/years?point=&start=` ·
 `/api/precip?point=&start=` · `/api/delta` · `/api/entsoe` · `/api/points` ·
 `/api/anomalii` · `/api/romania` · `/api/inhga/serie?days=` ·
-`/api/anar/resurse-apa` · `/api/sen/istoric` · `/api/sen/piata` · `/api/date-lipsa` ·
+`/api/anar/resurse-apa` · `/api/sen` · `/api/sen/istoric` · `/api/sen/piata` ·
+`/api/date-lipsa` · `/api/bilant-apa` · `/api/avize` · `/api/danubeportal` ·
+`/api/hydroweb` · `/api/dahiti` · `/api/gravimetrie` · `/api/grdc` ·
+`/api/istoric` · `/api/analiza-ai` ·
 `/api/statistici` (+`.csv` pentru export)
+
+`/api/raport` întoarce, într-o singură cerere neautentificată, un instantaneu
+JSON cu toate secțiunile monitorului și verdictele lor — util pentru arhivare
+sau pentru verificarea independentă a unei afirmații de pe pagină.
+
+Parametrii numerici acceptă doar valori dintr-o listă scurtă (`days`, `start`);
+o valoare din afara ei întoarce 400 cu lista permisă. Restricția există pentru
+că fiecare valoare distinctă înseamnă o cheie de cache nouă și o cerere nouă
+către sursa oficială, deci un interval larg ar fi enumerabil.

@@ -105,8 +105,17 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
 ```
 
 Apoi restart nginx din Forge. Aplicația își servește singură staticele —
-nginx-ul doar proxy-ază tot. Aplicația trimite deja `Content-Security-Policy`,
-`X-Content-Type-Options` și `Referrer-Policy` pe fiecare răspuns.
+nginx-ul doar proxy-ază tot. Aplicația trimite `Content-Security-Policy`,
+`X-Content-Type-Options` și `Referrer-Policy` pe fiecare răspuns, inclusiv pe
+erorile generate de biblioteca standard (501/505/414), pentru că anteturile
+sunt emise din `send_response`, prin care trec toate răspunsurile.
+
+**Nu adăugați `proxy_set_header Connection "";` fără să știți ce faceți.**
+Împreună cu `proxy_http_version 1.1` de mai sus, activează keep-alive între
+nginx și aplicație. Aplicația închide explicit conexiunea pe 405 și refuză
+cererile cu corp, deci nu se desincronizează — dar keep-alive-ul face ca o
+singură cerere numărată de `limit_req` să poată transporta mai multe cereri
+către aplicație.
 
 ## 4. Cloudflare
 
@@ -151,11 +160,19 @@ daemon-XXXXXX` pe server arată de ce.
   într-un cron zilnic, cu rotație la 14 zile.
 - Cache-ul se curăță singur (rânduri expirate de peste 30 de zile, o dată pe
   zi); cheile permanente — arhiva locală — sunt protejate explicit.
-- Aplicația e read-only, fără autentificare și fără scriere din exterior.
-  Cheile stau doar în env-ul daemonului și **nu** ajung în `cache.db`, în
-  răspunsuri sau în mesajele de eroare (verificat). Analiza AI nu apare în UI,
-  nu rulează în fundal și nu poate fi pornită prin HTTP; se lansează local,
-  numai la cererea operatorului, cu `python3 analiza_ai.py`. Endpointul
-  `/api/analiza-ai` întoarce doar acest statut manual.
+- Aplicația nu acceptă niciun verb care modifică (POST/PUT/PATCH/DELETE dau
+  405) și nu are autentificare, pentru că nu expune nimic privat. Atenție însă
+  la formularea exactă: **un GET public poate scrie** — populează `cache.db` și,
+  prin `daily_snapshot()`, adaugă rânduri permanente în arhiva locală; tot un
+  GET consumă cota de API a operatorului la HydroWeb/DAHITI/ENTSO-E. Nu e
+  „fără scriere din exterior", ci „fără scriere de conținut din exterior".
+- Cheile se citesc din env-ul daemonului **sau**, dacă env-ul nu le are, din
+  `data/keys/` (ignorat de git, chmod 600). Pe server preferați env-ul. Cheile
+  **nu** ajung în `cache.db`, în răspunsuri sau în mesajele de eroare —
+  verificat empiric pe baza vie și pe modurile reale de eșec.
+- Analiza AI nu apare în UI, nu rulează în fundal și nu poate fi pornită prin
+  HTTP; se lansează local, numai la cererea operatorului, cu
+  `python3 analiza_ai.py`. Endpointul `/api/analiza-ai` întoarce doar acest
+  statut manual, iar patru teste blochează regresia.
 - Dependența `h5py` (doar pentru gravimetria GRACE) e opțională: dacă
   instalarea eșuează, cardul respectiv se dezactivează singur, restul merge.
