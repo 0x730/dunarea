@@ -1903,6 +1903,65 @@ class WindowStatisticsTests(unittest.TestCase):
         anomalii._track_reset()
         self.assertEqual(anomalii._tracked(), [])
 
+    def test_low_flow_indices_follow_standard_definitions(self):
+        """MAM7 / 7Q10 / curba duratei — verificăm definițiile, nu doar că rulează."""
+        # serie sintetică: 25 de ani hidrologici compleți, minim clar în ianuarie
+        import math as _math
+        smap = {}
+        base = date(2000, 4, 1)
+        for i in range(25 * 365 + 7):
+            day = base + timedelta(days=i)
+            # sezonalitate simplă cu minim iarna, plus un an mai sec la fiecare 5
+            luna = day.month
+            v = 1000 + 400 * _math.cos((luna - 1) / 12 * 2 * _math.pi)
+            if day.year % 5 == 0:
+                v *= 0.8
+            smap[day.isoformat()] = v
+
+        with mock.patch.object(C, "glofas_archive", return_value={
+                "data": {"time": sorted(smap), "discharge": [smap[d] for d in sorted(smap)]}}), \
+                mock.patch.dict(C.GLOFAS_POINTS, {"probe": {"name": "Probă", "km": 0}},
+                                clear=False):
+            r = anomalii.low_flow_indices("probe")
+
+        # anul hidrologic începe la 1 aprilie, ca minimul de iarnă să nu fie rupt
+        self.assertEqual(r["an_hidrologic"], "1 aprilie – 31 martie")
+        # 7Q10 e un debit mai mic decât media minimelor anuale, prin definiție
+        self.assertLess(r["7Q10_m3s"], r["MAM7_m3s"])
+        # curba duratei e monoton descrescătoare: Q5 (debit mare) → Q99 (mic)
+        fdc = r["curba_duratei_m3s"]
+        vals = [fdc[f"Q{x}"] for x in (5, 10, 50, 70, 90, 95, 99)]
+        self.assertEqual(vals, sorted(vals, reverse=True))
+        # convenția e inversă față de percentilele din rest: Q95 < Q50
+        self.assertLess(fdc["Q95"], fdc["Q50"])
+        self.assertIn("Q95 e debit MIC", r["metoda"])
+        # varianta fără sezonul rece nu poate fi mai mică decât cea completă
+        if r["MAM7_fara_sezon_rece_m3s"] is not None:
+            self.assertGreaterEqual(r["MAM7_fara_sezon_rece_m3s"], r["MAM7_m3s"])
+        self.assertEqual(r["tip_proba"], "model_hidrologic")
+
+    def test_low_flow_refuses_a_short_record(self):
+        """O perioadă de revenire de 10 ani nu se susține din câțiva ani."""
+        smap = {}
+        base = date(2020, 4, 1)
+        for i in range(3 * 365):
+            day = base + timedelta(days=i)
+            smap[day.isoformat()] = 1000.0
+        with mock.patch.object(C, "glofas_archive", return_value={
+                "data": {"time": sorted(smap), "discharge": [smap[d] for d in sorted(smap)]}}), \
+                mock.patch.dict(C.GLOFAS_POINTS, {"probe": {"name": "Probă", "km": 0}},
+                                clear=False):
+            with self.assertRaises(RuntimeError):
+                anomalii.low_flow_indices("probe")
+
+    def test_water_year_starts_in_april(self):
+        """75% dintre minimele reale cad în dec–mar: un an calendaristic ar rupe
+        sezonul de ape mici în două."""
+        self.assertEqual(anomalii._water_year("2026-04-01"), 2026)
+        self.assertEqual(anomalii._water_year("2026-03-31"), 2025)
+        self.assertEqual(anomalii._water_year("2026-01-15"), 2025)
+        self.assertEqual(anomalii._water_year("2026-12-20"), 2026)
+
     def test_rank_refuses_a_degenerate_reference(self):
         self.assertIsNone(anomalii._rank(1.0, [1.0, 2.0]))
         self.assertIsNotNone(anomalii._rank(1.0, list(range(40))))

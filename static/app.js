@@ -1151,6 +1151,41 @@ async function renderStatistici() {
 }
 
 /* ------------------------------------------------------------ unde e apa -- */
+async function renderApeMici() {
+  const puncte = ["passau", "bazias", "gruia", "zimnicea", "cernavoda", "ceatal_izmail"];
+  const rez = await Promise.allSettled(
+    puncte.map((p) => jget(`/api/ape-mici?point=${p}`)));
+  const ok = rez.filter((r) => r.status === "fulfilled").map((r) => r.value);
+  if (!ok.length) {
+    $("tabel-ape-mici").innerHTML =
+      `<div class="err-box">Indicii de ape mici nu au putut fi calculați acum.</div>`;
+    return;
+  }
+  const rows = ok.map((r) => {
+    const f = r.curba_duratei_m3s || {};
+    // Sub 7Q10 = an hidrologic mai sever decât unul din zece, în seria modelului.
+    const sub = r.sub_7Q10_acum;
+    return `<tr>
+      <td class="name" data-label="Secțiune"><b>${r.name}</b><br><span class="table-detail">${r.ani_folositi} ani · ${r.perioada?.start}–${r.perioada?.end}</span></td>
+      <td class="num" data-label="MAM7 (m³/s)">${fmtV(r.MAM7_m3s)}<br><small>fără sezon rece ${fmtV(r.MAM7_fara_sezon_rece_m3s)}</small></td>
+      <td class="num" data-label="7Q10 (m³/s)"><b>${fmtV(r["7Q10_m3s"])}</b></td>
+      <td class="num" data-label="Minim an hidrologic curent (m³/s)">${fmtV(r.minim_an_curent_m3s)}${
+        sub === true ? `<br><span class="sev sev-sever">sub 7Q10</span>`
+        : sub === false ? `<br><span class="table-detail">peste 7Q10</span>` : ""}</td>
+      <td class="num" data-label="Q90 (m³/s)">${fmtV(f.Q90)}</td>
+      <td class="num" data-label="Q95 (m³/s)">${fmtV(f.Q95)}</td>
+      <td class="num" data-label="Q99 (m³/s)">${fmtV(f.Q99)}</td>
+    </tr>`;
+  }).join("");
+  const limite = ok[0]?.limite || "";
+  $("tabel-ape-mici").innerHTML = `<div class="scroll-x"><table class="data stack-mobile">
+    <thead><tr><th>Secțiune</th><th class="num">MAM7<br>m³/s</th><th class="num">7Q10<br>m³/s</th>
+      <th class="num">minim an curent<br>m³/s</th><th class="num">Q90<br>m³/s</th>
+      <th class="num">Q95<br>m³/s</th><th class="num">Q99<br>m³/s</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="sub m-8-0-0"><b>Limite:</b> ${limite}</p>`;
+}
+
 async function renderBilantApa() {
   let d;
   try { d = await jget("/api/bilant-apa"); }
@@ -2238,7 +2273,7 @@ const safeRun = (fn) => {
 async function refreshData() {
   [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
    renderBilantApa, renderMvMChart, renderIstoric, renderMissingData,
-   renderEdo, renderRomania].forEach(safeRun);
+   renderEdo, renderRomania, renderApeMici].forEach(safeRun);
 
   const [ovR, afdjR, hidmetR, portalR, hydroinfoR, danubehisR] = await Promise.allSettled([
     jget("/api/overview"), jget("/api/afdj"), jget("/api/hidmet"),

@@ -243,6 +243,31 @@ Secțiunea „Anomalii față de istoric" rulează verificări automate
    intrare dinspre Germania nu poate fi citit, starea rămâne „nedeterminat":
    necunoscutul nu se contorizează ca semnal.
 
+### Indici standard de ape mici
+
+Pe lângă percentilele proprii, aplicația publică indicii pe care îi folosește
+hidrologia operațională, ca metodologia ei să poată fi comparată cu practica
+(`/api/ape-mici`):
+
+- **MAM7** — media minimelor anuale ale mediei mobile pe 7 zile.
+- **7Q10** — debitul pe 7 zile cu perioadă de revenire de 10 ani (cuantila de
+  10% neîncadrare a minimelor anuale, potrivire log-normală). Verificat față de
+  estimarea empirică prin poziția Weibull: diferență sub 4% pe toate secțiunile.
+- **Curba duratei debitelor** — Q5…Q99. **Atenție la convenție:** aici Q95 e un
+  debit MIC (depășit 95% din timp), invers față de percentilele din restul
+  aplicației, unde P95 e o valoare mare.
+
+Anul hidrologic începe la **1 aprilie**, ales din date, nu din obișnuință: 75%
+dintre minimele acestei serii cad în decembrie–martie, iar un an calendaristic
+ar rupe sezonul de ape mici în două. Se publică și varianta **fără sezonul
+rece** (aprilie–noiembrie), fiindcă GloFAS nu modelează gheața, deci minimele
+lui de iarnă nu sunt comparabile cu minime măsurate afectate de zăpor —
+convenția Comisiei Dunării exclude perioadele cu gheață.
+
+Toți indicii se calculează pe serie de **model**, în regim **influențat**
+(Porțile de Fier, captări), nu natural, iar o perioadă de revenire de 10 ani e
+la limita a ce pot susține ~29 de ani.
+
 Regulă transversală: **niciun superlativ fără numitorul lui.** „Recordul zilei"
 se publică doar împreună cu numărul real de ani care conțin acea zi
 calendaristică, iar bilanțul în km³ refuză anii incompleți — o serie cu goluri ar
@@ -324,7 +349,7 @@ cache.db         cache local + arhiva zilnică (generat la rulare)
 
 ## API local
 
-`/api/health` · `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
+`/api/ape-mici?point=` · `/api/health` · `/api/overview` · `/api/afdj` · `/api/hidmet` · `/api/inhga` ·
 `/api/inhga/afluenti-dunare` ·
 `/api/danubehis/afluenti-romania` ·
 `/api/glofas/afluenti-romania` ·

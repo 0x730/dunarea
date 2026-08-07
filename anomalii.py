@@ -6,6 +6,7 @@ separarea onestă între „anormal față de istoric, dar explicabil" (secetă)
 detectoarele produc cifre verificabile, nu concluzii.
 """
 
+import math
 import threading
 from datetime import date, timedelta
 from statistics import mean, median, pstdev
@@ -152,6 +153,141 @@ def _doy_reference(smap, exclude_year, window=7):
             vals.extend(bydate[mmdds[(idx[m] + off) % n]])
         ref[m] = vals
     return bydate, ref
+
+
+# --------------------------------------- indici standard de ape mici -------
+
+# Anul hidrologic începe la 1 aprilie. NU e o convenție luată din obișnuință:
+# măsurat pe seria proprie (3 secțiuni × 29 de ani), 75% dintre minimele anuale
+# pe 7 zile cad în decembrie–martie, cu ianuarie dominant. Un an calendaristic
+# ar rupe exact sezonul de ape mici în două — minimul din decembrie și cel din
+# ianuarie următor sunt același episod, dar ar fi numărate ca doi ani diferiți.
+WATER_YEAR_START_MONTH = 4
+# Sub atâția ani compleți nu publicăm indicii: 7Q10 cere o perioadă de revenire
+# de 10 ani, iar regula uzuală e ca T să nu depășească aproximativ n/2.
+MIN_YEARS_LOW_FLOW = 20
+# Cuantila normală standard pentru 10% neîncadrare (adică T = 10 ani).
+_Z_10 = -1.2815515655446004
+
+
+def _water_year(ds):
+    """Anul hidrologic al unei date ISO (începe la 1 aprilie)."""
+    year, month = int(ds[:4]), int(ds[5:7])
+    return year if month >= WATER_YEAR_START_MONTH else year - 1
+
+
+def _moving_mean_map(smap, window):
+    """Medii mobile pe `window` zile CALENDARISTIC contigue, cheiate pe ultima zi."""
+    zile = sorted(smap)
+    out = {}
+    for i in range(window - 1, len(zile)):
+        blok = zile[i - window + 1:i + 1]
+        if (date.fromisoformat(blok[-1])
+                - date.fromisoformat(blok[0])).days != window - 1:
+            continue
+        out[blok[-1]] = sum(smap[d] for d in blok) / window
+    return out
+
+
+def low_flow_indices(point_id, window=7):
+    """MAM7, 7Q10 și curba duratei debitelor — indicii standard din practică.
+
+    Toți se calculează pe seria GloFAS, deci descriu regimul MODELULUI. Sunt
+    debite INFLUENȚATE (Porțile de Fier, captări), nu regim natural, iar o
+    perioadă de revenire de 10 ani e la limita a ce pot susține ~29 de ani.
+    """
+    smap = _series_map(C.glofas_archive(point_id, CLIM_START)["data"])
+    if not smap:
+        raise RuntimeError("serie goală")
+    cur_wy = _water_year(date.today().isoformat())
+    ma = _moving_mean_map(smap, window)
+
+    zile_pe_an = {}
+    for ds in smap:
+        wy = _water_year(ds)
+        zile_pe_an[wy] = zile_pe_an.get(wy, 0) + 1
+
+    minime, minime_calde = {}, {}
+    for ds, val in ma.items():
+        wy = _water_year(ds)
+        if wy >= cur_wy or zile_pe_an.get(wy, 0) < 364:
+            continue
+        if _mmdd(ds) == "02-29":
+            continue
+        if val < minime.get(wy, (1e18,))[0]:
+            minime[wy] = (val, ds)
+        # Varianta fără sezonul rece: convenția Comisiei Dunării exclude
+        # perioadele cu gheață când definește niveluri de referință, iar GloFAS
+        # nu modelează gheața deloc — minimele lui de iarnă nu sunt comparabile
+        # cu un minim măsurat, afectat de zăpor.
+        if 4 <= int(ds[5:7]) <= 11 and val < minime_calde.get(wy, (1e18,))[0]:
+            minime_calde[wy] = (val, ds)
+
+    ani = sorted(minime)
+    if len(ani) < MIN_YEARS_LOW_FLOW:
+        raise RuntimeError(
+            f"prea puțini ani hidrologici compleți ({len(ani)}) pentru indici de ape mici")
+
+    serie = [minime[y][0] for y in ani]
+    mam = mean(serie)
+    serie_calda = [minime_calde[y][0] for y in sorted(minime_calde)]
+
+    # 7Q10 = cuantila de 10% neîncadrare a minimelor anuale, potrivire
+    # log-normală cu 2 parametri. Fără scipy; log-normala e alegerea uzuală
+    # pentru ape mici, iar log-Pearson III ar cere și estimarea asimetriei.
+    q10 = None
+    if all(v > 0 for v in serie):
+        logs = [math.log(v) for v in serie]
+        mu, sd = mean(logs), pstdev(logs)
+        q10 = math.exp(mu + _Z_10 * sd)
+
+    # Curba duratei: Qx = debitul DEPĂȘIT x% din timp. Convenție INVERSĂ față
+    # de „percentila" din restul aplicației: Q95 e un debit MIC, percentila 95
+    # e o valoare MARE. Confuzia dintre ele e clasică.
+    ref = sorted(val for ds, val in smap.items()
+                 if _water_year(ds) < cur_wy and _mmdd(ds) != "02-29")
+    fdc = {}
+    for exc in (5, 10, 50, 70, 90, 95, 99):
+        idx = min(len(ref) - 1,
+                  max(0, int(round((100 - exc) / 100 * (len(ref) - 1)))))
+        fdc[f"Q{exc}"] = round(ref[idx], 1)
+
+    curent = [val for ds, val in ma.items() if _water_year(ds) == cur_wy]
+    min_curent = min(curent) if curent else None
+
+    return {
+        "id": point_id, "name": C.GLOFAS_POINTS[point_id]["name"],
+        "tip_proba": "model_hidrologic",
+        "sursa": "GloFAS v4 — indici calculați aici din seria modelului",
+        "an_hidrologic": "1 aprilie – 31 martie",
+        "ani_folositi": len(ani),
+        "perioada": {"start": ani[0], "end": ani[-1]},
+        f"MAM{window}_m3s": round(mam, 1),
+        f"MAM{window}_fara_sezon_rece_m3s": (
+            round(mean(serie_calda), 1)
+            if len(serie_calda) >= MIN_YEARS_LOW_FLOW else None),
+        f"{window}Q10_m3s": round(q10, 1) if q10 else None,
+        "minim_an_curent_m3s": round(min_curent, 1) if min_curent is not None else None,
+        "sub_7Q10_acum": (bool(q10 and min_curent is not None and min_curent < q10)
+                          if q10 else None),
+        "curba_duratei_m3s": fdc,
+        "minime_anuale": [{"an_hidrologic": y, "m3s": round(minime[y][0], 1),
+                           "data": minime[y][1]} for y in ani],
+        "metoda": (
+            f"MAM{window} = media minimelor anuale ale mediei mobile pe {window} "
+            f"zile; {window}Q10 = cuantila de 10% neîncadrare a acelorași minime, "
+            "potrivire log-normală; curba duratei = debitul depășit x% din timp "
+            "(Q95 e debit MIC — convenție inversă față de percentilele din restul "
+            "aplicației). Anul hidrologic începe la 1 aprilie fiindcă 75% dintre "
+            "minimele acestei serii cad în decembrie–martie."),
+        "limite": (
+            "Serie de MODEL, nu măsurători, și regim INFLUENȚAT (Porțile de Fier, "
+            "captări), nu natural. Perioada de revenire de 10 ani e la limita a ce "
+            "pot susține ~29 de ani. GloFAS nu modelează gheața, deci minimele de "
+            "iarnă nu sunt comparabile cu minime măsurate afectate de zăpor — de "
+            "aceea publicăm și varianta fără sezonul rece, mai apropiată de "
+            "convenția Comisiei Dunării pentru niveluri de referință."),
+    }
 
 
 # ------------------------------------------------- 1. climatologie puncte ---

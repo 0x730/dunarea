@@ -336,6 +336,17 @@ def api_delta(q):
     return out
 
 
+def api_low_flow(q):
+    """Indici standard de ape mici (MAM7, 7Q10, curba duratei) pe o secțiune."""
+    pid = q.get("point", ["bazias"])[0]
+    if pid not in C.GLOFAS_POINTS:
+        raise BadRequest(f"punct necunoscut: {pid}")
+    # 24 h: indicii se schimbă doar când apare o zi nouă în arhivă.
+    r = C.cached(f"lowflow:v1:{pid}", 24 * 3600,
+                 lambda: anomalii.low_flow_indices(pid))
+    return {**r["data"], "stale": r["stale"], "cache_age_s": r.get("cache_age_s")}
+
+
 def api_anomalii(q):
     r = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)
     # Vârsta reală a raportului: sinteza din capul paginii o afișa pe cea a
@@ -826,6 +837,7 @@ ROUTES = {
     "/api/delta": api_delta,
     "/api/points": api_points,
     "/api/anomalii": api_anomalii,
+    "/api/ape-mici": api_low_flow,
     "/api/inhga/serie": api_inhga_serie,
     "/api/statistici": api_statistici,
     "/api/statistici.csv": api_statistici_csv,
