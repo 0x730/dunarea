@@ -130,6 +130,10 @@ section > h2 {
 .prov-model    { border: 1px dashed rgba(137,135,129,.8); color: var(--muted); }
 .prov-calculat { border: 1px solid rgba(250,178,25,.5); color: var(--warning); }
 .prov-lipsa    { border: 1px solid rgba(208,59,59,.55); color: var(--serious); }
+/* Un raport citat nu e nici măsurătoare, nici ieșire de model, nici calcul
+   propriu. Fără o clasă a lui, documentele împrumutau eticheta „model" și
+   diluau exact vocabularul pe care se sprijină pagina. */
+.prov-document { border: 1px dotted rgba(120,160,200,.7); color: #9dbcd8; }
 
 /* -------------------------------------------------------------- sinteza */
 #sec-sinteza { margin-top: 26px; }
@@ -581,3 +585,54 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 @media (max-width: 640px) {
   .sev { white-space: normal; }
 }
+
+/* legenda vocabularului de proveniență */
+.prov-legend { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.prov-legend li { font-size: 13.5px; color: var(--muted); max-width: 78ch;
+                  display: grid; grid-template-columns: 104px 1fr; gap: 0 12px;
+                  align-items: start; }
+.prov-legend em { color: var(--ink-2); font-style: normal; font-weight: 600; }
+@media (max-width: 640px) {
+  .prov-legend li { grid-template-columns: 1fr; gap: 4px; }
+}
+
+/* Tabele cu conținut de PROZĂ pe ecran mic.
+   Derularea orizontală e potrivită pentru coloane de cifre, dar strivea
+   propozițiile la un cuvânt pe rând (istoricul operațional avea 1080px într-un
+   card de 308px). Aceleași rânduri devin fișe, cu eticheta coloanei luată din
+   `data-label` — același tipar folosit deja pentru `table.trans`. */
+@media (max-width: 640px) {
+  table.stack-mobile,
+  table.stack-mobile tbody,
+  table.stack-mobile tr,
+  table.stack-mobile td { display: block; width: 100%; }
+  table.stack-mobile thead { display: none; }
+  table.stack-mobile tr {
+    border-bottom: 1px solid var(--axis); padding: 10px 0;
+  }
+  table.stack-mobile tr:last-child { border-bottom: 0; }
+  table.stack-mobile td {
+    border: 0; padding: 3px 0; text-align: left !important; white-space: normal;
+  }
+  table.stack-mobile td[data-label]::before {
+    content: attr(data-label);
+    display: block; font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+    margin-bottom: 2px;
+  }
+  /* containerul de derulare nu mai are ce derula când rândurile sunt fișe */
+  .table-scroll:has(table.stack-mobile),
+  .scroll-x:has(table.stack-mobile) { overflow-x: visible; }
+}
+
+/* Sari la conținut — vizibil doar la focus de tastatură. */
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 100;
+  background: var(--card); color: var(--ink); padding: 10px 16px;
+  border: 1px solid var(--accent); border-radius: 0 0 4px 0;
+}
+.skip-link:focus { left: 0; }
+
+/* Intrări de nivel 2 în cuprins */
+.view-toc .toc-sub { padding-left: 14px; opacity: .82; }
+.view-toc .toc-sub::before { content: "└ "; opacity: .5; }

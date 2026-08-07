@@ -301,11 +301,12 @@ def api_entsoe(q):
 def api_delta(q):
     """Distribuția pe brațe la intrarea în deltă, din celulele GloFAS —
     validată doar dacă suma brațelor se apropie de total."""
-    out = {"puncte": {}, "distributie": None}
+    out = {"puncte": {}, "distributie": None, "stale": False}
     for pid in ("ceatal_izmail", "brat_chilia", "brat_tulcea",
                 "brat_sulina", "brat_sf_gheorghe"):
         try:
             r = C.glofas_recent(pid, past_days=10, forecast_days=0)
+            out["stale"] = out["stale"] or bool(r.get("stale"))
             latest = C._latest_valid(r["data"]["time"], r["data"]["discharge"])
             out["puncte"][pid] = {
                 "name": C.GLOFAS_POINTS[pid]["name"],
@@ -681,6 +682,10 @@ def api_missing_data(q):
               for status in ("available", "partial", "missing")}
     return {
         "generated": date.today().isoformat(),
+        # Registrul se compune din raportul România; dacă acela vine din cache,
+        # spunem asta în loc să lăsăm pagina să pară proaspătă necondiționat.
+        "stale": bool(report.get("stale")),
+        "source_generated": report.get("generated"),
         "entries": entries, "summary": counts,
         "rule": "O sursă intră în verdict numai dacă aduce o valoare comparabilă, datată și cu proveniență; catalogul sau linkul singur nu este observație.",
     }

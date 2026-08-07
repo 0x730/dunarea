@@ -10,11 +10,12 @@
         crossorigin="anonymous"></script>
 </head>
 <body>
+<a class="skip-link" href="#continut">Sari la conținut</a>
 <div class="wrap">
 
 <header class="site">
   <h1>DUNĂREA <span class="thin">· monitor din surse oficiale</span></h1>
-  <span class="km-run">km 2458 → km 0 · Ingolstadt → Sulina</span>
+  <span class="km-run">km 2379 → km 0 · Regensburg → Sulina</span>
   <div id="status-pills"></div>
 </header>
 
@@ -31,6 +32,8 @@
   </div>
 </nav>
 <nav id="view-toc" class="view-toc" aria-label="În această vedere"></nav>
+
+<main id="continut" aria-live="polite" aria-busy="true">
 
 <!-- ============================================================ sinteza -->
 <section id="sec-sinteza" data-view="acum">
@@ -96,7 +99,7 @@
   <div class="sp-22"></div>
   <div class="grid-2">
     <div class="card">
-      <h3>Praguri publicate în 2011 <span class="prov prov-calculat">reper istoric</span></h3>
+      <h3>Praguri publicate în 2011 <span class="prov prov-document">reper istoric</span></h3>
       <div id="ro-historical-thresholds"><div class="loading">se încarcă reperul documentat…</div></div>
     </div>
     <div class="card">
@@ -145,8 +148,8 @@
   <div class="card">
     <h3>Afluenți relevanți pentru sectorul românesc al Dunării
       <span class="prov prov-masurat">secțiuni măsurate</span>
-      <span class="prov prov-calculat">climatologie GloFAS</span>
-      <span class="prov prov-calculat">prognoză INHGA</span></h3>
+      <span class="prov prov-model">climatologie GloFAS</span>
+      <span class="prov prov-model">prognoză INHGA</span></h3>
     <p class="sub">Separăm ce s-a măsurat efectiv de la 1 ianuarie, raritatea
       în climatologia proprie modelului GloFAS și prognoza lunii curente.
       Selecția evită o hartă a tuturor râurilor țării și nu numără din nou
@@ -155,7 +158,7 @@
   </div>
   <div class="sp-22"></div>
   <div class="card">
-    <h3>Acumulări și restricții <span class="prov prov-masurat">ANAR · context oficial</span></h3>
+    <h3>Acumulări și restricții <span class="prov prov-document">ANAR · context oficial</span></h3>
     <div id="ro-water-resources"><div class="loading">se caută ultimul comunicat național relevant…</div></div>
   </div>
   <div class="sp-22"></div>
@@ -184,7 +187,7 @@
 <!-- ============================================== profilul longitudinal -->
 <section id="sec-profil" data-view="acum">
   <p class="eyebrow">semnătura fluviului</p>
-  <h2>Profil longitudinal — debitul de la Ingolstadt la vărsare</h2>
+  <h2>Profil longitudinal — debitul de la Regensburg la vărsare</h2>
   <p class="section-note">Fiecare punct e o stație sau o secțiune de calcul, așezată la
     kilometrul ei fluvial. Punctele pline <b>●</b> sunt măsurători oficiale
     (PEGELONLINE&nbsp;DE, Hydroinfo&nbsp;HU, RHMZ&nbsp;RS, INHGA&nbsp;RO); punctele goale <b>○</b> sunt
@@ -213,7 +216,7 @@
     Detectoarele produc cifre verificabile, nu concluzii.</p>
   <div class="card">
     <h3>Ultima stare disponibilă față de anii disponibili din 1991 încoace <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
-    <p class="sub">percentila datei observației (fereastră calendaristică ±7 zile; perioada efectivă este citită din seria sursei)</p>
+    <p class="sub">percentila valorii din ziua observației (fereastră calendaristică ±7 zile; perioada efectivă este citită din seria sursei)</p>
     <div id="anom-strip" class="anom-strip"><div class="loading">se calculează…</div></div>
     <div class="anom-scale"><span>P0 · ape mici</span><span class="g"></span><span>P100 · ape mari</span></div>
   </div>
@@ -223,7 +226,7 @@
   </div>
   <div class="sp-22"></div>
   <div class="card">
-    <h3>Măsurat vs. model, zi de zi — Baziaș, ultimele 90 de zile</h3>
+    <h3>Măsurat vs. model, zi de zi — Baziaș, ultimele 92 de zile</h3>
     <p class="sub">linia plină: debitul oficial INHGA (reconstruit automat din arhiva buletinelor)
       <span class="prov prov-masurat">măsurat</span> · linia punctată: GloFAS
       <span class="prov prov-model">model</span> — bias-ul stabil dintre ele e normal;
@@ -276,7 +279,7 @@
   <p class="eyebrow">contabilitatea</p>
   <h2>Unde e apa — bilanțul, rând cu rând</h2>
   <p class="section-note">Un screening P−Q pentru bazinul superior (deasupra Passau,
-    ~77.000 km²): precipitația aproximată din șase puncte ERA5, debitul modelat și
+    ~77.000 km²): precipitația aproximată din punctele-proxy ERA5 disponibile (6 configurate, minimum 4), debitul modelat și
     rezidualul dintre ele, toate față de aceeași fereastră istorică. Rezidualul nu este
     o măsurătoare a evaporării: amestecă evapotranspirația, zăpada și celelalte stocuri,
     schimburile neobservate și erorile de estimare.</p>
@@ -288,7 +291,7 @@
   <p class="eyebrow">ultimele observații pe stații</p>
   <h2>Cele mai recente cote și debite disponibile</h2>
   <p class="section-note">Stânga: cotele oficiale AFDJ pe sectorul românesc
-    (cote negative = sub „zero-ul mirei", nu albie secată). Dreapta: stațiile din
+    (cote negative = sub „zero-ul mirei”, nu albie secată). Dreapta: stațiile din
     Serbia (RHMZ) — ultimele înainte de Porțile de Fier — și debitele măsurate acolo.</p>
   <div class="grid-2">
     <div class="card">
@@ -298,7 +301,7 @@
     </div>
     <div class="card">
       <h3>Serbia, amonte de Porțile de Fier <span class="prov prov-masurat">măsurat</span></h3>
-      <p class="sub">RHMZ Serbia — <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">date hidrologice zilnice</a> (ora 10, locală)</p>
+      <p class="sub">RHMZ Serbia — <a href="https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php" target="_blank" rel="noopener">date hidrologice zilnice</a> (ora de observație e afișată sub tabel)</p>
       <div id="tabel-hidmet"><div class="loading">se încarcă…</div></div>
     </div>
   </div>
@@ -344,7 +347,7 @@
   <p class="eyebrow">cifrele</p>
   <h2>Statistici complete — anul curent față de istoric</h2>
   <p class="section-note">Toate secțiunile și toate zonele, în două tabele: ultima valoare disponibilă,
-    cât ar fi „normal" (mediana istorică a aceleiași zile/ferestre calendaristice) și
+    cât ar fi „normal” (mediana istorică a aceleiași zile/ferestre calendaristice) și
     unde se așază anul curent în clasamentul anilor. Se recalculează automat zilnic.
     <a href="/api/statistici.csv" download="dunarea-statistici.csv">Descarcă CSV</a> ·
     <a href="/api/statistici" target="_blank" rel="noopener">JSON</a></p>
@@ -369,7 +372,7 @@
   <p class="section-note">Aceeași apă, observată de alte sisteme: rețeaua de navigație a
     tuturor statelor riverane (cvasi-orar), dispecerul energetic național (timp real),
     altimetria și suprafața apei din satelit, starea zăpezii/solului și arhiva
-    mondială de debite măsurate. Acordul dintre ele poate
+    mondială de debite măsurate. Comparația dintre ele poate
     găsi incompatibilități evidente; nu dovedește că toate sursele sunt complete sau corecte.</p>
   <div class="grid-2">
     <div class="card">
@@ -462,8 +465,8 @@
       <h3>Volumele oficiale ale lacurilor</h3>
       <p class="sub">Planul de Management al Riscului la Inundații (PMRI) — atenție la definiții</p>
       <ul class="facts">
-        <li><span class="k">PF I — text PMRI</span><span class="v"><b>≈ 2 400</b> mil. m³ (volum brut citat)</span></li>
-        <li><span class="k">PF I — anexă, la NNR</span><span class="v"><b>1 840,1</b> mil. m³ · la NME: 1 909</span></li>
+        <li><span class="k">PF I — text PMRI</span><span class="v"><b>≈ 2.400</b> mil. m³ (volum brut citat)</span></li>
+        <li><span class="k">PF I — anexă, la NNR (nivel normal de retenție)</span><span class="v"><b>1.840,1</b> mil. m³ · la NME: 1.909</span></li>
         <li><span class="k">PF II + Gogoșu, NNR</span><span class="v"><b>773,3</b> mil. m³ · la NME: 884,8</span></li>
         <li><span class="k">volum util orar</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — necesită curba cotă–volum V=f(H) a operatorului</span></li>
       </ul>
@@ -509,10 +512,10 @@
       <h3>Bâstroe / brațul Chilia</h3>
       <p class="sub">starea datelor</p>
       <ul class="facts">
-        <li><span class="k">canal Bâstroe</span><span class="v">derivație din brațul Chilia, pe teritoriul Ucrainei; adâncit în 2004 și re-dragat din 2022 pentru coridorul de export</span></li>
+        <li><span class="k">canal Bâstroe</span><span class="v">derivație din brațul Chilia, pe teritoriul Ucrainei; adâncit în 2004 și dragat din nou din 2022 pentru coridorul de export <span class="prov prov-lipsa">notă documentară fără sursă în pagină</span></span></li>
         <li><span class="k">debit Bâstroe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> — fără măsurători ucrainene publice; se poate doar estima din bilanțul brațelor</span></li>
         <li><span class="k">distribuția pe brațe</span><span class="v"><span class="prov prov-lipsa">nepublicat</span> ca flux; există în rapoartele campaniilor INHGA/AFDJ și ale Comisiei Dunării</span></li>
-        <li><span class="k">verificabil din ultima citire</span><span class="v">cotele AFDJ pe Tulcea/Sulina oferă context de nivel; fără debite pe brațe nu pot cuantifica și nici atribui o eventuală deviere</span></li>
+        <li><span class="k">verificabil din ultima citire</span><span class="v">cotele AFDJ pe Tulcea/Sulina oferă context de nivel; fără debite pe brațe nu putem cuantifica și nici atribui o eventuală deviere</span></li>
       </ul>
     </div>
   </div>
@@ -529,12 +532,32 @@
     <a href="/api/statistici.csv" download="dunarea-statistici.csv">statistici (CSV)</a>.
     <span id="istoric-local"></span></p>
   <div class="card">
+    <h3>Vocabularul de proveniență</h3>
+    <p class="section-note">Fiecare cifră de pe site poartă unul dintre aceste marcaje.
+      Ele nu sunt decorative: spun ce fel de lucru este valoarea, iar limitele fiecărei
+      categorii sunt diferite.</p>
+    <ul class="prov-legend">
+      <li><span class="prov prov-masurat">măsurat</span> observație instrumentală la o
+        stație sau de pe orbită, publicată de operatorul ei.</li>
+      <li><span class="prov prov-model">model</span> ieșirea unui model numeric (GloFAS,
+        LISFLOOD) sau a unei reanalize (ERA5). Se compară cu istoricul <em>aceluiași</em>
+        model, niciodată cu o măsurătoare, ca și cum ar fi aceeași mărime.</li>
+      <li><span class="prov prov-calculat">calculat</span> derivat aici, din valorile de
+        mai sus, după o rețetă scrisă în acest tabel.</li>
+      <li><span class="prov prov-document">document</span> afirmație preluată dintr-un
+        raport sau comunicat oficial datat — nu o serie de date și nu o măsurătoare
+        proprie.</li>
+      <li><span class="prov prov-lipsa">nepublicat</span> valoarea nu apare în niciun flux
+        public identificat; spunem unde s-ar putea cere.</li>
+    </ul>
+  </div>
+  <div class="card">
     <table class="trans">
       <thead><tr><th>Verificarea</th><th>Surse folosite</th><th>Metodă și referință</th><th>Limite cunoscute</th></tr></thead>
       <tbody>
         <tr><td class="what">Regim hidrologic (14 secțiuni)</td>
           <td>GloFAS/Copernicus</td>
-          <td>percentila empirică în fereastra calendaristică ±7 zile; perioada efectivă a seriei este publicată în JSON; serii „zile&lt;P10"</td>
+          <td>percentila empirică în fereastra calendaristică ±7 zile; perioada efectivă a seriei este publicată în JSON; serii „zile&lt;P10”</td>
           <td>model, nu măsurătoare; biasul absolut față de mire diferă pe secțiuni, iar comparația validă este cu istoricul aceluiași model</td></tr>
         <tr><td class="what">Bilanț Baziaș → Gruia</td>
           <td>GloFAS (2 secțiuni)</td>
@@ -608,7 +631,7 @@
     afișată mai sus.</p>
 
   <div class="card">
-    <h3>Repere istorice — cu anul și limita lor</h3>
+    <h3 id="opt-repere">Repere istorice — cu anul și limita lor</h3>
     <p class="sub">Luncile conectate pot reține temporar apa, favoriza infiltrarea și susține
       ecosistemele. Contribuția lor la debitele de secetă este însă locală și nu este
       cuantificată de această pagină.</p>
@@ -617,7 +640,7 @@
       <tbody>
         <tr>
           <td class="what">Îndiguirea luncii românești
-            <br><span class="prov prov-model">inventar istoric</span></td>
+            <br><span class="prov prov-document">inventar istoric</span></td>
           <td><b>10.200 ha</b> îndiguite în 1949, <b>395.000 ha</b> în 1969 și un maxim de
             <b>430.000 ha</b> în 1987, echivalent cu 84% din lunca românească în inventarul citat.</td>
           <td>„Îndiguit” nu înseamnă automat că întreaga suprafață a fost desecată, cultivată
@@ -627,7 +650,7 @@
         </tr>
         <tr>
           <td class="what">Lunci la scara bazinului
-            <br><span class="prov prov-model">evaluare ~1999</span></td>
+            <br><span class="prov prov-document">evaluare ~1999</span></td>
           <td>O evaluare ICPDR publicată în 1999 inventaria <b>41.605 km²</b> de lunci istorice
             și <b>7.845 km²</b> existente atunci. Documentele ICPDR mai recente identifică
             <b>144.659 ha</b> cu potențial de reconectare, dintre care <b>23.399 ha</b> planificate
@@ -655,7 +678,7 @@
   <div class="sp-22"></div>
 
   <div class="card">
-    <h3>Opțiuni — dovadă, limită și test de rezultat</h3>
+    <h3 id="opt-optiuni">Opțiuni — dovadă, limită și test de rezultat</h3>
     <p class="sub">Acestea sunt direcții de lucru, nu promisiuni de debit. Ordinea nu este un
       clasament cost–beneficiu; evaluările disponibile nu sunt comparabile între ele.<br><br>
       <b>Ordinea de decizie recomandată de Comisia Europeană în 2025:</b> reducerea consumului,
@@ -764,7 +787,7 @@
   <div class="sp-22"></div>
 
   <div class="card">
-    <h3>Proiecte — ultimul stadiu oficial pe care îl putem demonstra</h3>
+    <h3 id="opt-proiecte">Proiecte — ultimul stadiu oficial pe care îl putem demonstra</h3>
     <p class="sub">„Aprobat”, „în achiziție”, „în execuție” și „livrat” sunt stadii diferite.
       Dacă sursa nu dovedește trecerea dintre ele, pagina nu o presupune.</p>
     <table class="trans">
@@ -786,7 +809,7 @@
           <td>Acord semnat în 2000 de România, Bulgaria, Ucraina și Republica Moldova. Studiul
             de caz AEM, creat în 2020, consemna restaurare în curs pe peste 60.000 ha la nivelul
             coridorului inferior.</td>
-          <td><span class="prov prov-model">stadiu public datat 2020</span><br>
+          <td><span class="prov prov-document">stadiu public datat 2020</span><br>
             „În curs” nu este echivalent cu „finalizat”, iar sursa nu oferă aici un total 2026.</td>
           <td><a href="https://climate-adapt.eea.europa.eu/ro/metadata/case-studies/lower-danube-green-corridor-floodplain-restoration-for-flood-protection" target="_blank" rel="noopener">Climate-ADAPT (AEM)</a></td>
         </tr>
@@ -943,7 +966,7 @@
         <a href="https://m.bvb.ro/infocont/infocont26/H2O_20260514191051_H2O-EN-Q1-2026-Report.pdf" target="_blank" rel="noopener">raportul Hidroelectrica T1 2026, p. 18–21 (BVB)</a>.</p>
     </details>
     <div class="sp-26"></div>
-    <h3 class="mb-2">Ce poate adăuga reziliență la secetă — și ce nu</h3>
+    <h3 id="opt-rezilienta" class="mb-2">Ce poate adăuga reziliență la secetă — și ce nu</h3>
     <p class="sub">Numele „hidrocentrală” nu este suficient. Evaluarea trebuie făcută după
       configurația hidraulică, volumul util și regula reală de exploatare.</p>
     <table class="trans">
@@ -1035,9 +1058,11 @@
   </div>
 </section>
 
+</main>
+
 <footer>
   <p class="public-disclaimer"><b>Monitor independent, neoficial.</b> Autorul nu este hidrolog;
-  aplicația agregă surse publice și arată separat măsurători, modele, calcule, date și limite.
+  aplicația agregă surse publice și arată separat măsurători, modele, calcule, date lipsă și limite.
   Metoda, codul și corecțiile sunt publice pe
   <a href="https://github.com/0x730/dunarea" target="_blank" rel="noopener">GitHub</a>, iar erorile pot fi
   <a href="https://github.com/0x730/dunarea/issues" target="_blank" rel="noopener">semnalate public</a>.

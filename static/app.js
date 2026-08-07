@@ -7,13 +7,23 @@ const $ = (id) => document.getElementById(id);
 const fmtN = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1 });
 const fmt2 = new Intl.NumberFormat("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// „Azi” în ora României, ca peste tot în aplicație. Decupajul în UTC tăia
+// tăcut cea mai nouă zi de model între miezul nopții local și 02:00/03:00.
+const aziRo = () => new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Europe/Bucharest",
+}).format(new Date());
+
 const fmtRomaniaDateTime = (value) => {
   if (!value) return "dată lipsă";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
+  // O valoare doar-dată („2026-08-07”) e parsată ca miezul nopții UTC, iar
+  // formatarea cu oră inventa „03:00” pentru ceva ce nu are componentă de oră.
+  const doarData = /^\d{4}-\d{2}-\d{2}$/.test(String(value).trim());
   return `${new Intl.DateTimeFormat("ro-RO", {
-    timeZone: "Europe/Bucharest", dateStyle: "short", timeStyle: "short",
-  }).format(parsed)} · ora României`;
+    timeZone: "Europe/Bucharest", dateStyle: "short",
+    ...(doarData ? {} : { timeStyle: "short" }),
+  }).format(parsed)}${doarData ? "" : " · ora României"}`;
 };
 
 /* ---------------------------------------- vederi și navigație internă -- */
@@ -56,13 +66,19 @@ function showView(view, historyMode = null, scrollTop = false, preserveHash = fa
   });
 
   const toc = $("view-toc");
-  const headings = [...document.querySelectorAll(`section[data-view="${view}"] > h2`)];
+  // Titlurile de nivel 2 dau structura, dar unele vederi au un singur h2
+  // peste mii de pixeli (Opțiuni: 5 blocuri sub un titlu). Includem și h3-urile
+  // care au ancoră proprie, ca fiecare bloc lung să fie accesibil din cuprins.
+  const headings = [...document.querySelectorAll(
+    `section[data-view="${view}"] > h2, section[data-view="${view}"] h3[id]`)];
   // Construit prin DOM, nu prin innerHTML: textContent-ul unui titlu deja
   // randat e text DEZESCAPAT, iar reinjectarea lui ar executa HTML străin.
   toc.replaceChildren(...headings.map((heading) => {
     const link = document.createElement("a");
-    link.href = `#${heading.parentElement.id}`;
+    const target = heading.id || heading.parentElement.id;
+    link.href = `#${target}`;
     link.textContent = heading.textContent.trim();
+    if (heading.tagName === "H3") link.className = "toc-sub";
     return link;
   }));
   document.title = `Dunărea — ${VIEW_LABELS[view]}`;
@@ -122,13 +138,13 @@ function sanitize(x) {
 }
 const fmtV = (v, f = fmtN) => (v == null || Number.isNaN(v) ? "–" : f.format(v));
 
-// Pluralul românesc pentru zile: 1 zi · 2–19 zile · 20+ „de zile".
+// Pluralul românesc pentru zile: 1 zi · 2–19 zile · 20+ „de zile”.
 // Data observației, scurtă. Panourile primeau data în payload și n-o afișau:
 // o cifră fără ziua ei pare curentă chiar și când sursa a înghețat.
 const obsData = (v) => {
   if (typeof v !== "string" || v.length < 10) return "–";
   const zi = v.slice(0, 10);
-  return zi === new Date().toLocaleDateString("sv-SE") ? zi.slice(5) : zi;
+  return zi === aziRo() ? zi.slice(5) : zi;
 };
 
 const zileRo = (n) => {
@@ -139,7 +155,7 @@ const zileRo = (n) => {
 };
 
 // Putere nominală a celor două unități CANDU-6 de la Cernavodă. E o constantă
-// de proiect (nameplate), nu o măsurătoare, iar pragul „o singură unitate" se
+// de proiect (nameplate), nu o măsurătoare, iar pragul „o singură unitate” se
 // derivă din ea — altfel cele două cifre pot ajunge să se contrazică.
 const CNE_NAMEPLATE_MW = 1300;
 const CNE_ONE_UNIT_MAX_MW = Math.round(CNE_NAMEPLATE_MW * 0.77);
@@ -207,12 +223,22 @@ const YEAR_RAMP = ["#b7d3f6", "#6da7ec", "#2a78d6", "#184f95"]; // an curent →
 const BLUE = "#3987e5", ORANGE = "#d95926";
 
 function baseOpt() {
+  // Pe ecran îngust, legenda se rupea pe două rânduri și acoperea numele axei
+  // și prima etichetă, iar marginile fixe mâncau ~45% dintr-un grafic de 308px.
+  const ingust = window.innerWidth < 640;
   return {
     backgroundColor: "transparent",
     aria: { enabled: true, decal: { show: true } },
     textStyle: { fontFamily: "system-ui, sans-serif", color: INK2 },
-    grid: { left: 58, right: 80, top: 42, bottom: 34 },
-    legend: { top: 4, textStyle: { color: MUTED, fontSize: 12 }, itemWidth: 16, itemHeight: 9, inactiveColor: "#4a4a47" },
+    grid: ingust
+      ? { left: 46, right: 14, top: 72, bottom: 30 }
+      : { left: 58, right: 80, top: 42, bottom: 34 },
+    legend: {
+      top: 4, textStyle: { color: MUTED, fontSize: ingust ? 11 : 12 },
+      itemWidth: 16, itemHeight: 9, inactiveColor: "#4a4a47",
+      ...(ingust ? { type: "scroll", pageIconColor: MUTED,
+                     pageTextStyle: { color: MUTED } } : {}),
+    },
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "cross", label: { backgroundColor: "#212120", color: INK2, fontFamily: MONO, fontSize: 11 }, crossStyle: { color: AXIS }, lineStyle: { color: AXIS } },
@@ -224,7 +250,11 @@ function baseOpt() {
       type: "category", boundaryGap: false,
       axisLine: { lineStyle: { color: AXIS } },
       axisTick: { show: false },
-      axisLabel: { color: MUTED, fontFamily: MONO, fontSize: 11 },
+      axisLabel: {
+        color: MUTED, fontFamily: MONO, fontSize: ingust ? 10 : 11,
+        // fără rărire, cele 12 luni se lipeau în „febnaapmaiuniul…"
+        ...(ingust ? { interval: "auto", hideOverlap: true } : {}),
+      },
     },
     yAxis: {
       type: "value",
@@ -288,7 +318,9 @@ const RS_KM = {
 
 function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   const W = 1000, H = 250, X0 = 14, X1 = 990, Y0 = 196, YTOP = 30;
-  const KM_MAX = 2500;
+  // Scala pornește de la cel mai amonte punct al transectului modelat
+  // (Regensburg, km 2379), nu de la o limită rotundă mai mare decât el.
+  const KM_MAX = 2400;
   const x = (km) => X0 + ((KM_MAX - km) / KM_MAX) * (X1 - X0);
   const QMIN = 40, QMAX = 7000;
   const y = (q) => {
@@ -476,7 +508,7 @@ function renderHidmetTable(h) {
     <thead><tr><th>Stație</th><th class="num">nivel cm</th><th class="num">24 h</th><th class="num">Q m³/s</th><th class="num">apă</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <p class="sub m-8-0-0">Observație: <b>${h.data || "dată neidentificată"}</b>${h.observation_time ? ` · ${h.observation_time}` : ""}.
-      „·" = debitul nu se publică pentru stația respectivă.${h.transport_verified === false
+      „·” = debitul nu se publică pentru stația respectivă.${h.transport_verified === false
         ? `<br><span class="down">Limită de integritate:</span> ${h.transport_warning}` : ""}</p>`;
 }
 
@@ -486,18 +518,18 @@ async function renderAvize() {
     const d = await jget("/api/avize");
     const prio = d.avize.filter((a) => a.prioritar && ["RO", "BG"].includes(a.tara)).slice(0, 10);
     const rows = prio.map((a) => `
-      <tr><td class="name">${a.tara} · ${a.motiv}${a.limitari?.length
+      <tr><td class="name" data-label="Aviz">${a.tara} · ${a.motiv}${a.limitari?.length
           ? ` <span class="prov prov-calculat">${a.limitari.map((l) => `${l.cod} ${l.valoare}${l.unitate || ""}`).join(", ")}</span>` : ""}</td>
-        <td class="num">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
-        <td class="detail-sm">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
-        <td class="num">${a.din || ""}</td></tr>`).join("");
-    $("tabel-avize").innerHTML = `<div class="table-scroll"><table class="data">
+        <td class="num" data-label="Sector">${a.km_de_la != null ? `km ${fmt1.format(a.km_de_la)}${a.km_pana_la != null && a.km_pana_la !== a.km_de_la ? "–" + fmt1.format(a.km_pana_la) : ""}` : (a.rau || "")}</td>
+        <td class="detail-sm" data-label="Conținut">${(a.text || "").slice(0, 150)}${(a.text || "").length > 150 ? "…" : ""}</td>
+        <td class="num" data-label="Din">${a.din || ""}</td></tr>`).join("");
+    $("tabel-avize").innerHTML = `<div class="table-scroll"><table class="data stack-mobile">
       <thead><tr><th>Aviz</th><th class="num">sector</th><th>conținut</th><th class="num">din</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4" class="name">niciun aviz prioritar activ pe sectorul RO/BG</td></tr>`}</tbody></table>
       <p class="sub m-8-0-0">${d.active} avize active pe tot fluviul ·
         ${Object.entries(d.pe_tari).map(([t, n]) => `${t}:${n}`).join(" ")} ·
         afișate: cele prioritare (niveluri scăzute, restricții, dragaje, obstacole) de pe sectorul RO/BG ·
-        sursă: rețeaua DanubeSTREAM, standard „Notices to Skippers"</p></div>`;
+        sursă: rețeaua DanubeSTREAM, standard „Notices to Skippers”</p></div>`;
   } catch (e) {
     $("tabel-avize").innerHTML = `<div class="err-box">Avizele nu au putut fi încărcate.</div>`;
   }
@@ -645,7 +677,7 @@ async function renderPFChart() {
       jget("/api/glofas/recent?point=bazias&days=90"),
       jget("/api/glofas/recent?point=gruia&days=90"),
     ]);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = aziRo();
     const idx = ba.time.filter((t) => t <= today);
     const gmap = Object.fromEntries(gr.time.map((t, i) => [t, gr.discharge[i]]));
     const bmap = Object.fromEntries(ba.time.map((t, i) => [t, ba.discharge[i]]));
@@ -730,7 +762,7 @@ async function renderDelta(afdj) {
     if (d.distributie?.valid) {
       rows.push(li("Chilia / Tulcea", `<b>${d.distributie.chilia_pct}%</b> / <b>${d.distributie.tulcea_pct}%</b> <span class="prov prov-calculat">calculat</span> din model`));
     } else {
-      rows.push(li("împărțirea pe brațe", `<span class="prov prov-lipsa">necalculabil onest</span> — modelul rutează tot debitul pe o singură celulă la bifurcație; verificarea automată a respins rezultatul`));
+      rows.push(li("împărțirea pe brațe", `<span class="prov prov-lipsa">nu se poate calcula onest</span> — modelul rutează tot debitul pe o singură celulă la bifurcație; verificarea automată a respins rezultatul`));
     }
     rows.push(li("reper istoric", `campaniile de măsurători au arătat de-a lungul timpului Chilia ≈ 50–58%, Tulcea ≈ 42–50% (în scădere pe Chilia, de la deceniu la deceniu) — a se citi rapoartele INHGA / Comisia Dunării, nu ca valoare de azi`));
     $("delta-intrare").innerHTML = rows.join("");
@@ -741,7 +773,7 @@ async function renderDelta(afdj) {
   const rows2 = (afdj?.statii || [])
     .filter((s) => want.includes(s.statie))
     .map((s) => li(s.statie + ` · km ${fmtV(s.km)}`,
-      `cotă <b>${fmtV(s.cota_cm)} cm</b> (${arrow(s.variatie_cm)})${s.temp_apa_c != null ? ` · apă ${fmt1.format(s.temp_apa_c)}°C` : ""}`));
+      `cotă <b>${fmtV(s.cota_cm)} cm</b> (${arrow(s.variatie_cm)})${s.temp_apa_c != null ? ` · apă ${fmt1.format(s.temp_apa_c)} °C` : ""} · observat ${obsData(s.actualizat)}`));
   $("delta-cote").innerHTML = rows2.join("") ||
     li("stare", "AFDJ indisponibil momentan");
 }
@@ -1050,7 +1082,7 @@ async function renderStatistici() {
         <td class="num">${b(r.ultimele90).pct != null ? "P" + fmt1.format(r.ultimele90.pct) : "–"}</td></tr>`).join("")}
     </tbody></table>
     <p class="sub m-8-0-0">date până la ${d.precipitatii[0]?.pana_la || "–"} (ERA5 are câteva zile întârziere) ·
-      „ani mai uscați" = câți ani din referință au avut mai puțină apă în aceeași fereastră ·
+      „ani mai uscați” = câți ani din referință au avut mai puțină apă în aceeași fereastră ·
       ninsoare = suma ERA5 în cm de zăpadă proaspătă, nu stratul rămas pe sol și nu rezerva de apă din zăpadă</p></div>`;
 }
 
@@ -1111,7 +1143,7 @@ async function renderBilantApa() {
         ${row("② Debit modelat la Passau", b.rau_passau_km3, b.rau_normal_km3, "#6da7ec",
               "GloFAS, cumulat")}
         ${row("③ Rezidual P−Q", b.atmosfera_sol_km3, b.atmosfera_sol_normal_km3, "#898781",
-              "ET + stocuri + schimburi + erori")}
+              "evapotranspirație + stocuri + schimburi + erori")}
       </tbody></table></div>
     <p class="sub m-12-0-0">${(() => {
       const dP = b.ploaie_km3 - b.ploaie_normal_km3;
@@ -1356,7 +1388,7 @@ async function renderMvMChart() {
       jget("/api/glofas/recent?point=bazias&days=92"),
     ]);
     if (!of.serie?.length) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = aziRo();
     const days = mo.time.filter((t) => t <= today);
     const oMap = Object.fromEntries(of.serie.map((r) => [r.date, r.debit_m3s]));
     // Ambele serii se caută DUPĂ DATĂ. Indexarea pozițională într-o listă deja
@@ -1417,7 +1449,7 @@ async function renderSinteza(inhga) {
 
     // regimul se alege din date — aceeași sinteză trebuie să fie corectă și
     // la secetă, și la normal, și la ape mari; iar FĂRĂ percentile nu se
-    // declară niciun regim (altfel am declara „record" pe date lipsă)
+    // declară niciun regim (altfel am declara „record” pe date lipsă)
     if (!pcts.length) {
       chips.push(`<span class="sev sev-info">percentile indisponibile</span>`);
       parts.push(`Percentilele climatologice nu sunt disponibile momentan —
@@ -1460,7 +1492,7 @@ async function renderSinteza(inhga) {
     let bilTxt;
     if (pct >= 5) {
       bilTxt = `${volTxt} — <b>deficit ${fmt1.format(lipsa)} km³ (${pct}%)</b>${dP > 0
-          ? `. Screeningul cu șase puncte ERA5 estimează și un deficit de precipitații de <b>${fmt1.format(dP)} km³</b> în bazinul superior` : ""}.
+          ? `. Screeningul pe punctele-proxy ERA5 estimează și un deficit de precipitații de <b>${fmt1.format(dP)} km³</b> în bazinul superior` : ""}.
         Cele două semnale sunt compatibile, dar această aproximație nu atribuie singură cauza.`;
     } else if (pct <= -5) {
       bilTxt = `Volumele: ${volTxt} — <b>un plus de ${fmt1.format(-lipsa)} km³ (${-pct}%)</b>${dP < 0
@@ -1516,7 +1548,7 @@ async function renderSinteza(inhga) {
     } else if (checks.length) {
       chips.push(`<span class="sev sev-atentie">de investigat: ${rele.map((c) => c.nume).join(", ")}</span>`);
       parts.push(`Atenție: <b>${rele.length} ${rele.length === 1 ? "verificare" : "verificări"} în afara limitelor</b> —
-        ${rele.map((c) => c.nume).join(", ")} — detaliile în secțiunea „Detectorul".`);
+        ${rele.map((c) => c.nume).join(", ")} — detaliile în secțiunea „Detectorul”.`);
     }
     checksHtml = "";
   }
@@ -1707,7 +1739,7 @@ async function renderRomania() {
 
   const operationRows = d.cernavoda?.operational_history || [];
   $("ro-operational-history").innerHTML = operationRows.length ? `
-    <table class="data ro-operational-table">
+    <table class="data ro-operational-table stack-mobile">
       <thead><tr><th>An / data probei</th><th>Context documentat</th><th>Acțiunea CNE</th><th>Ce putem conchide</th><th>Sursă și acoperire</th></tr></thead>
       <tbody>${operationRows.map((row) => {
         const source = row.source?.url
@@ -1742,8 +1774,8 @@ async function renderRomania() {
         const gaugeForecast = (gauge.forecast || []).map((item) =>
           `${item.hours} h: <b>${fmtN.format(item.value_cm)} cm</b>`).join(" · ");
         return `<tr${row.current ? ` class="current-year"` : ""}>
-          <td class="name">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
-          <td>${row.hydrology}
+          <td class="name" data-label="An / data probei">${row.year}${row.current ? " · acum" : ""}<br><span class="table-detail">${row.reference_date || "dată neprecizată"}</span></td>
+          <td data-label="Context documentat">${row.hydrology}
             <div class="episode-gauge"><span class="prov prov-masurat">miră măsurată · ${gauge.period || "perioadă neprecizată"}</span><br>
               ${gaugeSummary}${gaugeForecast ? `<br><span class="prov prov-calculat">prognoză AFDJ</span> ${gaugeForecast}` : ""}<br><span class="table-detail">${gaugeSource}<br>${gauge.source_scope || "acoperire neprecizată"}<br>${gauge.limit || "cotă locală; nu este nivelul bazinului CNE"}</span>
             </div>
@@ -1751,9 +1783,9 @@ async function renderRomania() {
               ${flowSummary}<br><span class="table-detail">${flow.basis || ""}${flow.complete === false ? ` · acoperire ${flow.days_available || 0}/${flow.days_expected || "?"} zile` : ""}<br>${flow.limit || "debit modelat, nu măsurare la priza CNE"}</span>
             </div>
           </td>
-          <td>${roOperationChip(row.classification)}<br><span class="table-detail">${row.plant_action}</span></td>
-          <td>${row.interpretation}</td>
-          <td>${source}<br><span class="table-detail">${row.source_scope || "acoperire neprecizată"}</span></td>
+          <td data-label="Acțiunea CNE">${roOperationChip(row.classification)}<br><span class="table-detail">${row.plant_action}</span></td>
+          <td data-label="Ce putem conchide">${row.interpretation}</td>
+          <td data-label="Sursă și acoperire">${source}<br><span class="table-detail">${row.source_scope || "acoperire neprecizată"}</span></td>
         </tr>`;
       }).join("")}</tbody>
     </table>` : `<div class="err-box">istoricul operațional nu este disponibil</div>`;
@@ -2000,6 +2032,33 @@ function missingStatusChip(status) {
   return `<span class="sev sev-${style}">${label}</span>`;
 }
 
+// Cheile vin din API în engleză; valorile erau deja localizate, deci
+// interfața amesteca „sufficient for centralized supply: da”. Ce nu e în hartă
+// rămâne la comportamentul de dinainte, ca o cheie nouă să nu dispară.
+const REGISTER_KEYS = {
+  published: "publicat", age_days: "vechime (zile)", current: "curent",
+  reservoir_count: "număr lacuri", fill_pct: "coeficient umplere (%)",
+  volume_billion_m3: "volum (mld. m³)",
+  sufficient_for_centralized_supply: "suficient pentru alimentare centralizată",
+  drinking_water: "restricții apă potabilă",
+  decision_reproducible: "decizie reproductibilă",
+  decision_parameters: "parametri de decizie",
+  public_signals: "semnale publice",
+  measured_sections: "secțiuni măsurate",
+  measured_systems_target: "sisteme măsurate țintă",
+  missing_systems: "sisteme fără secțiune publică",
+  national_hydro_mw: "hidro național (MW)",
+  entsoe_unit_generation_active: "producție pe unități ENTSO-E",
+  glofas_balance_is_model_only: "bilanț GloFAS doar din model",
+  copernicus_mode: "mod Copernicus",
+  satellite_downloads_configured: "descărcări satelitare configurate",
+  days: "zile", minimum_days: "zile minime", sections_available: "secțiuni disponibile",
+  delivery_date: "data livrării", available_components: "componente disponibile",
+  cernavoda_bala_caveat: "avertisment brațul Bala",
+  parameter_transparency: "transparența parametrilor",
+};
+const registerKey = (k) => REGISTER_KEYS[k] || String(k).replaceAll("_", " ");
+
 function registerValue(value) {
   if (value == null || value === "") return "–";
   if (typeof value === "boolean") return value ? "da" : "nu";
@@ -2037,13 +2096,13 @@ async function renderMissingData() {
       <dl class="register-facts">
         <dt>De ce ajută</dt><dd>${entry.why || "–"}</dd>
         <dt>Ce trebuie</dt><dd>${entry.need || "–"}</dd>
-        <dt>Ce avem</dt><dd>${values.length ? values.map(([key, value]) => `<span><b>${key.replaceAll("_", " ")}:</b> ${registerValue(value)}</span>`).join("") : "nimic comparabil încă"}</dd>
+        <dt>Ce avem</dt><dd>${values.length ? values.map(([key, value]) => `<span><b>${registerKey(key)}:</b> ${registerValue(value)}</span>`).join("") : "nimic comparabil încă"}</dd>
         <dt>Ce lipsește</dt><dd>${entry.gap || "–"}</dd>
         <dt>Surse verificate</dt><dd>${sources.length ? sources.map((source) => `${srcLink(source.url, source.label || source.url)}${source.coverage ? `<small>${source.coverage}</small>` : ""}`).join("") : "nicio adresă publică stabilă"}</dd>
       </dl>
     </article>`;
   }).join("")}</div>`;
-  pill("Date lipsă", "ok");
+  pill("Date lipsă", d.stale ? "stale" : "ok");
 }
 
 /* ---------------------------------------------------------------- main -- */
@@ -2069,6 +2128,10 @@ async function main() {
   safeRun(renderEdo);
   safeRun(renderRomania);
   // fluxul continuu: zona de date se recompune singură la 5 minute
+  // Panourile se umplu asincron; anunțăm cititorii de ecran când s-a terminat
+  // prima rundă, în loc să lăsăm `aria-busy` pornit la nesfârșit.
+  const main = document.getElementById("continut");
+  if (main) main.setAttribute("aria-busy", "false");
   setInterval(refreshData, 5 * 60 * 1000);
 }
 
@@ -2091,7 +2154,7 @@ const safeRun = (fn) => {
   // Izolarea rămâne — un panou stricat nu are voie să doboare pagina — dar
   // eșecul se RAPORTEAZĂ. Un catch complet mut a ascuns un ReferenceError care
   // ținea graficul principal negenerat, iar o verificare headless a raportat
-  // „0 erori JS" tocmai pentru că nimeni nu scria nimic.
+  // „0 erori JS” tocmai pentru că nimeni nu scria nimic.
   const boom = (e) => console.error(`[panou] ${fn.name || "anonim"}:`, e);
   try {
     const p = fn();
