@@ -318,9 +318,11 @@ const RS_KM = {
 
 function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   const W = 1000, H = 250, X0 = 14, X1 = 990, Y0 = 196, YTOP = 30;
-  // Scala pornește de la cel mai amonte punct al transectului modelat
-  // (Regensburg, km 2379), nu de la o limită rotundă mai mare decât el.
-  const KM_MAX = 2400;
+  // Scala se calculează DUPĂ ce știm ce puncte avem: o limită fixă mai mică
+  // decât cea mai amonte miră o desena la x negativ, adică în afara pânzei,
+  // în tăcere. (Mira Ingolstadt e la km 2458, mai sus decât orice secțiune
+  // de model, care începe la Regensburg, km 2379.)
+  let KM_MAX = 2500;
   const x = (km) => X0 + ((KM_MAX - km) / KM_MAX) * (X1 - X0);
   const QMIN = 40, QMAX = 7000;
   const y = (q) => {
@@ -389,6 +391,10 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   });
 
   model.sort((a, b) => b.km - a.km);
+  const kmMaxim = Math.max(
+    0, ...[...model, ...measured, ...ticks].map((p) => p.km).filter(Number.isFinite));
+  // rotunjire în sus la 50 km, ca eticheta cea mai amonte să nu atingă marginea
+  if (kmMaxim > 0) KM_MAX = Math.max(2500, Math.ceil((kmMaxim + 20) / 50) * 50);
   const linePts = model.map((p) => `${x(p.km).toFixed(1)},${y(p.q).toFixed(1)}`).join(" ");
 
   const kmAxis = [2400, 2000, 1600, 1200, 800, 400, 0];
@@ -420,16 +426,22 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
 
   // mire doar-nivel
   ticks.forEach((t, i) => {
-    svg += `<line class="pf-tick" data-i="t${i}" x1="${x(t.km)}" y1="${Y0 - 7}" x2="${x(t.km)}" y2="${Y0}" stroke="${MUTED}" stroke-width="2" opacity="0.7" class="crosshair"/>`;
+    svg += `<line class="pf-tick crosshair" data-i="t${i}" tabindex="0" role="button"`
+      + ` aria-label="${t.name}, km ${fmtN.format(t.km)}, ${t.info}, ${t.src}"`
+      + ` x1="${x(t.km)}" y1="${Y0 - 7}" x2="${x(t.km)}" y2="${Y0}" stroke="${MUTED}" stroke-width="2" opacity="0.7"/>`;
   });
 
   // linia modelului + punctele
   if (linePts) svg += `<polyline points="${linePts}" fill="none" stroke="${BLUE}" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.75"/>`;
   model.forEach((p, i) => {
-    svg += `<circle class="pf-pt" data-i="m${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="4.5" fill="#1a1a19" stroke="${BLUE}" stroke-width="1.8" class="crosshair"/>`;
+    svg += `<circle class="pf-pt crosshair" data-i="m${i}" tabindex="0" role="button"`
+      + ` aria-label="${p.name}, km ${fmtN.format(p.km)}, debit modelat aproximativ ${fmtN.format(p.q)} metri cubi pe secundă, ${p.src}"`
+      + ` cx="${x(p.km)}" cy="${y(p.q)}" r="4.5" fill="#1a1a19" stroke="${BLUE}" stroke-width="1.8"/>`;
   });
   measured.forEach((p, i) => {
-    svg += `<circle class="pf-pt" data-i="M${i}" cx="${x(p.km)}" cy="${y(p.q)}" r="5" fill="${BLUE}" stroke="#1a1a19" stroke-width="1.5" class="crosshair"/>`;
+    svg += `<circle class="pf-pt crosshair" data-i="M${i}" tabindex="0" role="button"`
+      + ` aria-label="${p.name}, km ${fmtN.format(p.km)}, debit măsurat ${fmtN.format(p.q)} metri cubi pe secundă, ${p.src}"`
+      + ` cx="${x(p.km)}" cy="${y(p.q)}" r="5" fill="${BLUE}" stroke="#1a1a19" stroke-width="1.5"/>`;
   });
   svg += `</svg>`;
   $("profil-holder").innerHTML = svg;
@@ -444,19 +456,44 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
     const t = ticks[idx]; return { n: t.name, rows: [t.info], src: t.src + " · măsurat", km: t.km };
   };
   const box = $("profil-holder").parentElement;
+
+  const arata = (el, clientX, clientY) => {
+    const d = tipData(el.dataset.i);
+    tip.innerHTML = `<div class="t-name">${d.n}</div>` +
+      d.rows.map((r) => `<div class="t-row">${r}</div>`).join("") +
+      `<div class="t-row">km ${fmtN.format(d.km)}</div><div class="t-src">${d.src}</div>`;
+    const r = box.getBoundingClientRect();
+    tip.style.display = "block";
+    // La focus de tastatură nu există pointer: ancorăm caseta pe element.
+    if (clientX == null) {
+      const b = el.getBoundingClientRect();
+      clientX = b.left + b.width / 2;
+      clientY = b.bottom;
+    }
+    tip.style.left = Math.max(0, Math.min(clientX - r.left + 14, r.width - 200)) + "px";
+    tip.style.top = Math.min(clientY - r.top + 14, r.height - 20) + "px";
+  };
+  const ascunde = () => { tip.style.display = "none"; };
+
   box.querySelectorAll(".pf-pt, .pf-tick").forEach((el) => {
-    el.addEventListener("mousemove", (ev) => {
-      const d = tipData(el.dataset.i);
-      tip.innerHTML = `<div class="t-name">${d.n}</div>` +
-        d.rows.map((r) => `<div class="t-row">${r}</div>`).join("") +
-        `<div class="t-row">km ${fmtN.format(d.km)}</div><div class="t-src">${d.src}</div>`;
-      const r = box.getBoundingClientRect();
-      tip.style.display = "block";
-      tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 200) + "px";
-      tip.style.top = (ev.clientY - r.top + 14) + "px";
+    el.addEventListener("mousemove", (ev) => arata(el, ev.clientX, ev.clientY));
+    el.addEventListener("mouseleave", ascunde);
+    // Atingere: pe telefon nu există „trecere cu mouse-ul", deci valorile erau
+    // pur și simplu inaccesibile.
+    el.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse") return;
+      ev.preventDefault();
+      arata(el, ev.clientX, ev.clientY);
     });
-    el.addEventListener("mouseleave", () => (tip.style.display = "none"));
+    // Tastatură: elementele sunt acum în ordinea de tabulare.
+    el.addEventListener("focus", () => arata(el, null, null));
+    el.addEventListener("blur", ascunde);
   });
+  box.addEventListener("keydown", (ev) => { if (ev.key === "Escape") ascunde(); });
+  // O atingere în afara punctelor închide caseta rămasă deschisă.
+  document.addEventListener("pointerdown", (ev) => {
+    if (!ev.target.closest || !ev.target.closest(".pf-pt, .pf-tick")) ascunde();
+  }, { passive: true });
 }
 
 /* -------------------------------------------------------------- tabele -- */

@@ -636,3 +636,10 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 /* Intrări de nivel 2 în cuprins */
 .view-toc .toc-sub { padding-left: 14px; opacity: .82; }
 .view-toc .toc-sub::before { content: "└ "; opacity: .5; }
+
+/* Punctele profilului sunt focusabile: inelul de focus trebuie să se vadă pe
+   fundal închis, iar cardurile de verdict nu trebuie să se întindă inutil. */
+.pf-pt:focus-visible, .pf-tick:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+#ro-claims { align-items: start; }
