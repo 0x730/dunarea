@@ -17,6 +17,9 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
+# v12: seria sub P10 nu mai e plafonată de fereastra de afișare (Passau era
+# publicat 45 în loc de 53), se adaugă volumul deficitului sub prag, iar
+# câmpurile bilanțului sunt redenumite ca să nu mai afirme mai mult decât pot.
 # v11: rapoartele expun acum `surse_din_cache`/`intrari_din_cache` — schema
 # payloadului s-a schimbat, deci un răspuns vechi ar masca tăcut câmpurile noi.
 # v10: textul CLIM_NOTES pentru Cernavodă nu mai afirmă generic, la prezent, o
@@ -26,9 +29,9 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 # valorilor zilnice), zăpada e raportată în cm, streak-ul numără zile
 # calendaristice, bilanțul km³ refuză anii incompleți, iar percentilele cer un
 # minim de eșantioane. Rezultatele vechi nu mai sunt comparabile.
-REPORT_CACHE_KEY = "anomalii_report:v11"
-STATS_CACHE_KEY = "statistici:v6"
-BUDGET_CACHE_KEY = "bilant_apa:v5"
+REPORT_CACHE_KEY = "anomalii_report:v12"
+STATS_CACHE_KEY = "statistici:v7"
+BUDGET_CACHE_KEY = "bilant_apa:v6"
 
 
 # ------------------------------------------------------------- utilitare ---
@@ -183,7 +186,12 @@ def climatology(point_id):
     # ultimele 45 de zile calendaristice, indiferent de anul lor — altfel
     # seria „zile sub P10" s-ar reseta artificial pe 1 ianuarie
     azi = date.today().isoformat()
-    days = sorted(d for d in smap if d <= azi)[-45:]
+    toate = sorted(d for d in smap if d <= azi)
+    # Fereastra de 45 de zile e pentru AFIȘARE. Seria se numără pe toată
+    # arhiva: plafonată la fereastră, „45 de zile sub P10" nu era o durată, ci
+    # limita graficului — la Passau adevărul era 53. Un număr care nu poate
+    # crește peste o constantă de randare nu e o măsurătoare.
+    days = toate[-45:]
     recent = []
     for ds in days:
         r = _rank(smap[ds], ref.get(_mmdd(ds), []))
@@ -193,16 +201,21 @@ def climatology(point_id):
     # gol în arhivă, „a 23-a zi la rând sub P10" putea acoperi 30 de zile reale.
     streak = 0
     asteptata = None
-    for item in reversed(recent):
-        zi = date.fromisoformat(item["date"])
+    for ds in reversed(toate):
+        zi = date.fromisoformat(ds)
         if asteptata is not None and zi != asteptata:
             break
-        if item["pct"] is not None and item["pct"] < 10:
+        r = _rank(smap[ds], ref.get(_mmdd(ds), []))
+        if r is not None and r < 10:
             streak += 1
             asteptata = zi - timedelta(days=1)
         else:
             break
 
+    # O valoare sub tot ce conține referința nu are percentilă empirică: „P0,0"
+    # sugerează o precizie pe care 29 de ani nu o pot da. O marcăm ca atare.
+    for item in recent:
+        item["sub_minimul_referintei"] = (item["pct"] is not None and item["pct"] == 0.0)
     last = recent[-1] if recent else None
     mediana_zilei = abatere_pct = None
     if last:
@@ -219,6 +232,22 @@ def climatology(point_id):
         n_ani = len(exact_vals)
         ani_mai_mici = sum(1 for v in exact_vals if v < smap[last["date"]])
 
+    # Volumul deficitului sub prag — ieșirea standard a metodei „threshold
+    # level" din literatura de secetă hidrologică (Tallaksen & Van Lanen), pe
+    # care aplicația o folosea fără s-o raporteze. Σ(P10 − Q)·Δt pe seria
+    # curentă, adică „câtă apă lipsește față de prag", nu doar „de câte zile".
+    prag_deficit_km3 = None
+    zile_deficit = 0
+    for ds in reversed(toate):
+        refv = ref.get(_mmdd(ds), [])
+        if len(refv) < MIN_REF_SAMPLES:
+            break
+        prag = sorted(refv)[max(0, int(len(refv) * 0.10) - 1)]
+        if smap[ds] >= prag:
+            break
+        zile_deficit += 1
+        prag_deficit_km3 = (prag_deficit_km3 or 0.0) + (prag - smap[ds]) * 86400 / 1e9
+
     p = C.GLOFAS_POINTS[point_id]
     result = {
         "id": point_id, "name": p["name"], "km": p["km"],
@@ -226,6 +255,11 @@ def climatology(point_id):
         "sursa": "GloFAS v4 via Open-Meteo Flood API",
         "rezolutie_spatiala_aprox_km": 5,
         "azi": last, "streak_sub_p10": streak,
+        "deficit_sub_p10": ({"km3": round(prag_deficit_km3, 3), "zile": zile_deficit,
+                             "metoda": "Σ(P10 − Q)·Δt pe seria curentă sub prag "
+                                       "(threshold level method); volum modelat, "
+                                       "nu apă măsurată ca lipsă"}
+                            if prag_deficit_km3 else None),
         "ani_mai_mici": ani_mai_mici, "ani_referinta": n_ani,
         "reference_period": ({"requested_start": CLIM_START,
                               "effective_start": reference_years[0],
@@ -306,7 +340,12 @@ def balance():
         "reziduu_istoric_pct": round(100 * mu, 2),
         "sd_pct": round(100 * sd, 2),
         "z": round(z, 2),
-        "n_etalon": len(hist_means),
+        # Ferestrele de 14 zile se suprapun pe 13 din 14 zile, iar reziduul are
+        # autocorelație mare: numărul de ferestre NU e numărul de observații
+        # independente. Publicăm și anii distincți, care sunt.
+        "n_etalon_ferestre": len(hist_means),
+        "n_ani_independenti": len({int(d[:4]) for d in rel
+                                   if int(d[5:7]) == cur_month and int(d[:4]) < cur_year}),
         "tip_proba": "model_hidrologic",
         "sursa": "GloFAS v4 — ambele secțiuni (Baziaș și Gruia)",
         "fereastra": "media ultimelor 14 zile consecutive vs. mediile pe 14 zile "
@@ -994,11 +1033,21 @@ def water_budget():
             "arie_km2": AREA_PASSAU_KM2,
             "ploaie_km3": r1(p_cur), "ploaie_normal_km3": r1(p_med),
             "rau_passau_km3": r1(q_pas_cur), "rau_normal_km3": r1(q_pas_med),
-            "atmosfera_sol_km3": r1(rest_cur), "atmosfera_sol_normal_km3": r1(rest_med),
+            # NU e „ce au luat atmosfera și solul": e rezidualul P−Q pe o fereastră care
+            # cuprinde tot ciclul de topire, deci conține și variația stocului.
+            "avertisment_nivel": (
+                "Valorile ABSOLUTE în km³ depind puternic de alegerea celor 6 "
+                "puncte-proxy: un test jackknife dă un interval de ~2× pe nivel "
+                "(punctele alpine supraeșantionează ploaia bazinului). ANOMALIA "
+                "față de mediana aceleiași ferestre e însă stabilă la ~±15%, "
+                "deci abaterea procentuală e cifra de folosit, nu volumul brut."),
+            "rezidual_p_minus_q_km3": r1(rest_cur),
+            "rezidual_p_minus_q_normal_km3": r1(rest_med),
         },
         "bazias": {
             "volum_km3": r1(q_baz_cur), "normal_km3": r1(q_baz_med),
-            "lipsa_km3": r1(q_baz_med - q_baz_cur),
+            # Deficit față de mediana ACELUIAȘI model, nu apă care lipsește de undeva.
+            "deficit_fata_de_normala_km3": r1(q_baz_med - q_baz_cur),
         },
         "grace": grace,
         "reference_periods": {

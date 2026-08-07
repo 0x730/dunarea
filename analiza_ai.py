@@ -42,11 +42,12 @@ Dicționarul câmpurilor:
 - azi.value, azi_m3s, debit, masurat_m3s și model_m3s sunt DEBITE în m³/s, nu niveluri;
 - pct / percentila debitului este rangul față de istoricul modelului din fereastra calendaristică ±7 zile în jurul datei: P0 minim, P50 mediană, P100 maxim; nu este procent din debit; ani_mai_mici folosește separat aceeași dată exactă;
 - abatere_pct = abaterea procentuală față de mediana istorică a zilei;
-- lipsa_km3 = volum cumulat lipsă față de mediană;
+- deficit_fata_de_normala_km3 = volumul cu care cumulul curent e sub mediana ACELUIAȘI model; nu este apă care lipsește de undeva;
+- rezidual_p_minus_q_km3 = P−Q pe bazinul superior; conține evapotranspirația ȘI variația stocului (zăpadă, sol, lacuri) pe o fereastră care cuprinde topirea, deci NU e „ce au luat atmosfera și solul";
 - anomalie_km3 la GRACE = abaterea apei totale față de referință, nu debit;
 - z este scor standardizat; |z| ≤ 1,5 este în variabilitatea istorică a testului. Etalonul lui este distribuția mediilor pe aceeași fereastră, nu a valorilor zilnice;
 - TOATE câmpurile terminate în _cm sunt COTE / NIVELURI în centimetri, niciodată debite: mire_incrucisate.afdj_cm, portal_cm, diferenta_cm și austria_test_retentie.mediana_trend_cm;
-- câmpurile terminate în _km3 sunt VOLUME (ploaie_km3, rau_passau_km3, atmosfera_sol_km3, volum_km3, normal_km3, lipsa_km3);
+- câmpurile terminate în _km3 sunt VOLUME (ploaie_km3, rau_passau_km3, rezidual_p_minus_q_km3, volum_km3, normal_km3, deficit_fata_de_normala_km3);
 - statistici_precipitatii_zone[].*.cumul_mm este precipitație în milimetri; zapada_iarna.cumul_cm este zăpadă proaspătă în CENTIMETRI (unitate diferită, nu confunda);
 - inhga_vs_model.raport și raport_ultimele7 sunt adimensionale (măsurat ÷ model);
 - precipitatii_vs_debit.debit_pct este o PERCENTILĂ, nu un procent din debit;
@@ -225,7 +226,7 @@ def _amprenta_stare():
     market_context = C.sen_market_context()
     debit, medie = inhga.get("debit_bazias_m3s"), inhga.get("media_multianuala_m3s")
     normal = (bi.get("bazias") or {}).get("normal_km3")
-    lipsa = (bi.get("bazias") or {}).get("lipsa_km3")
+    lipsa = (bi.get("bazias") or {}).get("deficit_fata_de_normala_km3")
     parti = {
         "versiune_metoda": PROMPT_VERSION,
         "configuratie_ai": {

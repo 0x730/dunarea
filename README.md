@@ -207,7 +207,10 @@ Secțiunea „Anomalii față de istoric" rulează verificări automate
 (`anomalii.py`, endpoint `/api/anomalii`, recalculat la 6 h):
 
 1. **Climatologie** — percentila zilei calendaristice (fereastră ±7 zile) față de
-   GloFAS 1991–anul trecut, în toate secțiunile transectului climatologic
+   GloFAS din primul an cu date până anul trecut — cerem din 1991, dar API-ul
+   întoarce null până în 1997, deci referința EFECTIVĂ e de ~29 de ani și e
+   citită din payload (`reference_period.effective_start`), nu presupusă —
+   în toate secțiunile transectului climatologic
    (Regensburg → Ceatal Izmail); serii de zile calendaristic consecutive sub P10.
    Percentila nu se publică sub 30 de valori de referință: o distribuție săracă
    ar produce un P0 sau P100 „încrezător" care nu înseamnă nimic.

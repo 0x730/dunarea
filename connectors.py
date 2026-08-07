@@ -207,6 +207,37 @@ def history_snapshots(source):
     return out
 
 
+# Plafon global de reîmprospătări simultane. `cached()` are single-flight per
+# CHEIE, dar o rafală pe chei diferite putea porni zeci de fetch-uri paralele,
+# fiecare cu firul lui de cerere și cu memoria payloadului în el.
+_FILL_LIMIT = max(1, int(os.environ.get("MONITOR_MAX_FILLS", "6")))
+_fill_slots = threading.BoundedSemaphore(_FILL_LIMIT)
+_fill_local = threading.local()
+
+
+class _FillSlot:
+    """Ocupă un loc de reîmprospătare — REINTRANT pe același fir.
+
+    Reintranța nu e un rafinament, e obligatorie: `glofas_archive` și
+    `glofas_recent` cheamă `glofas_snap`, iar `edo_map` cheamă `edo_status`,
+    toate prin `cached()`. Cu un semafor simplu, N fire care își așteaptă
+    propria sub-reîmprospătare s-ar bloca definitiv unul pe altul.
+    """
+
+    def __enter__(self):
+        self.taken = not getattr(_fill_local, "held", False)
+        if self.taken:
+            _fill_slots.acquire()
+            _fill_local.held = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.taken:
+            _fill_local.held = False
+            _fill_slots.release()
+        return False
+
+
 def cached(key, ttl, fetch_fn, stale_ok=True):
     """Returnează din cache dacă e proaspăt; altfel refetch. La eroare de
     rețea servește versiunea veche (stale) dacă există, cu marcaj.
@@ -238,7 +269,8 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
                             "stale": True, "error": "sursa nu a răspuns recent"}
                 raise RuntimeError("sursa nu a răspuns recent (backoff)")
             try:
-                res = _fetch_and_store(key, ttl, fetch_fn, stale_ok)
+                with _FillSlot():
+                    res = _fetch_and_store(key, ttl, fetch_fn, stale_ok)
                 # _fetch_and_store poate întoarce copia veche în loc să
                 # arunce excepția. Și acesta este un eșec al sursei: păstrăm
                 # backoff-ul, altfel fiecare cerere publică ar reîncerca
@@ -297,6 +329,48 @@ PNG_MAX_PIXELS = 4_000_000             # ~2000×2000; hărțile reale sunt mult 
 _SENSITIVE_HEADERS = ("authorization", "x-api-key", "cookie", "proxy-authorization")
 
 
+# Limitare de rată pe IEȘIRE, per host. Aceasta NU e o protecție a aplicației
+# — de asta se ocupă nginx și Cloudflare, care pot arunca traficul înainte să
+# ne coste ceva. E o obligație față de sursele oficiale, pe care le folosim ca
+# oaspeți: single-flight din `cached()` apără per CHEIE, dar o rafală pe chei
+# diferite (warmup-ul poate declanșa ~700 de cereri către flood-api la cache
+# rece) trecea complet nemărginită. Găleată cu jetoane: rafala scurtă e
+# permisă, ritmul susținut e plafonat.
+_HOST_RATE = {                       # host -> (rafală, jetoane pe secundă)
+    "flood-api.open-meteo.com": (20, 8),
+    "archive-api.open-meteo.com": (20, 8),
+    "www.pegelonline.wsv.de": (10, 4),
+}
+_DEFAULT_HOST_RATE = (10, 4)
+_buckets = {}
+_bucket_lock = threading.Lock()
+
+
+def _throttle(url, timeout=45):
+    """Așteaptă până când hostul are un jeton liber. Ridică excepție dacă
+    așteptarea ar depăși `timeout` — mai bine o eroare clară decât un fir
+    de cerere blocat la nesfârșit."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if not host:
+        return
+    burst, rate = _HOST_RATE.get(host, _DEFAULT_HOST_RATE)
+    with _bucket_lock:
+        bucket = _buckets.setdefault(host, [float(burst), time.monotonic()])
+    deadline = time.monotonic() + timeout
+    while True:
+        with _bucket_lock:
+            now = time.monotonic()
+            bucket[0] = min(float(burst), bucket[0] + (now - bucket[1]) * rate)
+            bucket[1] = now
+            if bucket[0] >= 1.0:
+                bucket[0] -= 1.0
+                return
+            wait = (1.0 - bucket[0]) / rate
+        if time.monotonic() + wait > deadline:
+            raise RuntimeError(f"limitare locală de rată către {host}")
+        time.sleep(min(wait, 0.25))
+
+
 def _read_bounded(resp, max_bytes):
     """Citește cel mult max_bytes; depășirea e eroare, nu trunchiere tăcută."""
     raw = resp.read(max_bytes + 1)
@@ -353,6 +427,7 @@ class _StripAuthOnCrossHost(urllib.request.HTTPRedirectHandler):
 
 
 def http_get(url, timeout=25, insecure=False, binary=False, max_bytes=None):
+    _throttle(url)
     limit = max_bytes if max_bytes is not None else (
         MAX_BINARY_BYTES if binary else MAX_TEXT_BYTES)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -2777,6 +2852,7 @@ def _hydroweb_key():
 
 def _hydroweb_get(url, key, raw=False, max_bytes=None):
     _validated_https_url(url, {"hydroweb.next.theia-land.fr"})
+    _throttle(url)
     req = urllib.request.Request(url, headers={
         "User-Agent": HYDROWEB_UA, "Accept": "application/json,text/plain",
         "X-API-Key": key})

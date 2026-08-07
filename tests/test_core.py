@@ -5,6 +5,7 @@ import os
 import sqlite3
 import struct
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -1183,6 +1184,60 @@ class ConnectorTests(unittest.TestCase):
                        "https://www.hidmet.gov.rs.evil.example/a"):
             with self.assertRaises(urllib.error.HTTPError):
                 handler.redirect_request(req, None, 302, "Found", {}, target)
+
+    def test_outbound_throttle_allows_a_burst_then_limits(self):
+        """Suntem oaspeți pe API-urile oficiale: single-flight apără per cheie,
+        dar o rafală pe chei DIFERITE trecea nemărginită."""
+        host = "https://flood-api.open-meteo.com/x"
+        C._buckets.pop("flood-api.open-meteo.com", None)
+        burst, rate = C._HOST_RATE["flood-api.open-meteo.com"]
+        started = time.monotonic()
+        for _ in range(burst):
+            C._throttle(host)
+        self.assertLess(time.monotonic() - started, 0.5,
+                        "rafala inițială nu trebuie să aștepte")
+        started = time.monotonic()
+        for _ in range(rate):
+            C._throttle(host)
+        elapsed = time.monotonic() - started
+        self.assertGreater(elapsed, 0.5, "peste rafală trebuie să încetinească")
+        C._buckets.pop("flood-api.open-meteo.com", None)
+
+    def test_fill_slot_is_reentrant_and_bounded(self):
+        """`glofas_archive` cheamă `glofas_snap`, iar `edo_map` cheamă
+        `edo_status` — ambele prin cached(). Un semafor nereintrant ar bloca
+        definitiv firele care își așteaptă propria sub-reîmprospătare."""
+        reached = []
+
+        def nested():
+            with C._FillSlot():
+                with C._FillSlot():
+                    reached.append(True)
+
+        thread = threading.Thread(target=nested)
+        thread.start()
+        thread.join(timeout=5)
+        self.assertTrue(reached, "reintranța lipsește: fir blocat")
+
+        peak, current, lock = [0], [0], threading.Lock()
+
+        def worker():
+            with C._FillSlot():
+                with lock:
+                    current[0] += 1
+                    peak[0] = max(peak[0], current[0])
+                time.sleep(0.02)
+                with lock:
+                    current[0] -= 1
+
+        threads = [threading.Thread(target=worker) for _ in range(20)]
+        for item in threads:
+            item.start()
+        for item in threads:
+            item.join()
+        self.assertLessEqual(peak[0], C._FILL_LIMIT)
+        self.assertEqual(C._fill_slots._value, C._FILL_LIMIT,
+                         "semaforul nu a fost eliberat complet")
 
     def test_response_size_is_bounded(self):
         class _Resp:

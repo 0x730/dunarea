@@ -870,9 +870,11 @@ async function renderAnomalii() {
     return `<div class="anom-cell"${c.nota ? ` title="${c.nota}"` : ""}>
       <div class="bar" data-bar-c="${p != null ? divergingColor(p) : "var(--grid)"}"></div>
       <div class="n">${c.name}</div>
-      <div class="p">P${p != null ? fmt1.format(p) : "?"} <small>· ${a.value != null ? fmtN.format(a.value) + " m³/s" : ""}${a.date ? " · " + a.date.slice(5) : ""}</small></div>
+      <div class="p">${a.sub_minimul_referintei ? "sub minim" : `P${p != null ? fmt1.format(p) : "?"}`} <small>· ${a.value != null ? fmtN.format(a.value) + " m³/s" : ""}${a.date ? " · " + a.date.slice(5) : ""}</small></div>
       <div class="d">${p == null ? "percentilă indisponibilă"
-        : c.streak_sub_p10 > 0 ? `${zileRo(c.streak_sub_p10)} sub P10` : "ultima zi ≥ P10"} · ${
+        : c.streak_sub_p10 > 0 ? `${zileRo(c.streak_sub_p10)} sub P10${
+            c.deficit_sub_p10 ? ` · <b>${fmt1.format(c.deficit_sub_p10.km3)} km³</b> sub prag` : ""}`
+        : "ultima zi ≥ P10"} · ${
         c.ani_mai_mici != null && c.ani_referinta
           ? `mai mic în ${c.ani_mai_mici} din ${c.ani_referinta} ani`
           : "comparație pe ani indisponibilă"}</div>
@@ -1179,9 +1181,9 @@ async function renderBilantApa() {
   const abaterePct = Math.round(100 * (bz.volum_km3 - bz.normal_km3) / bz.normal_km3);
   const analysisYear = Number(d.pana_la.slice(0, 4));
   const volumStatus = abaterePct < 0
-    ? `<b class="c-serious">deficit ${fmt1.format(bz.lipsa_km3)} km³ (${Math.abs(abaterePct)}%)</b>`
+    ? `<b class="c-serious">deficit ${fmt1.format(bz.deficit_fata_de_normala_km3)} km³ (${Math.abs(abaterePct)}%)</b>`
     : abaterePct > 0
-      ? `<b class="c-good">surplus ${fmt1.format(-bz.lipsa_km3)} km³ (${abaterePct}%)</b>`
+      ? `<b class="c-good">surplus ${fmt1.format(-bz.deficit_fata_de_normala_km3)} km³ (${abaterePct}%)</b>`
       : `<b>la nivelul medianei</b>`;
   const fereastra = `1 ian – ${d.pana_la.slice(8)}.${d.pana_la.slice(5, 7)}`;
   // Perioada efectivă vine din date: codificată de mână, eticheta minte de
@@ -1204,13 +1206,13 @@ async function renderBilantApa() {
               "6 puncte ERA5 × aria bazinului")}
         ${row("② Debit modelat la Passau", b.rau_passau_km3, b.rau_normal_km3, "#6da7ec",
               "GloFAS, cumulat")}
-        ${row("③ Rezidual P−Q", b.atmosfera_sol_km3, b.atmosfera_sol_normal_km3, "#898781",
+        ${row("③ Rezidual P−Q", b.rezidual_p_minus_q_km3, b.rezidual_p_minus_q_normal_km3, "#898781",
               "evapotranspirație + stocuri + schimburi + erori")}
       </tbody></table></div>
     <p class="sub m-12-0-0">${(() => {
       const dP = b.ploaie_km3 - b.ploaie_normal_km3;
       const dQ = b.rau_passau_km3 - b.rau_normal_km3;
-      const dR = b.atmosfera_sol_km3 - b.atmosfera_sol_normal_km3;
+      const dR = b.rezidual_p_minus_q_km3 - b.rezidual_p_minus_q_normal_km3;
       return `Față de mediană: precipitații ${dP >= 0 ? "+" : ""}<b>${fmt1.format(dP)} km³</b>,
         debit la Passau ${dQ >= 0 ? "+" : ""}<b>${fmt1.format(dQ)} km³</b>, rezidual
         ${dR >= 0 ? "+" : ""}<b>${fmt1.format(dR)} km³</b>. Identitatea P = Q + rezidual se închide
@@ -1546,7 +1548,7 @@ async function renderSinteza(inhga) {
   }
 
   if (bi?.bazias) {
-    const lipsa = bi.bazias.lipsa_km3;
+    const lipsa = bi.bazias.deficit_fata_de_normala_km3;
     const pct = Math.round(100 * lipsa / bi.bazias.normal_km3);
     const dP = bi.bazin_superior ? bi.bazin_superior.ploaie_normal_km3 - bi.bazin_superior.ploaie_km3 : null;
     const volTxt = `de la 1 ianuarie, prin Baziaș ar fi trecut după model <b>${fmt1.format(bi.bazias.volum_km3)} km³</b>
