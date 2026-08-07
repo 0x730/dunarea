@@ -175,12 +175,28 @@ async function jget(url) {
 }
 
 /* ------------------------------------------------------- status pills -- */
+// Ordine fixă: pastilele se construiau din ordinea în care se termină
+// randările asincrone, deci se rearanjau sub ochii cititorului la fiecare
+// reîmprospătare. Cine caută o sursă anume trebuie s-o găsească în același loc.
+const PILL_ORDER = [
+  "INHGA", "AFDJ", "PEGELONLINE", "RHMZ", "Hydroinfo", "DanubeHIS",
+  "DanubeSTREAM", "GloFAS", "ERA5", "ENTSO-E", "SEN", "Satelit",
+  "EDO", "Date lipsă", "România",
+];
+const PILL_TITLE = {
+  ok: "sursa a răspuns, date proaspete",
+  stale: "servit din cache — sursa nu a răspuns la ultima încercare",
+  err: "sursa nu a răspuns",
+  off: "integrare neactivată pe această instanță",
+};
 const PILLS = {};
 function pill(name, state) {
   PILLS[name] = state;
   const el = $("status-pills");
-  el.innerHTML = Object.entries(PILLS)
-    .map(([n, s]) => `<span class="pill ${s}">${n}</span>`)
+  const known = PILL_ORDER.filter((n) => n in PILLS);
+  const extra = Object.keys(PILLS).filter((n) => !PILL_ORDER.includes(n)).sort();
+  el.innerHTML = [...known, ...extra]
+    .map((n) => `<span class="pill ${PILLS[n]}" title="${n}: ${PILL_TITLE[PILLS[n]] || PILLS[n]}">${n}</span>`)
     .join("");
 }
 
@@ -387,7 +403,7 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   $("profil-holder").innerHTML = svg;
 
   const tip = $("profil-tip");
-  const lookup = (key) => {
+  const tipData = (key) => {
     const kind = key[0], idx = +key.slice(1);
     if (kind === "M") { const p = measured[idx]; return { n: p.name, rows: [`Q = ${fmtN.format(p.q)} m³/s`, p.extra].filter(Boolean), src: p.src + " · măsurat", km: p.km }; }
     if (kind === "m") { const p = model[idx]; return { n: p.name,
@@ -398,7 +414,7 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
   const box = $("profil-holder").parentElement;
   box.querySelectorAll(".pf-pt, .pf-tick").forEach((el) => {
     el.addEventListener("mousemove", (ev) => {
-      const d = lookup(el.dataset.i);
+      const d = tipData(el.dataset.i);
       tip.innerHTML = `<div class="t-name">${d.n}</div>` +
         d.rows.map((r) => `<div class="t-row">${r}</div>`).join("") +
         `<div class="t-row">km ${fmtN.format(d.km)}</div><div class="t-src">${d.src}</div>`;
@@ -442,10 +458,10 @@ function renderAfdjTable(afdj) {
         ${coteNegative.some((s) => s.statie === "Cernavoda")
           ? "La Cernavodă, nivelul e influențat și de lucrările oficiale de la brațul Bala." : ""}</p>`
     : "";
-  $("tabel-afdj").innerHTML = `<table class="data">
+  $("tabel-afdj").innerHTML = `<div class="scroll-x"><table class="data">
     <thead><tr><th>Stație</th><th class="num">km</th><th class="num">cotă cm</th><th class="num">24 h</th>
       <th class="num">apă</th><th class="num">observat</th></tr></thead>
-    <tbody>${rows}</tbody></table>${coteNegativeHtml}`;
+    <tbody>${rows}</tbody></table></div>${coteNegativeHtml}`;
 }
 
 function renderHidmetTable(h) {
@@ -572,7 +588,10 @@ async function loadYears(pointId) {
     opt.yAxis.name = "m³/s"; opt.yAxis.nameTextStyle = { color: MUTED, fontFamily: MONO };
     opt.series = [
       { name: "min", type: "line", data: lo, stack: "band", symbol: "none", lineStyle: { width: 0 }, silent: true, tooltip: { show: false }, legendHoverLink: false },
-      { name: `interval ${ref}`, type: "line", data: range, stack: "band", symbol: "none", lineStyle: { width: 0 }, areaStyle: { color: "rgba(255,255,255,0.07)" }, silent: true, tooltip: { show: false } },
+      { name: `interval ${ref}`, type: "line", data: range, stack: "band", symbol: "none", lineStyle: { width: 0 }, areaStyle: { color: "rgba(255,255,255,0.07)" }, silent: true, tooltip: { show: false },
+        // ECharts colorează pastila din legendă după culoarea SERIEI, nu după
+        // areaStyle: fără asta, banda gri translucidă apărea în legendă verde.
+        itemStyle: { color: "rgba(255,255,255,0.22)" } },
       { name: `mediană ${ref}`, type: "line", data: med, symbol: "none", lineStyle: { width: 1.4, type: "dashed", color: MUTED }, itemStyle: { color: MUTED } },
       ...yearSeries(byYear, cur),
     ];
@@ -637,10 +656,12 @@ async function renderPFChart() {
     opt.series = [
       { name: "Baziaș (model GloFAS)", type: "line", data: idx.map((t) => bmap[t] ?? null), symbol: "none",
         lineStyle: { width: 2, color: BLUE }, itemStyle: { color: BLUE },
-        endLabel: { show: true, color: BLUE, fontSize: 11, formatter: "Baziaș · model" } },
+        // fără endLabel: la ape mici seriile converg și etichetele se suprapun
+        // exact în starea pe care panoul există s-o arate; legenda le numește deja.
+        },
       { name: "Gruia (model GloFAS)", type: "line", data: idx.map((t) => gmap[t]), symbol: "none",
         lineStyle: { width: 2, color: ORANGE }, itemStyle: { color: ORANGE },
-        endLabel: { show: true, color: ORANGE, fontSize: 11, formatter: "Gruia · model" } },
+        },
     ];
     chartPF ||= mkChart($("chart-pf"));
     chartPF.setOption(opt, { notMerge: true });
@@ -2067,14 +2088,19 @@ function applyDataStyles(root = document) {
 }
 
 const safeRun = (fn) => {
+  // Izolarea rămâne — un panou stricat nu are voie să doboare pagina — dar
+  // eșecul se RAPORTEAZĂ. Un catch complet mut a ascuns un ReferenceError care
+  // ținea graficul principal negenerat, iar o verificare headless a raportat
+  // „0 erori JS" tocmai pentru că nimeni nu scria nimic.
+  const boom = (e) => console.error(`[panou] ${fn.name || "anonim"}:`, e);
   try {
     const p = fn();
     if (p && typeof p.then === "function") {
-      p.then(() => applyDataStyles(), () => {});
+      p.then(() => applyDataStyles(), boom);
     } else {
       applyDataStyles();
     }
-  } catch (e) { /* izolat */ }
+  } catch (e) { boom(e); }
 };
 
 async function refreshData() {

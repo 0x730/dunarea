@@ -574,3 +574,10 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 .bar-track { height: 9px; background: var(--grid); border-radius: 4px; }
 .bar-fill  { height: 9px; border-radius: 4px; margin-top: 2px;
              width: var(--bar-w, 0%); background: var(--bar-c, var(--grid)); }
+
+/* Un chip lung cu `white-space: nowrap` într-o coloană îngustă împinge tot
+   documentul lateral pe mobil (/romania ajungea la 427px într-un viewport de
+   390). Chipurile scurte nu se rup oricum. */
+@media (max-width: 640px) {
+  .sev { white-space: normal; }
+}
