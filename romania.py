@@ -210,6 +210,13 @@ def _series_map(archive):
     }
 
 
+def _ro_num(value, digits=1):
+    """Zecimale cu virgulă: textul ajunge lângă valori formatate `ro-RO`."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "–"
+    return f"{value:.{digits}f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def _plain(value):
     """Minuscule fără diacritice — potriviri robuste pe textul buletinelor."""
     decomposed = unicodedata.normalize("NFKD", value if isinstance(value, str) else "")
@@ -424,11 +431,13 @@ def _operational_history(generated_on, model_as_of, archive, snn_status,
     if _number((cern_gauge or {}).get("cota_cm")) is not None:
         current_hydrology.append(f"miră AFDJ {cern_gauge['cota_cm']} cm")
     if _number((cern_gauge or {}).get("temp_apa_c")) is not None:
-        current_hydrology.append(f"apă la mira AFDJ {cern_gauge['temp_apa_c']}°C")
+        current_hydrology.append(
+            f"apă la mira AFDJ {_ro_num(cern_gauge['temp_apa_c'])} °C")
     if measured is not None:
-        bazias = f"Baziaș {measured:g} m³/s"
+        bazias = f"Baziaș {_ro_num(measured)} m³/s"
         if monthly_mean:
-            bazias += f" ({100 * measured / monthly_mean:.1f}% din media lunii)"
+            bazias += (f" ({_ro_num(100 * measured / monthly_mean)}%"
+                       " din media lunii)")
         current_hydrology.append(bazias)
 
     if model_as_of is not None:

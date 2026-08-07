@@ -289,7 +289,13 @@ def api_edo_map(q):
 
 
 def api_entsoe(q):
-    return C.entsoe_irongates()
+    # Când integrarea E activă, conectorul întoarce învelișul cached()
+    # {data, stale}, iar interfața citește `activ` de la rădăcină — deci ar fi
+    # raportat „neactivat" tocmai când funcționează. Același tipar ca api_hydroweb.
+    r = C.entsoe_irongates()
+    if isinstance(r, dict) and not r.get("activ", True):
+        return r
+    return {**r["data"], "stale": r["stale"], "cache_age_s": r.get("cache_age_s")}
 
 
 def api_delta(q):
@@ -331,7 +337,10 @@ def api_delta(q):
 
 def api_anomalii(q):
     r = C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)
-    return {**r["data"], "stale": r["stale"]}
+    # Vârsta reală a raportului: sinteza din capul paginii o afișa pe cea a
+    # ceasului din browser, ceea ce pretindea o prospețime pe care verdictele
+    # (TTL 6 h) nu o au.
+    return {**r["data"], "stale": r["stale"], "cache_age_s": r.get("cache_age_s")}
 
 
 def api_inhga_serie(q):
@@ -683,7 +692,10 @@ def api_danubeportal(q):
 
 
 def api_dahiti(q):
-    return C.dahiti_danube()
+    r = C.dahiti_danube()
+    if isinstance(r, dict) and not r.get("activ", True):
+        return r
+    return {**r["data"], "stale": r["stale"], "cache_age_s": r.get("cache_age_s")}
 
 
 def api_hydroweb(q):
@@ -1032,10 +1044,12 @@ def warmup():
              for pid in C.GLOFAS_POINTS]
 
     def safe(fn):
+        """Rulează izolat și spune dacă a reușit — apelantul poate decide."""
         try:
             fn()
+            return True
         except Exception:
-            pass
+            return False
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         pool.map(safe, jobs)
@@ -1044,9 +1058,20 @@ def warmup():
     # arhiva buletinelor INHGA (o singură dată; apoi doar ziua curentă)
     safe(lambda: C.inhga_backfill(days=90))
     # raportul de anomalii cere arhive lungi — îl pre-calculăm tot aici
-    safe(lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report))
+    ok_report = safe(lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600,
+                                      anomalii.report))
+    # Statisticile și bilanțul erau lăsate pe seama primei cereri: pe cache rece
+    # ajungeau într-un fir de cerere și puteau depăși proxy_read_timeout.
+    safe(lambda: C.cached(anomalii.STATS_CACHE_KEY, 6 * 3600, anomalii.full_stats))
+    safe(lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget))
     safe(C.cache_gc)
-    C.cache_put("warmup_done", True, 6 * 3600)
+    # `safe` înghite orice excepție: marcarea necondiționată însemna că, dacă
+    # rețeaua a fost jos tot warmup-ul, fiecare repornire îl sărea 6 ore și
+    # /api/health raporta warmup_done peste un cache gol.
+    if ok_report:
+        C.cache_put("warmup_done", True, 6 * 3600)
+    else:
+        print("warmup incomplet — NU marchez warmup_done")
     print("istoric INHGA + raport anomalii pregătite")
 
 

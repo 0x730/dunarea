@@ -212,10 +212,10 @@
     precipitații, iar o <b>abatere persistentă</b> între serii independente merită investigată.
     Detectoarele produc cifre verificabile, nu concluzii.</p>
   <div class="card">
-    <h3>Ultima stare disponibilă față de ultimii ~30 de ani <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
+    <h3>Ultima stare disponibilă față de anii disponibili din 1991 încoace <span class="prov prov-model">model GloFAS, aceeași metodă pentru toți anii</span></h3>
     <p class="sub">percentila datei observației (fereastră calendaristică ±7 zile; perioada efectivă este citită din seria sursei)</p>
     <div id="anom-strip" class="anom-strip"><div class="loading">se calculează…</div></div>
-    <div class="anom-scale"><span>P0 · secetă</span><span class="g"></span><span>P100 · ape mari</span></div>
+    <div class="anom-scale"><span>P0 · ape mici</span><span class="g"></span><span>P100 · ape mari</span></div>
   </div>
   <div class="sp-22"></div>
   <div class="grid-3" id="anom-verdicte">
@@ -388,7 +388,8 @@
       <h3>Satelit — altimetrie <span class="prov prov-masurat">măsurat din orbită</span></h3>
       <p class="sub"><a href="https://hydroweb.next.theia-land.fr" target="_blank" rel="noopener">hydroweb.next</a> (CNES/Theia)
         + <a href="https://dahiti.dgfi.tum.de" target="_blank" rel="noopener">DAHITI</a> ca rezervă —
-        niveluri din Sentinel-3/6, SWOT și Jason, independent de orice institut național</p>
+        niveluri din Sentinel-3/6, SWOT și Jason, independente de serviciile hidrologice ale
+        statelor dunărene (procesare CNES/Theia)</p>
       <div id="cp-dahiti"><div class="loading">se încarcă…</div></div>
     </div>
     <div class="card">
@@ -424,7 +425,7 @@
       <ul class="facts" id="cp-source-lineage"><li><span class="loading">se construiește registrul…</span></li></ul>
     </div>
     <div class="card">
-      <h3>Gravimetrie GRACE — toată apa din bazin <span class="prov prov-masurat">măsurat din orbită</span></h3>
+      <h3>Gravimetrie GRACE — toată apa din caseta bazinului <span class="prov prov-masurat">măsurat din orbită</span></h3>
       <p class="sub">SAGSA/Theia din GRACE &amp; GRACE-FO — anomalia apei totale (suprafață + sol + subteran),
         km³ pe caseta bazinului Dunării · decalaj de publicare ~1 an</p>
       <ul class="facts" id="cp-grav"><li><span class="loading">se încarcă (prima rulare descarcă ~48 de luni)…</span></li></ul>
@@ -448,8 +449,8 @@
   <p class="eyebrow">nodul energetic</p>
   <h2>Porțile de Fier I &amp; II</h2>
   <p class="section-note">Ce se vede din date publice — și ce nu se publică nicăieri.
-    Intrarea în lac se măsoară la Baziaș, ieșirea din sistem se citește la Gruia și
-    Prahovo. Telemetria barajelor (debit pe turbine, deversoare, ecluzări, pe ore)
+    Intrarea în lac se măsoară ca debit la Baziaș (INHGA); la ieșire sunt publice doar
+    cotele de la Gruia (AFDJ) și Prahovo (RHMZ), iar debitul de ieșire rămâne modelat. Telemetria barajelor (debit pe turbine, deversoare, ecluzări, pe ore)
     <b>nu a fost identificată ca flux public</b> în sursele oficiale revizuite din România și Serbia.</p>
   <div class="grid-3">
     <div class="card">
@@ -490,7 +491,9 @@
     debitului pe brațe se măsoară doar prin campanii hidrometrice (profile ADCP) făcute de
     INHGA/AFDJ și de partea ucraineană — nu există un flux public orar. Modelul GloFAS nu
     rezolvă bifurcațiile (rutează aproape tot debitul pe un singur braț), așa că aplicația
-    <b>refuză să afișeze o împărțire calculată din model</b> — ar fi un număr fals.</p>
+    afișează o împărțire calculată din model <b>numai dacă</b> suma brațelor se închide la
+    total și niciun braț nu preia aproape tot debitul. Când testul cade, împărțirea rămâne
+    nepublicată, în loc să arătăm un număr fals.</p>
   <div class="grid-3">
     <div class="card">
       <h3>Intrarea în deltă</h3>
@@ -543,7 +546,7 @@
           <td>un bias stabil poate fi normal; testul detectează schimbarea relației, nu stabilește adevărul absolut</td></tr>
         <tr><td class="what">Mire încrucișate RO</td>
           <td>AFDJ (XML) + DanubeSTREAM (6 țări)</td>
-          <td>aceeași miră în două sisteme; mediană și maximum de abatere, 23 stații</td>
+          <td>aceeași miră în două sisteme; mediană și maximum de abatere pe stațiile comune (numărul lor apare în verdict)</td>
           <td>ore de citire diferite; la Călărași cele două sisteme par să citească mire fizice diferite</td></tr>
         <tr><td class="what">Precipitații ↔ debit</td>
           <td>ERA5 + GloFAS</td>
@@ -988,9 +991,11 @@
 <section id="sec-trans" data-view="integritate">
   <p class="eyebrow">cine publică ce</p>
   <h2>Transparența surselor — cerință cu cerință</h2>
-  <p class="section-note">Lista ta de cerințe, verificată sursă cu sursă. „Nepublicat" nu
-    înseamnă conspirație — înseamnă că datele există la operator și pot fi cerute oficial
-    (Legea 544/2001 în România, respectiv regulile de acces la informații de mediu).</p>
+  <p class="section-note">Lista ta de cerințe, verificată sursă cu sursă. „Nepublicat” nu
+    înseamnă conspirație — înseamnă că valoarea nu apare într-un flux public. Acolo unde ea
+    există la operator, poate fi cerută oficial (Legea 544/2001 în România, respectiv regulile
+    de acces la informații de mediu); acolo unde nu am putut demonstra că este colectată, o
+    spunem explicit.</p>
   <div class="card">
     <table class="trans">
       <thead><tr><th>Cerința</th><th>Stare</th><th>Sursa publică și limita ei</th></tr></thead>

@@ -16,11 +16,14 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 
 # Versiunile fac imposibil ca rezultate calculate cu metoda veche (de ex.
 # seria meteo „Best Match”) să rămână șase ore în cache după deploy.
+# v10: textul CLIM_NOTES pentru Cernavodă nu mai afirmă generic, la prezent, o
+# limitare a funcționării — afirmațiile vizibile fac parte din payload, deci o
+# corecție de text cere la fel de mult o cheie nouă ca o schimbare de calcul.
 # v9/v5/v4: etalonul z-scorului e acum distribuția mediilor pe fereastră (nu a
 # valorilor zilnice), zăpada e raportată în cm, streak-ul numără zile
 # calendaristice, bilanțul km³ refuză anii incompleți, iar percentilele cer un
 # minim de eșantioane. Rezultatele vechi nu mai sunt comparabile.
-REPORT_CACHE_KEY = "anomalii_report:v9"
+REPORT_CACHE_KEY = "anomalii_report:v10"
 STATS_CACHE_KEY = "statistici:v5"
 BUDGET_CACHE_KEY = "bilant_apa:v4"
 
@@ -127,7 +130,9 @@ CLIM_POINTS = ["regensburg", "passau", "linz", "viena", "bratislava",
 # context special pe secțiuni — afișat în celula respectivă
 CLIM_NOTES = {
     "cernavoda": ("CNE Cernavodă — apa de răcire vine din Dunăre; la ape foarte "
-                  "scăzute funcționarea se limitează (precedent: vara 2003). "
+                  "scăzute operatorul a limitat în trecut funcționarea "
+                  "(precedent confirmat: 2003; episoadele recente sunt în "
+                  "tabelul operațional). "
                   "Atenție: nivelul local e influențat și de lucrările oficiale "
                   "de la brațul Bala (vezi buletinul INHGA)."),
 }
