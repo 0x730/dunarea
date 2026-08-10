@@ -35,6 +35,12 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 head_ "Aplicație"
 if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >/tmp/_health.$$ 2>/dev/null; then
   ok "/api/health răspunde pe 127.0.0.1:${APP_PORT}"
+  EXPECTED_VERSION=$(tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION")
+  if grep -q "\"version\": \"${EXPECTED_VERSION}\"" /tmp/_health.$$; then
+    ok "runtime-ul raportează versiunea ${EXPECTED_VERSION}"
+  else
+    bad "versiunea runtime nu coincide cu VERSION (${EXPECTED_VERSION})"
+  fi
   if grep -q '"warmup_done": true' /tmp/_health.$$; then
     ok "warmup terminat"
   else

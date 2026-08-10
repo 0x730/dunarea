@@ -5,6 +5,18 @@ oficiale despre Dunăre, de la Ingolstadt (Germania) până la Sulina — și sp
 pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată** sau
 **nepublicată în sursele revizuite**.
 
+## Producție
+
+- **Stare:** deployed
+- **Aplicație:** [https://dunarea.info](https://dunarea.info/)
+- **Release curent:** [v1.0.0](https://github.com/0x730/dunarea/tree/v1.0.0)
+- **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
+- **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
+
+Producția este livrată prin Laravel Forge pe Hetzner și protejată de Cloudflare.
+Tag-ul release-ului identifică exact codul publicat; endpoint-ul de sănătate
+întoarce aceeași versiune din fișierul `VERSION`.
+
 Vederea `/romania` aplică un test determinist de proporționalitate: separă
 severitatea Dunării, impactul confirmat la CNE Cernavodă și criticitatea
 Sistemului Energetic Național. Comparația cu anii anteriori folosește aceeași
@@ -103,7 +115,7 @@ promptul, digestul exact, modul, modelul și citările în terminal și arhiveaz
 rezultatul local. `/api/analiza-ai` publică doar faptul că modul este manual;
 nici `?run=1` nu poate declanșa un apel extern.
 
-Verificare locală (86 de teste, fără rețea, sub o secundă):
+Verificare locală (suită fără rețea, sub o secundă):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -342,7 +354,7 @@ anomalii.py      detectoarele și screeningurile de anomalii
 romania.py       testul determinist România/Cernavodă și comparația istorică
 analiza_ai.py    stratul opțional de interpretare LLM (manual, niciodată din HTTP)
 static/          frontend (HTML/CSS/JS + ECharts vendorizat, cu SRI)
-tests/           suita de teste (86, fără rețea)
+tests/           suita de teste fără rețea
 ops/             backup verificat și verificarea posturii de deploy
 cache.db         cache local + arhiva zilnică (generat la rulare)
 ```

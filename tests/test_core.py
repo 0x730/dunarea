@@ -172,8 +172,22 @@ class PublicApiSecurityTests(unittest.TestCase):
             out = server.api_health({})
 
         self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["version"], "1.0.0")
+        self.assertEqual(out["release"], "v1.0.0")
+        self.assertEqual(out["url"], "https://dunarea.info")
+        self.assertEqual(out["project_url"], "https://github.com/0x730/dunarea")
         self.assertIn("uptime_s", out)
         self.assertIn("warmup_done", out)
+
+    def test_release_metadata_has_one_semver_source_of_truth(self):
+        root = Path(__file__).resolve().parents[1]
+        version = root.joinpath("VERSION").read_text(encoding="ascii").strip()
+        page = root.joinpath("static/index.html").read_text(encoding="utf-8")
+
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        self.assertEqual(server.APP_VERSION, version)
+        self.assertEqual(server.RELEASE_TAG, f"v{version}")
+        self.assertIn(f"/tree/v{version}", page)
 
     def test_dynamic_external_url_requires_expected_https_host(self):
         self.assertEqual(

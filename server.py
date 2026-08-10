@@ -37,6 +37,22 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.realpath(os.path.join(BASE_DIR, "static"))
 PORT = int(os.environ.get("PORT", "7300"))
 
+
+def _load_version():
+    """Versiunea release-ului, ținută într-un fișier simplu și versionat."""
+    try:
+        with open(os.path.join(BASE_DIR, "VERSION"), encoding="ascii") as fh:
+            version = fh.read().strip()
+    except OSError:
+        return "dev"
+    return version if re.fullmatch(r"\d+\.\d+\.\d+", version) else "dev"
+
+
+APP_VERSION = _load_version()
+RELEASE_TAG = f"v{APP_VERSION}" if APP_VERSION != "dev" else "dev"
+PUBLIC_URL = "https://dunarea.info"
+PROJECT_URL = "https://github.com/0x730/dunarea"
+
 # Jurnal: erorile și cererile lente se scriu întotdeauna; access log-ul complet
 # se activează la cerere, ca să nu inunde consola supervisorului.
 ACCESS_LOG = os.environ.get("MONITOR_ACCESS_LOG", "").strip().lower() in {
@@ -141,6 +157,10 @@ def api_health(q):
 
     return {
         "status": "ok",
+        "version": APP_VERSION,
+        "release": RELEASE_TAG,
+        "url": PUBLIC_URL,
+        "project_url": PROJECT_URL,
         "uptime_s": round(now - STARTED_AT, 1),
         "warmup_done": bool(warm),
         "anomaly_report_age_s": age_s(report),
@@ -778,6 +798,10 @@ def api_raport(q):
     out = {"generat_utc": datetime.datetime.now(datetime.timezone.utc)
            .isoformat(timespec="seconds"),
            "aplicatie": "Monitor Dunărea — surse oficiale",
+           "versiune": APP_VERSION,
+           "release": RELEASE_TAG,
+           "url": PUBLIC_URL,
+           "project_url": PROJECT_URL,
            "sectiuni": {}}
     for nume, fn in (("anomalii", lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)["data"]),
                      ("statistici", lambda: _stats_cached()["data"]),
