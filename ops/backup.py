@@ -16,7 +16,7 @@ Backupul nu e considerat reușit până nu e și verificat: integritate, structu
 
 Folosire:
     python3 ops/backup.py                       # implicit: ../backups
-    python3 ops/backup.py --dest /home/forge/backups --keep-days 14
+    python3 ops/backup.py --dest /home/dunarea/dunarea.info/backups --keep-days 14
     python3 ops/backup.py --verify-only FIȘIER  # doar verifică un backup
 
 Ieșire diferită de zero = backup nereușit; cronul trebuie să vă anunțe.

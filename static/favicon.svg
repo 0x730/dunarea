@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Dunărea</title>
+  <rect width="64" height="64" rx="13" fill="#0d0d0d"/>
+  <path d="M18 11v42h12c15 0 24-8 24-21s-9-21-24-21H18Z"
+        fill="none" stroke="#f5f5ef" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M9 35c7-7 13-7 20 0s13 7 20 0c3-3 5-4 7-4"
+        fill="none" stroke="#3987e5" stroke-width="4.5" stroke-linecap="round"/>
+</svg>

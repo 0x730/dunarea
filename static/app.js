@@ -227,6 +227,7 @@ const PILL_ORDER = [
 const PILL_TITLE = {
   ok: "sursa a răspuns, date proaspete",
   stale: "servit din cache — sursa nu a răspuns la ultima încercare",
+  limited: "sursa a răspuns, dar probele nu trec încă pragul de acoperire/calitate",
   err: "sursa nu a răspuns",
   off: "integrare neactivată pe această instanță",
 };
@@ -724,8 +725,8 @@ async function loadPrecip(pointId) {
     opt.legend.data = [...[cur, cur - 1, cur - 2, cur - 3].map(String), `mediană ${ref}`];
     chartPrecip ||= mkChart($("chart-precip"));
     chartPrecip.setOption(opt, { notMerge: true });
-    $("titlu-precip").textContent = `Precipitații cumulate de la 1 ianuarie — ${d.point.name}`;
-    pill("ERA5", d.stale ? "stale" : "ok");
+    $("titlu-precip").textContent = `Precipitații cumulate de la 1 ianuarie — ${d.point.name} · date până la ${d.data_through || d.time.at(-1) || "–"}`;
+    pill("ERA5", d.stale ? "stale" : d.source_fresh === false ? "limited" : "ok");
   } catch (e) {
     $("titlu-precip").textContent = "Precipitații — eroare la încărcare";
     pill("ERA5", "err");
@@ -1341,7 +1342,7 @@ async function renderContraProbe(afdj, portal) {
         ${h.segmente_eligibile?.length || 0}/3 segmente · acoperire km ${h.acoperire_km?.[0] ?? "–"}–${h.acoperire_km?.[1] ?? "–"}.<br>
         nivelurile sunt față de geoid (alt reper decât mirele) — relevante sunt <b>variația și percentila proprie</b>, care pot fi
         comparate cu mirele oficiale · Δ = față de trecerea anterioară · stațiile excluse nu intră în detector.</p></div>`;
-      pill("Satelit", h.stale || h.statii_eligibile < 6 ? "stale" : "ok");
+      pill("Satelit", h.stale ? "stale" : h.statii_eligibile < 6 ? "limited" : "ok");
     } else {
       const d = await jget("/api/dahiti");
       $("cp-dahiti").innerHTML = `<ul class="facts">${[
@@ -1688,7 +1689,7 @@ async function renderEdo() {
     const attach = (kind, metaId, imageId) => {
       const layer = d.straturi?.[kind];
       if (!layer?.data) return;
-      $(metaId).textContent = `${layer.title} · date ${layer.data} · decupaj 8–30°E / 42–50°N`;
+      $(metaId).textContent = `${layer.title} · date ${layer.data} · vechime ${zileRo(layer.vechime_zile)} · cadență ${layer.cadenta_zile || 10} zile · decupaj 8–30°E / 42–50°N`;
       const img = $(imageId);
       if (img.dataset.date !== layer.data) {
         img.dataset.date = layer.data;
@@ -1702,7 +1703,7 @@ async function renderEdo() {
     attach("soil", "edo-soil-meta", "edo-soil-map");
     $("edo-note").innerHTML = `Sursă: ${srcLink(d.url, "Copernicus Emergency Management Service — EDO WMS")}.
       Hărțile sunt context spațial datat și nu intră în verdictele automate.`;
-    pill("EDO", d.stale ? "stale" : "ok");
+    pill("EDO", d.stale ? "stale" : d.source_fresh === false ? "limited" : "ok");
   } catch (e) {
     $("edo-note").textContent = "Copernicus EDO nu a răspuns acum; celelalte verificări rămân independente.";
     pill("EDO", "err");

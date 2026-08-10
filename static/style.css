@@ -41,14 +41,29 @@ body {
 
 /* ------------------------------------------------------------- header */
 header.site {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
   padding: 26px 0 10px; border-bottom: 1px solid var(--border);
 }
 header.site h1 {
-  margin: 0; color: var(--ink); font-size: 21px; font-weight: 800;
-  letter-spacing: -0.01em;
+  margin: 0; color: var(--ink); font-size: inherit; line-height: 1;
 }
-header.site h1 .thin { color: var(--muted); font-weight: 400; }
+.site-brand {
+  display: inline-flex; align-items: center; gap: 11px;
+  color: var(--ink); text-decoration: none;
+}
+.site-brand:hover { color: var(--ink); text-decoration: none; }
+.site-brand:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+.site-brand-mark { display: block; width: 40px; height: 40px; }
+.site-brand-type { display: grid; gap: 4px; }
+.site-brand-name {
+  font-size: 21px; font-weight: 800; line-height: 0.9;
+  letter-spacing: 0.115em;
+}
+.site-brand-tagline {
+  font-family: var(--mono); color: var(--muted); font-size: 9px;
+  font-weight: 500; line-height: 1; letter-spacing: 0.105em;
+  text-transform: uppercase;
+}
 .km-run {
   font-family: var(--mono); font-size: 12px; color: var(--muted);
   letter-spacing: 0.06em;
@@ -63,6 +78,7 @@ header.site h1 .thin { color: var(--muted); font-weight: 400; }
 .pill.ok::before { content: "● "; color: var(--good); font-size: 9px; }
 .pill.err::before { content: "○ "; color: var(--critical); }
 .pill.stale::before { content: "◐ "; color: var(--warning); }
+.pill.limited::before { content: "◐ "; color: var(--warning); }
 .pill.off { color: var(--muted); }
 .pill.off::before { content: "– "; color: var(--muted); }
 
@@ -477,6 +493,11 @@ a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-ra
 }
 
 @media (max-width: 640px) {
+  header.site { gap: 10px 12px; padding-top: 18px; }
+  .site-brand-mark { width: 36px; height: 36px; }
+  .site-brand-name { font-size: 18px; }
+  .site-brand-tagline { font-size: 8px; }
+  #status-pills { width: 100%; margin-left: 0; }
   #sec-metodologie table.trans,
   #sec-metodologie table.trans tbody,
   #sec-metodologie table.trans tr,

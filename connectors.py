@@ -141,12 +141,11 @@ def cache_gc(max_age_expirat=30 * 86400):
             if acum - fetched_at > max(ttl, 0) + max_age_expirat:
                 conn.execute("DELETE FROM cache WHERE key=?", (key,))
                 sterse += 1
-        # prefixe abandonate de versiuni vechi ale codului
-        # ATENȚIE: aici intră numai prefixe ABANDONATE. „era5pt:v3:%" a fost
-        # scos — e chiar cheia pe care o scrie era5_point() astăzi, iar GC-ul
-        # zilnic i-ar fi șters cache-ul la fiecare rulare.
-        for mort in ("grav:%", "era5:%", "era5v2:%",
-                     "era5batch:v1:regional:%", "era5batch:v1:upper:%"):
+        # prefixe abandonate de versiuni vechi ale codului; versiunile ERA5
+        # de mai jos păstrau la capăt zile cerute, dar încă nepublicate (null).
+        for mort in ("grav:%", "era5:%", "era5v2:%", "era5v3:%",
+                     "era5pt:v3:%", "era5batch:v1:%",
+                     "edo:status:v1", "hidmet:v2"):
             sterse += conn.execute("DELETE FROM cache WHERE key LIKE ?",
                                    (mort,)).rowcount
     return sterse
@@ -521,6 +520,46 @@ PRECIP_POINTS = {
     "delta":          {"name": "Delta Dunării (Tulcea)",         "lat": 45.17, "lon": 28.80},
 }
 
+ERA5_EXPECTED_DELAY_DAYS = 5
+ERA5_MAX_AGE_DAYS = ERA5_EXPECTED_DELAY_DAYS + 2
+
+
+def _era5_daily_payload(daily, include_snow=False, today=None):
+    """Normalize an ERA5 daily block to the last usable precipitation day.
+
+    Open-Meteo accepts an end date newer than the ERA5 publication horizon and
+    returns those requested days with null values.  Keeping those dates in the
+    public series makes ``time[-1]`` look newer than the evidence.  Preserve
+    any internal gaps, but remove only the pending null-only tail and expose
+    both dates explicitly.
+    """
+    times = list(daily.get("time") or [])
+    precip = list(daily.get("precipitation_sum") or [])
+    if not times or len(times) != len(precip):
+        raise RuntimeError("răspuns ERA5 fără serie zilnică aliniată")
+    available = [i for i, value in enumerate(precip) if value is not None]
+    if not available:
+        raise RuntimeError("răspuns ERA5 fără precipitații disponibile")
+    last = available[-1]
+    today = today or date.today()
+    age = max(0, (today - date.fromisoformat(times[last])).days)
+    out = {
+        "time": times[:last + 1],
+        "precip": precip[:last + 1],
+        "data_through": times[last],
+        "requested_through": times[-1],
+        "pending_days": len(times) - last - 1,
+        "data_age_days": age,
+        "expected_delay_days": ERA5_EXPECTED_DELAY_DAYS,
+        "source_fresh": age <= ERA5_MAX_AGE_DAYS,
+    }
+    if include_snow:
+        snow = list(daily.get("snowfall_sum") or [])
+        if snow and len(snow) != len(times):
+            raise RuntimeError("răspuns ERA5 cu seria de ninsoare nealiniată")
+        out["snow"] = snow[:last + 1] if snow else []
+    return out
+
 
 # puncte-proxy distribuite pe bazinul superior (la Achleiten): câmpie + alpin,
 # pentru media de precipitații folosită în bilanțul „unde e apa"
@@ -548,10 +587,9 @@ def era5_point(tag, lat, lon, start_year):
              # combină IFS, ERA5 și ERA5-Land și se poate schimba în timp.
              "models": "era5"})
         d = http_json(f"{ARCHIVE_API}?{qs}")
-        return {"time": d["daily"]["time"],
-                "precip": d["daily"]["precipitation_sum"]}
+        return _era5_daily_payload(d["daily"])
 
-    return cached(f"era5pt:v3:{tag}:{start_year}", 24 * 3600, fetch)
+    return cached(f"era5pt:v4:{tag}:{start_year}", 24 * 3600, fetch)
 
 
 def _era5_batch(cache_group, points, start_year, include_snow=False):
@@ -582,15 +620,10 @@ def _era5_batch(cache_group, points, start_year, include_snow=False):
         out = {}
         for (tag, _, _), row in zip(points, rows):
             values = row["daily"]
-            out[tag] = {
-                "time": values["time"],
-                "precip": values["precipitation_sum"],
-            }
-            if include_snow:
-                out[tag]["snow"] = values.get("snowfall_sum", [])
+            out[tag] = _era5_daily_payload(values, include_snow)
         return out
 
-    key = f"era5batch:v1:{cache_group}:{start_year}"
+    key = f"era5batch:v2:{cache_group}:{start_year}"
     return cached(key, 24 * 3600, fetch)
 
 
@@ -760,12 +793,10 @@ def era5_precip(point_id, start_year):
              "models": "era5"}
         )
         d = http_json(f"{ARCHIVE_API}?{qs}")
-        return {"time": d["daily"]["time"],
-                "precip": d["daily"]["precipitation_sum"],
-                "snow": d["daily"].get("snowfall_sum"),
+        return {**_era5_daily_payload(d["daily"], include_snow=True),
                 "point": p}
 
-    return cached(f"era5v3:{point_id}:{start_year}", 24 * 3600, fetch)
+    return cached(f"era5v4:{point_id}:{start_year}", 24 * 3600, fetch)
 
 
 # ---------------------------------------------------------- PEGELONLINE ----
@@ -1147,15 +1178,16 @@ def inhga_backfill(days=90, pause=0.25):
 # „Actual hydrological data" — tabel zilnic (ora 10 locală) cu toate stațiile,
 # inclusiv Dunărea din Serbia până la Prahovo (aval de Porțile de Fier II):
 # nivel (cm), variație (cm), debit (m³/s), temperatura apei. Site-ul are lanț
-# TLS incomplet, de aceea fetch cu verificare relaxată. Limitarea este expusă
-# în payload: această sursă nu poate fi tratată singură ca probă de integritate.
+# TLS-ul este verificat normal. Dacă lanțul oficial se strică din nou, fetch-ul
+# eșuează și cached() poate servi explicit copia stale; nu coborâm transportul
+# la insecure și nu transformăm o problemă TLS într-o observație aparent validă.
 
 HIDMET_URL = "https://www.hidmet.gov.rs/eng/osmotreni/stanje_voda.php"
 
 
 def hidmet_report():
     def fetch():
-        html = http_get(HIDMET_URL, insecure=True)
+        html = http_get(HIDMET_URL)
         observed_day = re.search(
             r"Hydrological data:.*?(\d{2}\.\d{2}\.\d{4})", html, re.S | re.I)
         observed_time = re.search(
@@ -1214,16 +1246,12 @@ def hidmet_report():
             "data": observed_date,
             "observation_time": observation_time,
             "statii": out,
-            "transport_verified": False,
-            "transport_warning": (
-                "Serverul oficial RHMZ nu livrează un lanț TLS verificabil în "
-                "configurația curentă; conținutul este citit numai de pe hostul "
-                "hidmet.gov.rs și nu este folosit singur ca probă decisivă."),
+            "transport_verified": True,
         }
         daily_snapshot("rhmz", payload)
         return payload
 
-    return cached("hidmet:v2", 3600, fetch)
+    return cached("hidmet:v3", 3600, fetch)
 
 
 # ------------------------------------------------------ Hydroinfo Hungary ---
@@ -1665,6 +1693,10 @@ def glofas_romanian_tributary_climatology():
 
 EDO_WMS = "https://drought.emergency.copernicus.eu/api/wms"
 EDO_WMS_PAGE = "https://drought.emergency.copernicus.eu/data/wms-service"
+EDO_CADENCE_DAYS = 10
+# Două decade complete plus o zi pentru publicare/fus orar.  O întârziere mai
+# mare nu înseamnă că transportul a eșuat, ci că produsul oficial este vechi.
+EDO_MAX_AGE_DAYS = 2 * EDO_CADENCE_DAYS + 1
 EDO_MAP_SPECS = {
     "cdi": {
         "layer": "cdiad",
@@ -1680,14 +1712,26 @@ EDO_MAP_SPECS = {
 
 
 _EDO_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_EDO_ALLOWED_DOCTYPE_RE = re.compile(
+    r"<!DOCTYPE\s+WMT_MS_Capabilities\s+SYSTEM\s+"
+    r"[\"']http://schemas\.opengis\.net/wms/1\.1\.1/"
+    r"WMS_MS_Capabilities\.dtd[\"']\s*"
+    r"(?:\[\s*<!ELEMENT\s+VendorSpecificCapabilities\s+EMPTY\s*>\s*\]\s*)?>",
+    re.I | re.S,
+)
 
 
 def _parse_edo_status(capabilities, service_page=""):
-    # ET nu rezolvă entități externe (fără XXE), dar expansiunea internă de
-    # entități rămâne posibilă; plafonul de dimensiune din http_get o menține
-    # neinteresantă, iar aici refuzăm explicit un document cu declarație DTD.
-    if re.search(r"<!DOCTYPE", capabilities[:4096], re.I):
-        raise RuntimeError("XML respins: declarație DTD neașteptată")
+    # EDO a început să includă declarația DTD standard WMS 1.1.1 în august
+    # 2026. O eliminăm înainte de ElementTree, dar numai dacă se potrivește
+    # exact cu DTD-ul OGC cunoscut și cu singura declarație internă benignă.
+    # Orice alt DOCTYPE (în special unul cu ENTITY) rămâne respins.
+    marker = re.search(r"<!DOCTYPE", capabilities[:4096], re.I)
+    if marker:
+        allowed = _EDO_ALLOWED_DOCTYPE_RE.match(capabilities, marker.start())
+        if not allowed:
+            raise RuntimeError("XML respins: declarație DTD neașteptată")
+        capabilities = capabilities[:allowed.start()] + capabilities[allowed.end():]
     root = ET.fromstring(capabilities)
     by_layer = {}
     for layer in root.iter("Layer"):
@@ -1731,14 +1775,22 @@ def edo_status():
         })
         capabilities = http_get(f"{EDO_WMS}?{qs}", timeout=45)
         service_page = http_get(EDO_WMS_PAGE, timeout=45)
+        layers = _parse_edo_status(capabilities, service_page)
+        for layer in layers.values():
+            age = max(0, (date.today() - date.fromisoformat(layer["data"])).days)
+            layer["vechime_zile"] = age
+            layer["cadenta_zile"] = EDO_CADENCE_DAYS
+            layer["recent"] = age <= EDO_MAX_AGE_DAYS
         return {
             "url": EDO_WMS_PAGE,
             "bbox": [8, 42, 30, 50],
-            "straturi": _parse_edo_status(capabilities, service_page),
+            "straturi": layers,
+            "source_fresh": all(layer["recent"] for layer in layers.values()),
+            "freshness_max_days": EDO_MAX_AGE_DAYS,
             "nota": "context spațial Copernicus; nu intră în verdictele automate",
         }
 
-    return cached("edo:status:v1", 6 * 3600, fetch)
+    return cached("edo:status:v2", 6 * 3600, fetch)
 
 
 def edo_map(kind):
@@ -3472,7 +3524,7 @@ EVIDENCE_SOURCES = {
     "afdj": {"provider": "AFDJ", "kind": "masurat",
              "family": "gauge_ro_afdj", "mode": "active"},
     "rhmz": {"provider": "RHMZ Serbia", "kind": "masurat",
-             "family": "gauge_rs_rhmz", "mode": "active_unverified_transport"},
+             "family": "gauge_rs_rhmz", "mode": "active"},
     "hydroinfo": {"provider": "OVF Hungary", "kind": "masurat",
                   "family": "gauge_hu_ovf", "mode": "active"},
     "danubehis": {"provider": "ICPDR, valori OVF", "kind": "masurat_retransmis",

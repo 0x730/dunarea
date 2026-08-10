@@ -4,7 +4,7 @@
 # Documentația descrie ce ar TREBUI configurat; scriptul verifică ce ESTE.
 # Se rulează pe server:
 #     bash ops/verify_deploy.sh
-#     bash ops/verify_deploy.sh --origin-ip 203.0.113.10 --domain dunarea.exemplu.ro
+#     bash ops/verify_deploy.sh --origin-ip 157.90.144.210 --domain dunarea.info
 #
 # Nu modifică nimic. Ieșire diferită de zero dacă o verificare esențială pică.
 
@@ -12,7 +12,7 @@ set -uo pipefail
 
 DOMAIN=""
 ORIGIN_IP=""
-BACKUP_DIR="${BACKUP_DIR:-/home/forge/backups}"
+BACKUP_DIR="${BACKUP_DIR:-/home/dunarea/dunarea.info/backups}"
 APP_PORT="${PORT:-7300}"
 FAIL=0
 WARN=0
@@ -59,9 +59,10 @@ fi
 head_ "Secrete"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -d "$APP_DIR/data/keys" ]; then
-  perms=$(stat -c '%a' "$APP_DIR/data/keys")
+  KEY_DIR=$(readlink -f "$APP_DIR/data/keys")
+  perms=$(stat -Lc '%a' "$KEY_DIR")
   [ "$perms" = "700" ] && ok "data/keys/ are 700" || warn "data/keys/ are $perms (recomandat 700)"
-  bad_files=$(find "$APP_DIR/data/keys" -type f ! -perm 600 2>/dev/null)
+  bad_files=$(find "$KEY_DIR" -type f ! -perm 600 2>/dev/null)
   [ -z "$bad_files" ] && ok "fișierele de chei au 600" \
     || bad "chei cu permisiuni prea largi: $bad_files"
 fi
@@ -111,22 +112,27 @@ if command -v ufw >/dev/null 2>&1; then
     && ok "ufw activ" || warn "ufw inactiv sau inaccesibil fără sudo"
 fi
 
-# Verificarea care contează cel mai mult: dacă IP-ul de origine răspunde direct
-# pe 80/443, tot ce e în fața lui (Cloudflare, limitarea de rată) se ocolește
-# cerând direct IP-ul. Se rulează din AFARA rețelei Cloudflare ca să fie
-# concludentă — de pe server poate răspunde chiar serverul însuși.
+# Verificarea folosește domeniul ca SNI/Host, dar conectează direct la IP. Un
+# simplu https://IP/ ar lovi vhost-ul catch-all și ar da un fals sentiment de
+# siguranță pe un server care găzduiește mai multe site-uri.
 if [ -n "$ORIGIN_IP" ]; then
-  if curl -fsS --max-time 8 -o /dev/null "https://${ORIGIN_IP}/" --insecure 2>/dev/null; then
-    bad "originea ${ORIGIN_IP}:443 răspunde direct — restrângeți la IP-urile Cloudflare"
+  if [ -z "$DOMAIN" ]; then
+    warn "--origin-ip are nevoie și de --domain pentru testul SNI concludent"
   else
-    ok "originea ${ORIGIN_IP}:443 nu răspunde direct"
+    direct_code=$(curl -sS --max-time 8 --resolve "${DOMAIN}:443:${ORIGIN_IP}" \
+      -o /dev/null -w '%{http_code}' "https://${DOMAIN}/" 2>/dev/null || true)
+    case "$direct_code" in
+      000|403|444) ok "originea ${ORIGIN_IP}:443 respinge accesul direct pentru ${DOMAIN}" ;;
+      2??|3??) bad "originea ${ORIGIN_IP}:443 servește direct ${DOMAIN} (HTTP ${direct_code})" ;;
+      *) warn "răspuns direct neașteptat de la origine: HTTP ${direct_code:-necunoscut}" ;;
+    esac
   fi
 else
   warn "fără --origin-ip: verificarea restricției Cloudflare nu s-a făcut"
 fi
 
 if [ -n "$DOMAIN" ]; then
-  hdrs=$(curl -fsSI --max-time 10 "https://${DOMAIN}/" 2>/dev/null)
+  hdrs=$(curl -fsS --max-time 10 -D - -o /dev/null "https://${DOMAIN}/" 2>/dev/null)
   echo "$hdrs" | grep -qi "^cf-ray:" \
     && ok "traficul trece prin Cloudflare (cf-ray prezent)" \
     || warn "fără antet cf-ray — norul portocaliu poate fi dezactivat"

@@ -24,6 +24,19 @@ import server
 
 
 class StaticOptionsPageTests(unittest.TestCase):
+    def test_brand_and_svg_favicon_are_local_accessible_and_script_free(self):
+        root = Path(__file__).parents[1]
+        page = root.joinpath("static/index.html").read_text()
+        favicon = root.joinpath("static/favicon.svg").read_text()
+
+        self.assertIn('<link rel="icon" href="/favicon.svg" type="image/svg+xml">', page)
+        self.assertIn('class="site-brand"', page)
+        self.assertIn('aria-label="Dunărea — monitor din surse oficiale"', page)
+        self.assertIn("DUNĂREA", page)
+        self.assertIn("<title", favicon)
+        self.assertNotIn("<script", favicon.lower())
+        self.assertNotIn('href="http', favicon.lower())
+
     def test_options_page_keeps_audited_status_and_rejects_retired_claims(self):
         page = Path(__file__).parents[1].joinpath("static/index.html").read_text()
         section = page.split('<section id="sec-solutii"', 1)[1].split("</section>", 1)[0]
@@ -893,8 +906,8 @@ class ConnectorTests(unittest.TestCase):
 
         self.assertEqual([parse_qs(urlparse(u).query)["models"] for u in urls],
                          [["era5"], ["era5"]])
-        self.assertTrue(keys[0].startswith("era5v3:"))
-        self.assertTrue(keys[1].startswith("era5pt:v3:"))
+        self.assertTrue(keys[0].startswith("era5v4:"))
+        self.assertTrue(keys[1].startswith("era5pt:v4:"))
 
     def test_anar_parser_keeps_qualitative_current_context_partial(self):
         posts = [{
@@ -1068,6 +1081,23 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(query["latitude"], ["48.0,47.0"])
         self.assertEqual(query["models"], ["era5"])
         self.assertEqual(out["data"]["two"]["snow"], [0.5])
+
+    def test_era5_daily_payload_trims_only_pending_tail_and_reports_dates(self):
+        out = C._era5_daily_payload({
+            "time": ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"],
+            "precipitation_sum": [1.0, None, 2.0, None],
+            "snowfall_sum": [0.0, None, 0.5, None],
+        }, include_snow=True, today=date(2026, 8, 10))
+
+        self.assertEqual(out["time"], ["2026-08-01", "2026-08-02", "2026-08-03"])
+        self.assertEqual(out["precip"], [1.0, None, 2.0])
+        self.assertEqual(out["snow"], [0.0, None, 0.5])
+        self.assertEqual(out["data_through"], "2026-08-03")
+        self.assertEqual(out["requested_through"], "2026-08-04")
+        self.assertEqual(out["pending_days"], 1)
+        self.assertEqual(out["data_age_days"], 7)
+        self.assertEqual(out["expected_delay_days"], 5)
+        self.assertTrue(out["source_fresh"])
 
     def test_historical_inhga_parser_allows_punctuation_before_value(self):
         page = ("<p>Baziaș) a fost în scădere la ora 06.00, situându-se sub "
@@ -1424,6 +1454,53 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(out["cdi"]["data"], "2026-07-11")
         self.assertEqual(out["soil"]["data"], "2026-07-21")
 
+    def test_edo_status_accepts_exact_standard_wms_doctype(self):
+        capabilities = """<?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE WMT_MS_Capabilities SYSTEM
+          "http://schemas.opengis.net/wms/1.1.1/WMS_MS_Capabilities.dtd" [
+          <!ELEMENT VendorSpecificCapabilities EMPTY>
+        ]>
+        <WMT_MS_Capabilities><Capability><Layer>
+          <Layer><Name>cdiad</Name><Extent name="time">2012-01-01/2026-06-11/P10D</Extent></Layer>
+          <Layer><Name>smian</Name><Extent name="time">1995-01-01/2026-07-01/P10D</Extent></Layer>
+        </Layer></Capability></WMT_MS_Capabilities>"""
+
+        out = C._parse_edo_status(capabilities)
+
+        self.assertEqual(out["cdi"]["data"], "2026-06-11")
+        self.assertEqual(out["soil"]["data"], "2026-07-01")
+
+    def test_edo_status_rejects_unexpected_doctype(self):
+        capabilities = """<!DOCTYPE WMT_MS_Capabilities [
+          <!ENTITY leak SYSTEM "file:///etc/passwd">
+        ]><WMT_MS_Capabilities/>"""
+
+        with self.assertRaisesRegex(RuntimeError, "DTD neașteptată"):
+            C._parse_edo_status(capabilities)
+
+    def test_edo_status_exposes_source_age_and_cadence(self):
+        capabilities = """<WMT_MS_Capabilities><Capability><Layer>
+          <Layer><Name>cdiad</Name><Extent name="time">2012-01-01/2026-07-21/P10D</Extent></Layer>
+          <Layer><Name>smian</Name><Extent name="time">1995-01-01/2026-07-21/P10D</Extent></Layer>
+        </Layer></Capability></WMT_MS_Capabilities>"""
+
+        def uncached(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False}
+
+        class FixedDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 10)
+
+        with mock.patch.object(C, "date", FixedDate), \
+                mock.patch.object(C, "http_get", side_effect=[capabilities, ""]), \
+                mock.patch.object(C, "cached", side_effect=uncached):
+            out = C.edo_status()["data"]
+
+        self.assertEqual(out["straturi"]["cdi"]["cadenta_zile"], 10)
+        self.assertEqual(out["straturi"]["cdi"]["vechime_zile"], 20)
+        self.assertTrue(out["source_fresh"])
+
     def test_hydroweb_selection_uses_mainstem_aliases_and_full_span(self):
         def feature(name, km):
             return {"id": f"R_DANUBE_{name}_KM{km:04d}@catalog:v1",
@@ -1456,7 +1533,7 @@ class ConnectorTests(unittest.TestCase):
         self.assertEqual(entry["source_url"], C.HYDROWEB_PUBLIC)
         self.assertNotIn("token", json.dumps(entry).lower())
 
-    def test_hidmet_preserves_observation_time_and_marks_tls_limit(self):
+    def test_hidmet_preserves_observation_time_and_requires_verified_tls(self):
         page = """<h1>Hydrological data: &nbsp;WEDNESDAY&nbsp;05.08.2026.
           &nbsp;&nbsp;time:&nbsp;8:00&nbsp;(06:00 UTC)</h1>
           <tr><td>DUNAV</td><td>x</td><td><a href="prognoza.php?hm_id=42035">NOVI SAD</a></td>
@@ -1473,7 +1550,8 @@ class ConnectorTests(unittest.TestCase):
 
         self.assertEqual(out["data"], "2026-08-05")
         self.assertIn("2026-08-05T08:00:00", out["observation_time"])
-        self.assertFalse(out["transport_verified"])
+        self.assertTrue(out["transport_verified"])
+        self.assertNotIn("transport_warning", out)
         self.assertEqual(out["statii"][0]["debit_m3s"], 770.0)
 
     def test_png_stats_count_opera_classes_without_pillow(self):

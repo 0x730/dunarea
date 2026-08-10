@@ -6,8 +6,8 @@ documentația le *descrie* dar nimeni nu le *verifică*.
 ## `backup.py` — backup verificat al `cache.db`
 
 ```bash
-python3 ops/backup.py --dest /home/forge/backups --keep-days 14
-python3 ops/backup.py --verify-only /home/forge/backups/cache-2026-08-07.db
+python3 ops/backup.py --dest /home/dunarea/dunarea.info/backups --keep-days 14
+python3 ops/backup.py --verify-only /home/dunarea/dunarea.info/backups/cache-2026-08-10.db
 ```
 
 `cache.db` conține arhiva locală zilnică — singura parte a datelor care **nu se
@@ -26,11 +26,12 @@ rămâne pornit), conversia copiei într-un singur fișier, verificare
 primește `600`, directorul `700`. Ieșire diferită de zero dacă ceva pică — deci
 cronul vă poate anunța.
 
-Cron zilnic, ca utilizatorul `forge`:
+Job zilnic Laravel Forge, ca utilizatorul izolat `dunarea` (03:15 UTC):
 
 ```cron
-15 3 * * * cd /home/forge/SITE && /usr/bin/python3 ops/backup.py \
-           --dest /home/forge/backups --keep-days 14 >> /home/forge/backup.log 2>&1
+15 3 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/backup.py \
+  --dest /home/dunarea/dunarea.info/backups --keep-days 14 \
+  >> /home/dunarea/dunarea.info/backup.log 2>&1
 ```
 
 **Restaurare:** opriți daemonul, înlocuiți `cache.db` cu backupul, reporniți.
@@ -41,16 +42,17 @@ separat, nu peste producție.
 ## `verify_deploy.sh` — ce *este* configurat, nu ce *ar trebui*
 
 ```bash
-bash ops/verify_deploy.sh --origin-ip 203.0.113.10 --domain dunarea.exemplu.ro
+bash ops/verify_deploy.sh --origin-ip 157.90.144.210 --domain dunarea.info
 ```
 
 Nu modifică nimic. Verifică: aplicația ascultă doar pe loopback, permisiunile
 cheilor, `data/keys` neurmărit de git și absent din istoric, prospețimea și
 integritatea celui mai recent backup, cronul, ufw, anteturile de securitate.
 
-Cea mai importantă verificare e `--origin-ip`: dacă IP-ul de origine răspunde
-direct pe 443, oricine poate ocoli Cloudflare, limitarea de rată și tot ce e în
-față cerând direct IP-ul. **Rulați-o din afara rețelei Cloudflare** — de pe
-serverul însuși poate răspunde chiar el și rezultatul nu e concludent.
+Cea mai importantă verificare combină `--origin-ip` cu `--domain`: `curl`
+conectează la IP, dar trimite SNI și Host pentru domeniul real. Pe un server cu
+mai multe vhost-uri, testarea simplă a `https://IP/` verifică doar catch-all-ul
+și poate produce un fals pozitiv. Pentru producție, accesul prin Cloudflare
+trebuie să dea 200 și accesul direct cu SNI `dunarea.info` trebuie să dea 403.
 
 Ieșire diferită de zero dacă o verificare esențială pică.

@@ -1,270 +1,218 @@
-# Deploy pe Laravel Forge (Hetzner) + nginx + Cloudflare
+# Producție: Laravel Forge + Hetzner + Cloudflare
 
-Aplicația e un singur proces Python (stdlib, fără build), deci pe Forge se
-rulează ca **daemon** cu **nginx în față** ca reverse proxy. Pași, în ordine:
+Acesta este runbook-ul canonic pentru `https://dunarea.info`. Valorile secrete
+nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este public.
 
-## -1. Serverul Hetzner (dacă nu există deja)
+## Starea instalată la 10 august 2026
 
-- Forge → **Servers → Create Server → Hetzner Cloud** (conectezi API token-ul
-  Hetzner din Cloud Console → Security → API Tokens).
-- Mărime: **CX22 / CPX11 e mai mult decât suficient** — aplicația consumă
-  ~100 MB RAM și aproape zero CPU între reîmprospătări; cache-ul stă sub 1 GB.
-- Locație: Falkenstein/Nürnberg — latență mică și către sursele DE/AT, și
-  către Cloudflare.
-- Tip: **Web Server** (nu are nevoie de MySQL/Redis — poți debifa tot).
-- Firewall: Forge configurează ufw cu 22/80/443 — exact ce trebuie; opțional,
-  mai târziu, poți restrânge 80/443 la IP-urile Cloudflare.
+- server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
+- site Forge izolat, utilizator Unix `dunarea`;
+- repo GitHub `0x730/dunarea`, branch `main`;
+- deploy-uri Forge zero-downtime, cu patru release-uri păstrate;
+- proces Python administrat ca Forge Background Process;
+- aplicația ascultă numai pe `127.0.0.1:7300`;
+- Nginx reverse proxy pentru `dunarea.info`;
+- Cloudflare proxied (nor portocaliu), SSL/TLS `Full (strict)`;
+- certificat Let's Encrypt administrat de Forge prin DNS-01;
+- baza SQLite și cheile sunt shared paths între release-uri;
+- backup SQLite verificat zilnic la `03:15 UTC`, retenție 14 zile.
 
-## 0. Repo
+Serverul găzduiește și alte site-uri. Nu restrângeți global porturile 80/443 și
+nu modificați procesele, vhost-urile sau firewall-ul celorlalte aplicații.
+Restricția Cloudflare este aplicată numai vhost-ului Danube.
 
-```bash
-# local (repo-ul e deja inițializat și comis):
-git remote add origin git@github.com:CONTUL_TAU/danube-monitor.git
-git push -u origin main
-```
+## 1. Modelul de deploy Forge
 
-## 1. Site în Forge
-
-- **Sites → New Site**: domeniul (ex. `dunarea.exemplu.ro`), project type
-  **Static HTML** (nu instalăm PHP pentru el), web directory irelevant.
-- **Git Repository**: conectează repo-ul, branch `main`.
-- **Deploy Script** — înlocuiește tot cu:
+Site-ul este conectat la GitHub prin integrarea Forge. Deploy script-ul live:
 
 ```bash
-cd /home/forge/dunarea.exemplu.ro
-git pull origin $FORGE_SITE_BRANCH
-# dependența opțională pentru gravimetria GRACE:
-pip3 install --user --quiet h5py || true
-# repornește aplicația după fiecare deploy (numele daemonului îl vezi la pasul 2):
-sudo -S supervisorctl restart daemon-XXXXXX:* || true
+set -euo pipefail
+
+$CREATE_RELEASE()
+
+cd $FORGE_RELEASE_DIRECTORY
+python3 -m unittest discover -s tests
+
+$ACTIVATE_RELEASE()
+
+sudo supervisorctl restart daemon-ID_DIN_FORGE:*
 ```
 
-(Prima dată lasă linia de supervisorctl comentată; o completezi după ce creezi
-daemonul și îi afli numele.)
+ID-ul procesului rămâne în Forge, nu în repo. Ordinea este intenționată:
+release-ul nu devine activ dacă un test eșuează, iar procesul este repornit
+numai după schimbarea atomică a symlink-ului `current`.
 
-## 2. Daemon (procesul aplicației)
+Înainte de un deploy manual:
 
-**Server → Daemons → New Daemon:**
+```bash
+git status --short --branch
+git fetch origin main
+git rev-parse HEAD
+git rev-parse origin/main
+python3 -m unittest discover -s tests
+```
 
-- Command: `python3 server.py`
-- Directory: `/home/forge/dunarea.exemplu.ro`
-- User: `forge`
-- **Environment** (aici stau secretele, NU în git — folosiți env, nu fișiere
-  în directorul de deploy):
-  ```
-  PORT=7300
-  MONITOR_TZ=Europe/Bucharest
-  # jurnal: erorile și cererile lente se scriu întotdeauna; puneți
-  # MONITOR_ACCESS_LOG=1 numai când depanați, altfel inundă supervisorul
-  # MONITOR_ACCESS_LOG=1
-  # MONITOR_SLOW_MS=5000
-  HYDROWEB_KEY=cheia_ta_hydroweb
-  AI_API_KEY=cheia_openai            # activează analiza narativă
-  AI_MODEL=gpt-4o-mini               # opțional
-  ENTSOE_TOKEN=tokenul_tau_daca_il_ai
-  DAHITI_KEY=daca_apare_vreodata
-  ```
-- **Restart policy**: în Forge → daemon, lăsați `startsecs`/`startretries` la
-  valorile implicite sau creșteți-le; aplicația sare singură peste warmup dacă
-  a rulat în ultimele 6 ore, dar o buclă de repornire tot e de evitat.
+După deploy, verificați în Forge că statusul este `finished`, logul conține
+toate testele și commit-ul este cel așteptat.
 
-Supervisor îl pornește, îl ține în viață și îl repornește la crash. La prima
-pornire, warmup-ul durează 1–2 minute (snap-ul celulelor GloFAS + arhiva INHGA);
-serverul ascultă imediat, doar unele carduri se umplu mai lent.
+## 2. Date persistente și secrete
 
-Fișierul GRDC (dacă îl obții): `scp` direct în
-`/home/forge/dunarea.exemplu.ro/data/grdc/` — e în .gitignore, nu vine din repo.
+Forge shared paths:
 
-## 3. Nginx
+```text
+/home/dunarea/dunarea.info/cache.db  -> current/cache.db
+/home/dunarea/dunarea.info/data/keys -> current/data/keys
+```
 
-**Site → Edit Nginx Configuration** — în blocul `server { }`, înlocuiește
-`location /` (și scoate `try_files`-ul de static) cu:
+Permisiuni obligatorii:
+
+```text
+data/keys/                 0700
+data/keys/*.key            0600
+cache.db                   0600
+backups/                   0700
+backups/cache-*.db         0600
+```
+
+În producție este instalată cheia HydroWeb. Cheia OpenAI nu este necesară
+pentru runtime-ul web: analiza AI este o acțiune manuală de operator și nu se
+pornește prin HTTP. ENTSO-E și DAHITI rămân opționale până când există
+credentiale dedicate.
+
+Nu puneți niciodată în GitHub:
+
+- tokenurile Forge, Cloudflare, Hetzner sau API-urile sursă;
+- chei private SSH, fișiere `.env`, deploy-hook URLs sau certificate private;
+- conținutul din `data/keys/` ori o copie a `cache.db`;
+- output verbose de la `curl` autentificat, deoarece poate tipări headere.
+
+Tokenurile operatorului rămân în fișiere locale `0600`, în afara repo-ului.
+
+## 3. Procesul aplicației
+
+Forge Background Process:
+
+```text
+Command:   env PORT=7300 MONITOR_TZ=Europe/Bucharest python3 server.py
+Directory: /home/dunarea/dunarea.info/current
+User:      dunarea
+Processes: 1
+Signal:    SIGTERM
+```
+
+`python3-h5py` este instalat din pachetele Ubuntu pentru gravimetria GRACE.
+Restul aplicației folosește biblioteca standard Python și nu are pas de build.
+
+Verificare locală pe server:
+
+```bash
+curl -fsS http://127.0.0.1:7300/api/health
+ss -ltn | grep ':7300'
+python3 -c 'import h5py; print(h5py.__version__)'
+```
+
+Portul 7300 trebuie să apară numai pe loopback. `warmup_done` trebuie să devină
+`true`; la un cache importat și proaspăt acest lucru se întâmplă imediat.
+
+## 4. Nginx și protecția originii
+
+Vhost-ul Forge proxy-ează toate rutele către `http://127.0.0.1:7300`, cu:
 
 ```nginx
-    location / {
-        proxy_pass         http://127.0.0.1:7300;
-        proxy_http_version 1.1;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        # primele calcule (statistici/anomalii pe cache rece) pot dura ~1 min:
-        proxy_read_timeout 180s;
-        proxy_connect_timeout 10s;
-    }
+location / {
+    limit_req zone=danube_api burst=120 nodelay;
+    proxy_pass http://127.0.0.1:7300;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 180s;
+    proxy_connect_timeout 10s;
+}
 ```
 
-Adăugați și o limită de rată (aplicația interoghează surse oficiale — nu vrem
-ca cineva să le bombardeze prin ea). În blocul `http { }` din
-`/etc/nginx/nginx.conf`:
+Un fișier în `/etc/nginx/conf.d/` definește:
 
-```nginx
-limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
+- zona `danube_api`, `5r/s`, folosită numai de acest vhost;
+- un `geo` construit din listele oficiale Cloudflare IPv4/IPv6;
+- loopback ca excepție pentru verificările locale.
+
+Vhost-ul restabilește IP-ul vizitatorului numai pentru peer-uri Cloudflare și
+respinge cu 403 orice peer care nu este Cloudflare. Verificarea se bazează pe
+`$realip_remote_addr` (peer-ul TCP original), nu pe un header care poate fi
+falsificat. Când Cloudflare schimbă listele publicate, actualizați simultan
+`set_real_ip_from` și harta `geo`, apoi rulați `nginx -t` înainte de reload.
+
+Nu copiați în repo configurația live completă: Forge scrie acolo căile
+certificatului și identificatorii interni, care se pot schimba la reînnoire.
+Păstrați markerii `FORGE CONFIG` și `FORGE SSL` când editați vhost-ul prin API.
+
+## 5. Cloudflare și TLS
+
+În zona `dunarea.info`:
+
+```text
+A      dunarea.info      -> 157.90.144.210   Proxied
+CNAME  www               -> dunarea.info     Proxied
 ```
 
-…iar în `location /` din configurația sitului:
+Cele două CNAME-uri `_acme-challenge` furnizate de Forge rămân permanent
+`DNS only`. Forge folosește delegarea DNS-01 pentru emitere și reînnoire; dacă
+aceste înregistrări sunt șterse, reînnoirea certificatului va eșua.
 
-```nginx
-        limit_req zone=api burst=20 nodelay;
-```
+Cloudflare SSL/TLS trebuie să rămână `Full (strict)`. `/api/*` nu trebuie
+cache-uit la edge; aplicația gestionează prospețimea și cadențarea surselor.
+Fișierele versionate din `/vendor/*` pot primi un TTL lung dacă se adaugă o
+regulă explicită.
 
-Apoi restart nginx din Forge. Aplicația își servește singură staticele —
-nginx-ul doar proxy-ază tot. Aplicația trimite `Content-Security-Policy`,
-`X-Content-Type-Options` și `Referrer-Policy` pe fiecare răspuns, inclusiv pe
-erorile generate de biblioteca standard (501/505/414), pentru că anteturile
-sunt emise din `send_response`, prin care trec toate răspunsurile.
-
-**Nu adăugați `proxy_set_header Connection "";` fără să știți ce faceți.**
-Împreună cu `proxy_http_version 1.1` de mai sus, activează keep-alive între
-nginx și aplicație. Aplicația închide explicit conexiunea pe 405 și refuză
-cererile cu corp, deci nu se desincronizează — dar keep-alive-ul face ca o
-singură cerere numărată de `limit_req` să poată transporta mai multe cereri
-către aplicație.
-
-## 4. Cloudflare
-
-- **DNS**: înregistrare `A` pentru `dunarea` → IP-ul serverului Forge,
-  **Proxied** (nor portocaliu).
-- **Restricționați 80/443 la IP-urile Cloudflare** (Forge → Network, sau ufw
-  cu lista de la cloudflare.com/ips) — altfel IP-ul de origine rămâne
-  accesibil direct și ocolește orice protecție Cloudflare.
-- **SSL/TLS → Overview**: modul **Full (strict)**.
-- **Certificat pe origine** — două variante, oricare merge:
-  - Forge → site → **SSL → LetsEncrypt** (funcționează și cu norul portocaliu
-    activ — Cloudflare lasă `/.well-known/acme-challenge` să treacă); sau
-  - Cloudflare → **Origin Server → Create Certificate**, apoi Forge → SSL →
-    **Install Existing Certificate** (valabil 15 ani, fără reînnoiri).
-- Opțional, ca să nu bată nimeni serverul degeaba:
-  - **Cache Rule**: `/vendor/*` → Cache eligible, Edge TTL 1 lună (ECharts,
-    1 MB, nu se schimbă niciodată);
-  - **Cache Rule**: `/api/*` → Bypass cache (aplicația își face singură
-    cache-ul pe surse; nu vrem staleness dublu).
-
-## 5. Verificare după deploy
+Verificări din afara serverului:
 
 ```bash
-curl -s https://dunarea.exemplu.ro/api/health         # → stare proces
-curl -s https://dunarea.exemplu.ro/api/istoric        # → JSON cu arhiva
-curl -s -o /dev/null -w "%{http_code}\n" https://dunarea.exemplu.ro/   # → 200
+curl -fsS -D - https://dunarea.info/api/health -o /dev/null
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  --resolve dunarea.info:443:157.90.144.210 \
+  https://dunarea.info/api/health
 ```
 
-`/api/health` e ieftin și **nu** interoghează nicio sursă externă: raportează
-doar uptime-ul, dacă warmup-ul s-a terminat și vechimea raportului de anomalii.
-Potrivit ca health check pentru supervisor sau pentru un monitor extern — un
-endpoint care ar declanșa fetch-uri ar fi și o pârghie de amplificare, și ar
-raporta „bolnav" când de fapt doar o sursă e jos. Prospețimea fiecărei surse
-rămâne în `/api/overview`.
+Primul răspuns trebuie să fie 200 și să conțină `cf-ray`. Al doilea trebuie să
+fie 403: conectează direct la origine, dar păstrează SNI/Host corect.
 
-Pastilele din header-ul paginii arată live starea fiecărei surse; dacă vreuna
-e roșie permanent după ~5 minute de la pornire, `supervisorctl tail -f
-daemon-XXXXXX` pe server arată de ce.
+## 6. Backup și restaurare
 
-## Ordinea la prima punere în funcțiune
+Jobul Forge rulează ca `dunarea`:
 
-**Încălziți cache-ul ÎNAINTE de a îndrepta domeniul către server.** Măsurat pe o
-pornire complet la rece (fără `cache.db`), 7 august 2026:
+```cron
+15 3 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/backup.py \
+  --dest /home/dunarea/dunarea.info/backups --keep-days 14 \
+  >> /home/dunarea/dunarea.info/backup.log 2>&1
+```
 
-| moment | ce se întâmplă |
-|---|---|
-| 0 s | serverul ascultă; pagina se încarcă instantaneu |
-| 0–~110 s | prima cerere `/api/overview` durează **111 s** — sub `proxy_read_timeout 180s`, dar nu cu mult |
-| ~6 min | `warmup_done: true`; `cache.db` ≈ 8 MB |
-| după warmup | `/api/anomalii`, `/api/statistici`, `/api/bilant-apa` răspund în **sub o secundă**; `/api/romania` în ~5 s |
+`ops/backup.py` folosește API-ul SQLite online, include WAL-ul, verifică
+integritatea și rândurile permanente, apoi promovează copia atomic. Un `cp` al
+bazei active nu este un backup corect.
 
-Cele 111 s sunt măsurate pe o mașină rapidă, cu latență mică spre surse. Pe un
-VPS cu latență mai mare, sau dacă o sursă răspunde greu, se poate depăși pragul
-de 180 s și primul vizitator primește 504. Nu e o defecțiune a aplicației, dar e
-o primă impresie proastă și se evită complet cu ordinea de mai jos:
+Restaurare:
+
+1. opriți Background Process-ul în Forge;
+2. verificați copia cu `python3 ops/backup.py --verify-only BACKUP`;
+3. înlocuiți atomic `/home/dunarea/dunarea.info/cache.db` și aplicați `0600`;
+4. reporniți procesul și verificați `/api/health`, `/api/overview` și arhiva;
+5. păstrați copia înlocuită până când revizuirea datelor este terminată.
+
+## 7. Acceptanță post-deploy
 
 ```bash
-# 1. porniți daemonul, cu DNS-ul încă neîndreptat spre server (sau nor gri)
-sudo -S supervisorctl start daemon-XXXXXX:*
-
-# 2. așteptați până se termină încălzirea (~6 minute)
-until curl -sf http://127.0.0.1:7300/api/health | grep -q '"warmup_done": true'; do
-  sleep 15; echo "încă se încălzește…"
-done
-
-# 3. abia acum activați norul portocaliu în Cloudflare / îndreptați DNS-ul
+bash ops/verify_deploy.sh \
+  --origin-ip 157.90.144.210 \
+  --domain dunarea.info \
+  --backups /home/dunarea/dunarea.info/backups
 ```
 
-La repornirile ulterioare nu e nevoie: warmup-ul se sare dacă a rulat în
-ultimele 6 ore, iar `cache.db` rămâne pe disc. Contează doar la prima pornire
-și după o ștergere a cache-ului.
+În plus față de postura tehnică, acceptanța cere o revizuire a datelor live:
+timestamp-ul fiecărei surse, statutul de fetch, întârzierea normală a
+furnizorului, consistența dintre sumar și seriile brute și diferența dintre
+date stale servite din cache și o sursă oficială indisponibilă. Un endpoint 200
+nu este dovadă că datele sunt actuale.
 
-Notă: aplicația își cadențează singură cererile către sursele oficiale (găleată
-cu jetoane, per host). Asta face încălzirea puțin mai lentă și e intenționat —
-la cache rece s-ar altfel trimite ~700 de cereri către open-meteo într-o rafală.
-
-## Verificarea posturii de exploatare
-
-Documentația de mai jos descrie ce ar *trebui* configurat. Ce *este* configurat
-se verifică rulând pe server:
-
-```bash
-bash ops/verify_deploy.sh --origin-ip IP_SERVER --domain dunarea.exemplu.ro
-```
-
-Verifică portul aplicației (numai loopback), permisiunile cheilor, faptul că
-`data/keys` nu e urmărit de git, prospețimea și integritatea backupului, cronul,
-ufw, anteturile de securitate și — cel mai important — dacă IP-ul de origine
-răspunde direct pe 443. Ultima verificare e concludentă numai rulată din afara
-rețelei Cloudflare: dacă originea răspunde direct, oricine poate ocoli
-Cloudflare, limitarea de rată și tot ce e în față, cerând direct IP-ul.
-
-## Note de exploatare
-
-- `cache.db` se creează singur pe server (nu vine din git). Poate fi șters,
-  dar **evitați**: conține arhiva locală zilnică (AFDJ/RHMZ/DanubeSTREAM/SEN/
-  INHGA/analize AI), care crește în valoare cu timpul. Ștergerea declanșează
-  și o reconstrucție costisitoare (GRACE ~10 min, snap GloFAS ~2 min).
-- **Backup corect.** `cp` pe baza vie e greșit de două ori: poate prinde
-  fișierul la mijlocul unei tranzacții, iar de când baza rulează în
-  `journal_mode=WAL` lasă în urmă ce nu e încă checkpointat în `cache.db-wal`.
-  Rețeta cu `sqlite3 ... ".backup"` are altă problemă: **utilitarul de linie de
-  comandă nu e instalat implicit** pe un Ubuntu minimal, deci cronul ar fi
-  eșuat tăcut, iar dumneavoastră ați fi crezut că aveți backupuri.
-
-  Folosiți scriptul din repo, care merge cu interpretorul deja instalat:
-  ```bash
-  # cron zilnic, ca utilizatorul forge:
-  15 3 * * * cd /home/forge/SITE && /usr/bin/python3 ops/backup.py \
-             --dest /home/forge/backups --keep-days 14 >> /home/forge/backup.log 2>&1
-  ```
-  Copiază online (fără oprirea serverului), convertește copia într-un singur
-  fișier, o verifică — integritate, structură, numărul de rânduri permanente —
-  și abia apoi o promovează atomic. Ieșire diferită de zero dacă ceva pică, deci
-  cronul vă poate anunța. Backupul primește 600, directorul 700.
-
-  **Probă de restaurare** — un backup neverificat este o ipoteză:
-  ```bash
-  python3 ops/backup.py --verify-only /home/forge/backups/cache-2026-08-07.db
-  # restaurare completă: opriți daemonul, înlocuiți cache.db, reporniți
-  ```
-  Probă făcută pe 2026-08-07: instanța pornită pe o copie restaurată a servit
-  aceleași valori ca originalul (14 secțiuni de climatologie, același z al
-  bilanțului) și a sărit warmup-ul, adică arhiva locală a supraviețuit intactă.
-- Cache-ul se curăță singur (rânduri expirate de peste 30 de zile, o dată pe
-  zi); cheile permanente — arhiva locală — sunt protejate explicit.
-- Aplicația nu acceptă niciun verb care modifică (POST/PUT/PATCH/DELETE dau
-  405) și nu are autentificare, pentru că nu expune nimic privat. Atenție însă
-  la formularea exactă: **un GET public poate scrie** — populează `cache.db` și,
-  prin `daily_snapshot()`, adaugă rânduri permanente în arhiva locală; tot un
-  GET consumă cota de API a operatorului la HydroWeb/DAHITI/ENTSO-E. Nu e
-  „fără scriere din exterior", ci „fără scriere de conținut din exterior".
-- Cheile se citesc din env-ul daemonului **sau**, dacă env-ul nu le are, din
-  `data/keys/` (ignorat de git, chmod 600). Pe server preferați env-ul. Cheile
-  **nu** ajung în `cache.db`, în răspunsuri sau în mesajele de eroare —
-  verificat empiric pe baza vie și pe modurile reale de eșec.
-- Analiza AI nu apare în UI, nu rulează în fundal și nu poate fi pornită prin
-  HTTP; se lansează local, numai la cererea operatorului, cu
-  `python3 analiza_ai.py`. Endpointul `/api/analiza-ai` întoarce doar acest
-  statut manual, iar patru teste blochează regresia.
-- Dependența `h5py` (doar pentru gravimetria GRACE) e opțională: dacă
-  instalarea eșuează, cardul respectiv se dezactivează singur, restul merge.
-- `static/vendor/echarts.min.js` e livrat cu `integrity=` (SRI). Dacă
-  actualizați biblioteca, recalculați hash-ul și înlocuiți-l în `index.html`,
-  altfel browserul refuză să execute scriptul și graficele dispar:
-  ```bash
-  openssl dgst -sha384 -binary static/vendor/echarts.min.js | openssl base64 -A
-  ```
+Pentru detaliile backupului și verificatorului, vedeți `ops/README.md`.
