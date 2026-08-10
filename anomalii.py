@@ -1236,18 +1236,18 @@ def report():
                 c["nota"] = CLIM_NOTES[pid]
             rep["climatologie"].append(c)
         except Exception as exc:
-            rep["erori"][f"clim:{pid}"] = str(exc)
+            rep["erori"][f"clim:{pid}"] = C.public_error(exc)
     rep["climatologie"].sort(key=lambda c: -(c["km"] or 0))
 
     try:
         rep["bilant"] = balance()
     except Exception as exc:
-        rep["erori"]["bilant"] = str(exc)
+        rep["erori"]["bilant"] = C.public_error(exc)
 
     try:
         rep["mire_crosscheck"] = crosscheck_mire()
     except Exception as exc:
-        rep["erori"]["mire_crosscheck"] = str(exc)
+        rep["erori"]["mire_crosscheck"] = C.public_error(exc)
 
     for key, fn in (("satelit", satellite_check),
                     ("germania", germany_check),
@@ -1257,19 +1257,19 @@ def report():
         try:
             rep[key] = fn()
         except Exception as exc:
-            rep["erori"][key] = str(exc)
+            rep["erori"][key] = C.public_error(exc)
 
     try:
         rep["masurat_vs_model"] = measured_vs_model()
     except Exception as exc:
-        rep["erori"]["masurat_vs_model"] = str(exc)
+        rep["erori"]["masurat_vs_model"] = C.public_error(exc)
 
     try:
         baz = next((c for c in rep["climatologie"] if c["id"] == "bazias"), None)
         dp = baz["azi"]["pct"] if baz and baz.get("azi") else None
         rep["precipitatii"] = precip_coherence(dp)
     except Exception as exc:
-        rep["erori"]["precipitatii"] = str(exc)
+        rep["erori"]["precipitatii"] = C.public_error(exc)
 
     # Ce intrări au venit din cache expirat. Fără asta, `stale: false` pe
     # răspuns însemna doar „raportul e recalculat recent", nu „datele sunt

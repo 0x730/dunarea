@@ -12,6 +12,7 @@ import html as html_lib
 import ipaddress
 import os
 import re
+import socket
 import sqlite3
 import ssl
 import struct
@@ -309,7 +310,7 @@ def _fetch_and_store(key, ttl, fetch_fn, stale_ok):
                     "data": old["data"],
                     "cache_age_s": int(old["age"]),
                     "stale": True,
-                    "error": str(exc),
+                    "error": public_error(exc),
                 }
         raise
 
@@ -324,8 +325,26 @@ MAX_BINARY_BYTES = 32 * 1024 * 1024
 MAX_DATASET_BYTES = 96 * 1024 * 1024   # netCDF/HDF5 (GRACE)
 PNG_MAX_PIXELS = 4_000_000             # ~2000×2000; hărțile reale sunt mult sub
 
-# Anteturi care nu au voie să treacă spre alt host la redirect.
-_SENSITIVE_HEADERS = ("authorization", "x-api-key", "cookie", "proxy-authorization")
+def public_error(exc):
+    """Cod public stabil pentru o excepție; detaliile rămân numai în log.
+
+    Mesajele bibliotecilor pot conține URL-uri semnate, căi locale, fragmente
+    din răspunsul upstream sau adrese interne. API-ul are nevoie de o categorie
+    utilă operațional, nu de `str(exc)`.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        code = getattr(exc, "code", None)
+        return f"upstream_http_{code}" if isinstance(code, int) else "upstream_http_error"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "upstream_timeout"
+    if isinstance(exc, ssl.SSLError):
+        return "upstream_tls_error"
+    if isinstance(exc, (json.JSONDecodeError, UnicodeError, ValueError,
+                        KeyError, IndexError, TypeError, ET.ParseError)):
+        return "invalid_upstream_response"
+    if isinstance(exc, RuntimeError):
+        return "upstream_response_rejected"
+    return "upstream_unavailable"
 
 
 # Limitare de rată pe IEȘIRE, per host. Aceasta NU e o protecție a aplicației
@@ -380,68 +399,38 @@ def _read_bounded(resp, max_bytes):
 
 
 class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
-    """Cu verificarea TLS relaxată, un redirect către alt host ar duce
-    contextul nesigur oriunde. Permitem redirect doar pe același host și numai
-    pe HTTPS — altfel un singur 302 coboară descărcarea la text clar, unde un
-    atacator nu mai are nici măcar nevoie să termine TLS-ul."""
+    """Păstrează un request autentificat pe același host HTTPS și port 443.
+
+    Catalogul și toate activele HydroWeb verificate la implementare rămân pe
+    hostul oficial. Dacă furnizorul introduce un storage host, conectorul
+    eșuează închis până când destinația nouă este revizuită explicit.
+    """
 
     def __init__(self, host):
-        self.host = host
+        self.host = (host or "").lower().rstrip(".")
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         parsed = urllib.parse.urlparse(newurl)
-        if parsed.scheme != "https" or parsed.hostname != self.host:
+        host = (parsed.hostname or "").lower().rstrip(".")
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        if (parsed.scheme != "https" or host != self.host or parsed.username
+                or parsed.password or port not in (None, 443)):
             raise urllib.error.HTTPError(
-                newurl, code,
-                "redirect respins: alt host sau coborâre la text clar (TLS relaxat)",
+                newurl, code, "redirect respins: destinație HTTPS neașteptată",
                 headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-class _StripAuthOnCrossHost(urllib.request.HTTPRedirectHandler):
-    """Redirect care nu duce credențialele altundeva.
-
-    `HTTPRedirectHandler` din stdlib copiază toate anteturile pe cererea
-    redirecționată, indiferent de host, și acceptă și http. Cum activele
-    HydroWeb sunt „semnate și efemere" — forma tipică a unor adrese presemnate
-    servite printr-un 302 — cheia ar ajunge la operatorul de stocare în operare
-    perfect normală.
-    """
-
-    def __init__(self, host):
-        self.host = host
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        parsed = urllib.parse.urlparse(newurl)
-        if parsed.scheme != "https":
-            raise urllib.error.HTTPError(
-                newurl, code, "redirect respins: coborâre la text clar",
-                headers, fp)
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and parsed.hostname != self.host:
-            for name in list(new.headers):
-                if name.lower() in _SENSITIVE_HEADERS:
-                    del new.headers[name]
-        return new
-
-
-def http_get(url, timeout=25, insecure=False, binary=False, max_bytes=None):
+def http_get(url, timeout=25, binary=False, max_bytes=None):
     _throttle(url)
     limit = max_bytes if max_bytes is not None else (
         MAX_BINARY_BYTES if binary else MAX_TEXT_BYTES)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    if insecure:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPSHandler(context=ctx),
-            _SameHostRedirect(urllib.parse.urlparse(url).hostname))
-        with opener.open(req, timeout=timeout) as resp:
-            raw = _read_bounded(resp, limit)
-    else:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = _read_bounded(resp, limit)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = _read_bounded(resp, limit)
     return raw if binary else raw.decode("utf-8", errors="replace")
 
 
@@ -1555,7 +1544,7 @@ def danubehis_romanian_tributaries():
                 try:
                     rows.append(future.result())
                 except Exception as exc:
-                    errors[spec["river_id"]] = str(exc)[:160]
+                    errors[spec["river_id"]] = public_error(exc)
         order = {spec["river_id"]: i
                  for i, spec in enumerate(DANUBEHIS_RO_TRIBUTARY_SECTIONS)}
         rows.sort(key=lambda item: order[item["river_id"]])
@@ -2688,7 +2677,7 @@ def sen_market_context():
             out[key] = {**result["data"], "stale": bool(result.get("stale")),
                         "cache_age_s": result.get("cache_age_s")}
         except Exception as exc:
-            out[key] = {"available": False, "error": str(exc)[:240]}
+            out[key] = {"available": False, "error": public_error(exc)}
     out["available_components"] = sum(
         1 for value in out.values()
         if isinstance(value, dict) and value.get("available"))
@@ -2908,10 +2897,10 @@ def _hydroweb_get(url, key, raw=False, max_bytes=None):
     req = urllib.request.Request(url, headers={
         "User-Agent": HYDROWEB_UA, "Accept": "application/json,text/plain",
         "X-API-Key": key})
-    # Opener propriu: cheia nu pleacă spre alt host dacă activul e servit
-    # printr-un redirect către stocarea semnată.
+    # Opener propriu: cheia nu pleacă niciodată spre alt host. O schimbare de
+    # infrastructură la furnizor trebuie revizuită înainte de a fi permisă.
     opener = urllib.request.build_opener(
-        _StripAuthOnCrossHost(urllib.parse.urlparse(url).hostname))
+        _SameHostRedirect(urllib.parse.urlparse(url).hostname))
     with opener.open(req, timeout=40) as r:
         data = _read_bounded(r, max_bytes if max_bytes is not None else MAX_TEXT_BYTES)
     return data if raw else json.loads(data)
@@ -3064,7 +3053,7 @@ def hydroweb_danube(max_statii=12):
                 except Exception as exc:
                     entry = {"statie": f["id"].split("@", 1)[0],
                              "km": _hydroweb_feature_km(f),
-                             "eroare": str(exc)[:80],
+                             "eroare": public_error(exc),
                              "quality_flags": ["eroare_citire"],
                              "eligibila_detector": False}
                 statii.append(entry)
@@ -3386,7 +3375,7 @@ def copernicus_land_context():
             try:
                 layers[kind] = _cdse_latest_feature(kind, spec)
             except Exception as exc:
-                layers[kind] = {"activ": False, "motiv": str(exc)[:120],
+                layers[kind] = {"activ": False, "motiv": public_error(exc),
                                 "collection": spec["collection"], "title": spec["title"]}
         if not any(v.get("activ") for v in layers.values()):
             raise RuntimeError("niciun strat Copernicus Land nu a răspuns")
@@ -3493,7 +3482,7 @@ def earthdata_satellite_catalog():
                 sources[source_id] = _cmr_source_status(source_id, spec)
             except Exception as exc:
                 sources[source_id] = {"activ": False, "catalog_activ": False,
-                                      "title": spec["title"], "motiv": str(exc)[:120]}
+                                      "title": spec["title"], "motiv": public_error(exc)}
         if not any(s.get("catalog_activ") for s in sources.values()):
             raise RuntimeError("catalogul NASA CMR nu a răspuns pentru nicio misiune")
         return {
@@ -3879,7 +3868,7 @@ def overview():
         pg = pegelonline_stations()
         result["pegelonline"] = {"stations": pg["data"], "stale": pg["stale"]}
     except Exception as exc:
-        result["errors"]["pegelonline"] = str(exc)
+        result["errors"]["pegelonline"] = public_error(exc)
 
     for pid in GLOFAS_POINTS:
         try:
@@ -3897,7 +3886,7 @@ def overview():
                 "stale": r["stale"],
             })
         except Exception as exc:
-            result["errors"][f"glofas:{pid}"] = str(exc)
+            result["errors"][f"glofas:{pid}"] = public_error(exc)
 
     try:
         b = inhga_bulletin()
@@ -3907,6 +3896,6 @@ def overview():
             "cache_age_s": b.get("cache_age_s"),
         }
     except Exception as exc:
-        result["errors"]["inhga"] = str(exc)
+        result["errors"]["inhga"] = public_error(exc)
 
     return result

@@ -171,9 +171,11 @@ class PublicApiSecurityTests(unittest.TestCase):
                 mock.patch.object(C, "cached", side_effect=explode):
             out = server.api_health({})
 
+        version = Path(__file__).resolve().parents[1].joinpath("VERSION") \
+            .read_text(encoding="ascii").strip()
         self.assertEqual(out["status"], "ok")
-        self.assertEqual(out["version"], "1.0.0")
-        self.assertEqual(out["release"], "v1.0.0")
+        self.assertEqual(out["version"], version)
+        self.assertEqual(out["release"], f"v{version}")
         self.assertEqual(out["url"], "https://dunarea.info")
         self.assertEqual(out["project_url"], "https://github.com/0x730/dunarea")
         self.assertIn("uptime_s", out)
@@ -1201,33 +1203,50 @@ class ConnectorTests(unittest.TestCase):
             # o singură cerere: listingul. Pagina nu a fost descărcată.
             self.assertEqual(get.call_count, 1)
 
-    def test_cross_host_redirect_drops_the_api_key(self):
-        """Un activ semnat servit prin 302 nu are voie să ducă cheia altundeva."""
-        handler = C._StripAuthOnCrossHost("hydroweb.next.theia-land.fr")
+    def test_hydroweb_redirect_preserves_key_only_on_the_exact_host(self):
+        handler = C._SameHostRedirect("hydroweb.next.theia-land.fr")
         req = urllib.request.Request(
             "https://hydroweb.next.theia-land.fr/asset",
             headers={"X-API-Key": "cheie-secreta", "User-Agent": "x"})
 
-        moved = handler.redirect_request(
-            req, None, 302, "Found", {}, "https://cdn.example/signed-asset")
         kept = handler.redirect_request(
             req, None, 302, "Found", {}, "https://hydroweb.next.theia-land.fr/b")
 
-        headers_moved = {k.lower(): v for k, v in moved.headers.items()}
         headers_kept = {k.lower(): v for k, v in kept.headers.items()}
-        self.assertNotIn("x-api-key", headers_moved)
         self.assertEqual(headers_kept.get("x-api-key"), "cheie-secreta")
-        with self.assertRaises(urllib.error.HTTPError):
-            handler.redirect_request(req, None, 302, "Found", {},
-                                     "http://hydroweb.next.theia-land.fr/b")
 
-    def test_relaxed_tls_redirect_refuses_cleartext_downgrade(self):
-        handler = C._SameHostRedirect("www.hidmet.gov.rs")
-        req = urllib.request.Request("https://www.hidmet.gov.rs/a")
-        for target in ("http://www.hidmet.gov.rs/a",
-                       "https://www.hidmet.gov.rs.evil.example/a"):
+    def test_hydroweb_redirect_refuses_every_other_destination(self):
+        handler = C._SameHostRedirect("hydroweb.next.theia-land.fr")
+        req = urllib.request.Request("https://hydroweb.next.theia-land.fr/a")
+        for target in ("http://cdn.example/asset",
+                       "https://cdn.example/asset",
+                       "https://127.0.0.1/asset",
+                       "https://user:secret@cdn.example/asset",
+                       "https://hydroweb.next.theia-land.fr:8443/asset"):
             with self.assertRaises(urllib.error.HTTPError):
                 handler.redirect_request(req, None, 302, "Found", {}, target)
+
+    def test_public_error_codes_never_echo_exception_details(self):
+        secret = "/home/dunarea/.env?token=secret"
+        cases = {
+            RuntimeError(secret): "upstream_response_rejected",
+            ValueError(secret): "invalid_upstream_response",
+            TimeoutError(secret): "upstream_timeout",
+            OSError(secret): "upstream_unavailable",
+            urllib.error.HTTPError("https://example.test", 503, secret, {}, None):
+                "upstream_http_503",
+        }
+        for exc, expected in cases.items():
+            public = C.public_error(exc)
+            self.assertEqual(public, expected)
+            self.assertNotIn("token", public)
+            self.assertNotIn("/home", public)
+
+    def test_no_transport_can_disable_tls_verification(self):
+        source = inspect.getsource(C)
+        self.assertNotIn("CERT_NONE", source)
+        self.assertNotIn("check_hostname = False", source)
+        self.assertNotIn("insecure", inspect.signature(C.http_get).parameters)
 
     def test_outbound_throttle_allows_a_burst_then_limits(self):
         """Suntem oaspeți pe API-urile oficiale: single-flight apără per cheie,

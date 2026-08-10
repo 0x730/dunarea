@@ -334,7 +334,7 @@ def api_delta(q):
                 "discharge_m3s": latest[1] if latest else None,
             }
         except Exception as exc:
-            out["puncte"][pid] = {"error": str(exc)}
+            out["puncte"][pid] = {"error": C.public_error(exc)}
 
     tot = out["puncte"].get("ceatal_izmail", {}).get("discharge_m3s")
     chi = out["puncte"].get("brat_chilia", {}).get("discharge_m3s")
@@ -828,7 +828,7 @@ def api_raport(q):
         try:
             out["sectiuni"][nume] = fn()
         except Exception as exc:
-            out["sectiuni"][nume] = {"eroare": str(exc)}
+            out["sectiuni"][nume] = {"eroare": C.public_error(exc)}
     return out
 
 

@@ -64,6 +64,11 @@ fi
 # ------------------------------------------------------------------ secrete ---
 head_ "Secrete"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -e "$APP_DIR/.env" ]; then
+  ENV_PERMS=$(stat -Lc '%a' "$APP_DIR/.env")
+  [ "$ENV_PERMS" = "600" ] && ok ".env are 600" \
+    || bad ".env are $ENV_PERMS (obligatoriu 600, inclusiv când este gol)"
+fi
 if [ -d "$APP_DIR/data/keys" ]; then
   KEY_DIR=$(readlink -f "$APP_DIR/data/keys")
   perms=$(stat -Lc '%a' "$KEY_DIR")

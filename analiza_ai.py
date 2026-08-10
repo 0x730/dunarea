@@ -113,7 +113,7 @@ def _safe_context(fetch_fn):
             return {"date": result["data"], "livrare": _delivery_meta(result)}
         return {"date": result, "livrare": {}}
     except Exception as exc:
-        return {"date": None, "livrare": {"eroare": str(exc)[:240]}}
+        return {"date": None, "livrare": {"eroare": C.public_error(exc)}}
 
 
 def _inhga():
@@ -319,9 +319,8 @@ def _defang(value):
     """Textul terț intră în prompt ca date, cu lungime și alfabet mărginite.
 
     Codificarea JSON protejează structura, nu conținutul: modelul citește șirul
-    decodat, deci un `str(exc)` cu fraza de eroare a unui server străin sau un
-    titlu scrapat ajung la el ca text liber. Regula 15 din PROMPT_SISTEM îi
-    spune cum să le trateze; aici le mărginim.
+    decodat, deci un titlu sau paragraf scrapat ajunge la el ca text liber.
+    Regula 15 din PROMPT_SISTEM îi spune cum să îl trateze; aici îl mărginim.
     """
     if isinstance(value, str):
         clean = _CONTROL_CHARS_RE.sub(" ", value)
@@ -533,7 +532,8 @@ def _analiza_locked(key):
         return {"data": rezultat, "stale": False}
     except Exception as exc:
         if veche:
-            return {"data": veche["data"], "stale": True, "error": str(exc)}
+            return {"data": veche["data"], "stale": True,
+                    "error": C.public_error(exc)}
         raise
 
 
