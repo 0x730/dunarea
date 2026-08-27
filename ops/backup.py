@@ -161,6 +161,15 @@ def backup(source, dest, keep_days):
             dst.close()
     except sqlite3.DatabaseError as exc:
         _log(f"EȘEC: copierea nu a reușit — {exc}")
+        # Calea de eroare trebuie să lase directorul fără bytes parțiali.
+        # Off-box orchestration compune cu această funcție și nu are voie să
+        # confunde un `.partial` vechi cu o copie din rularea curentă.
+        for leftover in (partial, partial + "-wal", partial + "-shm"):
+            if os.path.exists(leftover):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
         return False
     finally:
         src.close()
@@ -172,7 +181,8 @@ def backup(source, dest, keep_days):
 
     if not verify(partial, expected):
         _log("EȘEC: copia nu a trecut verificarea; nu o promovez")
-        os.remove(partial)
+        if os.path.exists(partial):
+            os.remove(partial)
         return False
 
     os.replace(partial, target)      # promovare atomică: nu există backup pe jumătate

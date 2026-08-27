@@ -176,10 +176,70 @@ class PublicApiSecurityTests(unittest.TestCase):
         self.assertEqual(out["status"], "ok")
         self.assertEqual(out["version"], version)
         self.assertEqual(out["release"], f"v{version}")
+        self.assertEqual(out["buildSha"], server.BUILD_SHA)
+        self.assertRegex(out["buildSha"], r"^(unknown|[0-9a-f]{40})$")
         self.assertEqual(out["url"], "https://dunarea.info")
         self.assertEqual(out["project_url"], "https://github.com/0x730/dunarea")
         self.assertIn("uptime_s", out)
         self.assertIn("warmup_done", out)
+
+    def test_build_revision_accepts_only_a_full_git_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            revision = Path(directory, ".build-revision")
+            revision.write_text("A" * 40 + "\n", encoding="ascii")
+            self.assertEqual(server._load_build_sha(str(revision)), "a" * 40)
+            revision.write_text("ecac3b2\n", encoding="ascii")
+            self.assertEqual(server._load_build_sha(str(revision)), "unknown")
+
+    def test_security_txt_is_canonical_future_dated_plain_text(self):
+        root = Path(__file__).resolve().parents[1]
+        security = root.joinpath("static/.well-known/security.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Contact: mailto:daniel@0x730.com\n", security)
+        self.assertIn(
+            "Canonical: https://dunarea.info/.well-known/security.txt\n", security
+        )
+        self.assertIn("Preferred-Languages: ro, en\n", security)
+        expires = next(
+            line.removeprefix("Expires: ")
+            for line in security.splitlines()
+            if line.startswith("Expires: ")
+        )
+        expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        self.assertGreater(expiry, datetime.now(timezone.utc))
+        self.assertLessEqual(
+            expiry - datetime.now(timezone.utc), timedelta(days=366)
+        )
+        self.assertEqual(server.MIME[".txt"], "text/plain; charset=utf-8")
+
+    def test_security_txt_handler_serves_exact_plain_text_for_get_and_head(self):
+        expected = Path(__file__).resolve().parents[1].joinpath(
+            "static/.well-known/security.txt"
+        ).read_bytes()
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/.well-known/security.txt"
+        handler.headers = {}
+        handler._send = mock.Mock()
+
+        handler.do_GET()
+        handler._send.assert_called_once_with(
+            200,
+            expected,
+            "text/plain; charset=utf-8",
+            False,
+            cache_control="no-cache",
+        )
+
+        handler._send.reset_mock()
+        handler.do_HEAD()
+        handler._send.assert_called_once_with(
+            200,
+            expected,
+            "text/plain; charset=utf-8",
+            True,
+            cache_control="no-cache",
+        )
 
     def test_release_metadata_has_one_semver_source_of_truth(self):
         root = Path(__file__).resolve().parents[1]

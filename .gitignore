@@ -13,6 +13,7 @@ data/certs/
 *.pfx
 *.token
 *.credentials
+.build-revision
 .env
 .env.*
 !.env.example

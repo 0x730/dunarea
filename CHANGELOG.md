@@ -4,6 +4,18 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.2](https://github.com/0x730/dunarea/tree/v1.0.2) — 2026-08-27
+
+Remediere operațională pentru recovery și contractele publice:
+
+- copia SQLite WAL-aware existentă este compusă cu criptare autentificată,
+  upload privat Spaces, read-back de mărime/SHA, retenție Danube-only și cleanup;
+- monitorul independent poate alerta prin Scaleway TEM, iar drill-ul restaurează
+  numai într-o copie temporară și măsoară RPO/RTO;
+- `/api/health.buildSha` este legat de checkout-ul Forge activ;
+- `/.well-known/security.txt` publică contactul canonic cu MIME `text/plain`;
+- producția trece la deploy manual, cu Quick Deploy dezactivat.
+
 ## [v1.0.1](https://github.com/0x730/dunarea/tree/v1.0.1) — 2026-08-11
 
 Patch de securitate pentru suprafața publică și transportul către surse:

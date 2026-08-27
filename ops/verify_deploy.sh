@@ -13,6 +13,8 @@ set -uo pipefail
 DOMAIN=""
 ORIGIN_IP=""
 BACKUP_DIR="${BACKUP_DIR:-/home/dunarea/dunarea.info/backups}"
+OFFSITE_CONFIG="${OFFSITE_CONFIG:-/home/dunarea/dunarea.info/data/keys/offsite-backup.env}"
+OFFSITE_STATUS="${OFFSITE_STATUS:-/home/dunarea/dunarea.info/backup-status.json}"
 APP_PORT="${PORT:-7300}"
 FAIL=0
 WARN=0
@@ -22,6 +24,8 @@ while [ $# -gt 0 ]; do
     --domain)    DOMAIN="$2"; shift 2 ;;
     --origin-ip) ORIGIN_IP="$2"; shift 2 ;;
     --backups)   BACKUP_DIR="$2"; shift 2 ;;
+    --offsite-config) OFFSITE_CONFIG="$2"; shift 2 ;;
+    --offsite-status) OFFSITE_STATUS="$2"; shift 2 ;;
     *) echo "argument necunoscut: $1"; exit 2 ;;
   esac
 done
@@ -40,6 +44,18 @@ if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >/tmp/_heal
     ok "runtime-ul raportează versiunea ${EXPECTED_VERSION}"
   else
     bad "versiunea runtime nu coincide cu VERSION (${EXPECTED_VERSION})"
+  fi
+  EXPECTED_SHA=$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" rev-parse HEAD)
+  if grep -q "\"buildSha\": \"${EXPECTED_SHA}\"" /tmp/_health.$$; then
+    ok "runtime-ul raportează checkout-ul exact ${EXPECTED_SHA}"
+  else
+    bad "buildSha runtime nu coincide cu checkout-ul activ (${EXPECTED_SHA})"
+  fi
+  if [ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.build-revision" ] \
+      && [ "$(tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.build-revision")" = "$EXPECTED_SHA" ]; then
+    ok ".build-revision este legat de checkout-ul activ"
+  else
+    bad ".build-revision lipsește sau nu coincide cu checkout-ul activ"
   fi
   if grep -q '"warmup_done": true' /tmp/_health.$$; then
     ok "warmup terminat"
@@ -112,9 +128,34 @@ if [ -d "$BACKUP_DIR" ]; then
 else
   bad "directorul de backup $BACKUP_DIR nu există"
 fi
-crontab -l 2>/dev/null | grep -q "ops/backup.py" \
+crontab -l 2>/dev/null | grep -Eq "ops/(backup|offsite_backup)\.py" \
   && ok "cronul de backup e instalat" \
   || warn "niciun cron cu ops/backup.py în crontab-ul acestui utilizator"
+
+if [ -f "$OFFSITE_CONFIG" ]; then
+  offsite_out="/tmp/_offsite-monitor.$$"
+  if python3 "$APP_DIR/ops/offsite_backup.py" monitor \
+      --config "$OFFSITE_CONFIG" --status-file "$OFFSITE_STATUS" \
+      --max-age-hours 30 >"$offsite_out" 2>&1; then
+    ok "obiectul criptat off-box este proaspăt și citit autentificat"
+  else
+    bad "monitorul off-box nu confirmă un obiect proaspăt"
+  fi
+  rm -f "$offsite_out"
+  crontab -l 2>/dev/null | grep -q "offsite_backup.py backup" \
+    && ok "jobul compus SQLite + off-box este instalat" \
+    || warn "jobul off-box nu este vizibil în crontab-ul acestui utilizator; verifică programarea în Forge"
+  crontab -l 2>/dev/null | grep -q "offsite_backup.py monitor" \
+    && ok "monitorul independent de prospețime este instalat" \
+    || warn "monitorul off-box nu este vizibil în crontab-ul acestui utilizator; verifică programarea în Forge"
+  if [ -f "$OFFSITE_STATUS" ] && [ "$(stat -c '%a' "$OFFSITE_STATUS")" = "600" ]; then
+    ok "evidența backup/restore are 600"
+  else
+    bad "evidența off-box lipsește sau nu are 600"
+  fi
+else
+  warn "configurația Danube Spaces/TEM lipsește; off-box nu este activ"
+fi
 
 # --------------------------------------------------------------------- rețea ---
 head_ "Rețea"
@@ -150,6 +191,22 @@ if [ -n "$DOMAIN" ]; then
   for h in content-security-policy x-content-type-options referrer-policy; do
     echo "$hdrs" | grep -qi "^${h}:" && ok "antet $h prezent" || bad "antet $h lipsă"
   done
+  security_headers="/tmp/_security-headers.$$"
+  security_body="/tmp/_security-body.$$"
+  if curl -fsS --max-time 10 -D "$security_headers" \
+      -o "$security_body" "https://${DOMAIN}/.well-known/security.txt"; then
+    grep -qi '^content-type: text/plain' "$security_headers" \
+      && ok "security.txt are MIME text/plain" \
+      || bad "security.txt nu are MIME text/plain"
+    grep -qx 'Contact: mailto:daniel@0x730.com' "$security_body" \
+      && grep -qx "Canonical: https://${DOMAIN}/.well-known/security.txt" "$security_body" \
+      && grep -q '^Expires: 2027-08-27T23:59:59Z$' "$security_body" \
+      && ok "security.txt public are contact, expirare și URL canonic" \
+      || bad "security.txt public nu respectă contractul RFC 9116"
+  else
+    bad "security.txt public nu răspunde"
+  fi
+  rm -f "$security_headers" "$security_body"
 fi
 
 # -------------------------------------------------------------------- raport ---

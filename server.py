@@ -50,6 +50,25 @@ def _load_version():
 
 APP_VERSION = _load_version()
 RELEASE_TAG = f"v{APP_VERSION}" if APP_VERSION != "dev" else "dev"
+
+
+def _load_build_sha(path=None):
+    """Revizia exactă pregătită în directorul release-ului care rulează.
+
+    Forge generează fișierul după checkout și îl verifică față de HEAD înainte
+    și după activarea symlink-ului. Nu acceptăm prefixe sau valori furnizate din
+    mediu: un release nu poate pretinde că este alt checkout.
+    """
+    revision_path = path or os.path.join(BASE_DIR, ".build-revision")
+    try:
+        with open(revision_path, encoding="ascii") as fh:
+            revision = fh.read().strip()
+    except OSError:
+        return "unknown"
+    return revision.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", revision) else "unknown"
+
+
+BUILD_SHA = _load_build_sha()
 PUBLIC_URL = "https://dunarea.info"
 PROJECT_URL = "https://github.com/0x730/dunarea"
 
@@ -69,6 +88,7 @@ MIME = {
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".ico": "image/x-icon",
+    ".txt": "text/plain; charset=utf-8",
 }
 
 
@@ -159,6 +179,7 @@ def api_health(q):
         "status": "ok",
         "version": APP_VERSION,
         "release": RELEASE_TAG,
+        "buildSha": BUILD_SHA,
         "url": PUBLIC_URL,
         "project_url": PROJECT_URL,
         "uptime_s": round(now - STARTED_AT, 1),

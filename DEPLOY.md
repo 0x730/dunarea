@@ -3,10 +3,10 @@
 Acesta este runbook-ul canonic pentru `https://dunarea.info`. Valorile secrete
 nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este public.
 
-## Starea instalată la 11 august 2026
+## Starea instalată la 27 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.1`](https://github.com/0x730/dunarea/tree/v1.0.1);
+- release instalat: [`v1.0.2`](https://github.com/0x730/dunarea/tree/v1.0.2);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -19,6 +19,8 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - certificat Let's Encrypt administrat de Forge prin DNS-01;
 - baza SQLite și cheile sunt shared paths între release-uri;
 - backup SQLite verificat zilnic la `03:15 UTC`, retenție 14 zile.
+- deploy manual din Forge; Quick Deploy este dezactivat și un push nu pornește
+  singur producția.
 
 Serverul găzduiește și alte site-uri. Nu restrângeți global porturile 80/443 și
 nu modificați procesele, vhost-urile sau firewall-ul celorlalte aplicații.
@@ -34,16 +36,24 @@ set -euo pipefail
 $CREATE_RELEASE()
 
 cd $FORGE_RELEASE_DIRECTORY
+RELEASE_SHA="$(python3 ops/write_build_revision.py \
+  --repository "$FORGE_RELEASE_DIRECTORY" \
+  --output "$FORGE_RELEASE_DIRECTORY/.build-revision")"
 python3 -m unittest discover -s tests
 
 $ACTIVATE_RELEASE()
 
+test "$(git -C /home/dunarea/dunarea.info/current rev-parse HEAD)" = "$RELEASE_SHA"
+test "$(cat /home/dunarea/dunarea.info/current/.build-revision)" = "$RELEASE_SHA"
 sudo supervisorctl restart daemon-ID_DIN_FORGE:*
 ```
 
 ID-ul procesului rămâne în Forge, nu în repo. Ordinea este intenționată:
-release-ul nu devine activ dacă un test eșuează, iar procesul este repornit
-numai după schimbarea atomică a symlink-ului `current`.
+release-ul nu devine activ dacă revizia nu poate fi legată de checkout sau dacă
+un test eșuează. După activare, aceleași 40 de cifre hex trebuie să existe în
+Git HEAD și în `.build-revision`; procesul este repornit numai după aceste două
+probe. `/api/health.buildSha` citește exclusiv fișierul din release-ul care
+rulează, nu o valoare de mediu ce ar putea deriva.
 
 Înainte de un deploy manual:
 
@@ -57,7 +67,8 @@ python3 -m unittest discover -s tests
 
 După deploy, verificați în Forge că statusul este `finished`, logul conține
 toate testele și commit-ul este cel așteptat. Verificați și că `version` din
-`/api/health` coincide cu fișierul `VERSION` și cu tag-ul release-ului.
+`/api/health` coincide cu fișierul `VERSION` și cu tag-ul release-ului, iar
+`buildSha` coincide cu SHA-ul complet din Forge și GitHub.
 
 ## 2. Date persistente și secrete
 
@@ -77,6 +88,10 @@ data/keys/*.key            0600
 cache.db                   0600
 backups/                   0700
 backups/cache-*.db         0600
+backup-staging/            0700 (gol între rulări)
+backup-status.json         0600
+data/keys/offsite-backup.env             0600
+data/keys/danube-backup-encryption.key    0600
 ```
 
 În producție este instalată cheia HydroWeb. Cheia OpenAI nu este necesară
@@ -183,13 +198,18 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 Primul răspuns trebuie să fie 200 și să conțină `cf-ray`. Al doilea trebuie să
 fie 403: conectează direct la origine, dar păstrează SNI/Host corect.
 
-## 6. Backup și restaurare
+## 6. Backup local, copie criptată off-box și restaurare de probă
 
-Jobul Forge rulează ca `dunarea`:
+`ops/offsite_backup.py` nu înlocuiește backupul SQLite. Îl apelează întâi pe
+`ops/backup.py`, cere din nou integritate, schema `cache` și cel puțin un rând
+permanent, apoi criptează client-side. Jobul Forge compus rulează ca `dunarea`:
 
 ```cron
-15 3 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/backup.py \
+15 3 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/offsite_backup.py backup \
+  --config /home/dunarea/dunarea.info/data/keys/offsite-backup.env \
+  --source /home/dunarea/dunarea.info/cache.db \
   --dest /home/dunarea/dunarea.info/backups --keep-days 14 \
+  --offsite-keep-days 30 --alert-on-failure \
   >> /home/dunarea/dunarea.info/backup.log 2>&1
 ```
 
@@ -197,7 +217,60 @@ Jobul Forge rulează ca `dunarea`:
 integritatea și rândurile permanente, apoi promovează copia atomic. Un `cp` al
 bazei active nu este un backup corect.
 
-Restaurare:
+Obiectul are forma fixă
+`database/danube/AAAA/LL/danube-AAAALLZZTHHMMSSZ.sqlite3.enc`. AES-256-CTR cu
+PBKDF2-SHA-512 criptează copia; un HMAC-SHA-256 cu o subcheie scrypt distinctă
+autentifică antetul, contextul exact al obiectului și ciphertext-ul. Cheia
+Danube nu este credentialul Spaces și nu este partajată cu alt produs.
+Uploadul cere `ACL private`, apoi un HEAD și un GET semnate trebuie să reproducă
+mărimea și SHA-256; un GET nesemnat trebuie să primească 403/404. Retenția de 30
+zile rulează numai după aceste probe și poate șterge exclusiv chei parseabile
+sub prefixul constant `database/danube/`.
+
+Monitorul independent rulează după fereastra backupului și alertează numai o
+copie lipsă/eșuată/mai veche de 30h:
+
+```cron
+17 8 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/offsite_backup.py monitor \
+  --config /home/dunarea/dunarea.info/data/keys/offsite-backup.env \
+  --max-age-hours 30 --alert \
+  >> /home/dunarea/dunarea.info/backup-monitor.log 2>&1
+```
+
+Alertarea folosește proiectul existent Scaleway TEM, dar cu configurație
+Danube. Un test explicit se face fără a simula un incident:
+
+```bash
+python3 ops/offsite_backup.py monitor \
+  --config /home/dunarea/dunarea.info/data/keys/offsite-backup.env \
+  --max-age-hours 30 --test-alert
+```
+
+Dacă credentialele Danube nu există, nu instalați joburile off-box și nu
+pretindeți livrare. Operatorul trebuie să creeze în DigitalOcean o cheie Spaces
+nouă numită `danube-backup`, cu un singur grant `readwrite` pentru bucketul
+privat comun existent, apoi să copieze o singură dată ID-ul și secretul în
+`offsite-backup.env`. Nu creați bucket sau CDN. În proiectul TEM existent,
+creați/alegeți o cheie Danube autorizată pentru expeditorul verificat și
+completați grupul `DANUBE_BACKUP_TEM_*`; vedeți
+`ops/offsite-backup.env.example`. Generați separat cheia de criptare cu 256+ biți
+și păstrați-o numai în fișierul 0600 indicat de configurație.
+
+Restaurare de probă off-box, fără oprirea daemonului și fără destinație aleasă
+de operator:
+
+```bash
+python3 ops/offsite_backup.py restore-drill \
+  --config /home/dunarea/dunarea.info/data/keys/offsite-backup.env
+```
+
+Scriptul selectează cel mai nou obiect valid, îl citește autentificat, verifică
+HMAC înainte de decriptare, creează numai o copie SQLite aleatoare 0600 într-un
+director 0700, verifică integritatea, schema și arhiva permanentă, măsoară RPO
+și RTO, apoi șterge bytes decriptați și toate artefactele. Succesul include
+`productionOverwritten: false` și trei probe de cleanup.
+
+Restaurare reală în caz de incident (separată de drill):
 
 1. opriți Background Process-ul în Forge;
 2. verificați copia cu `python3 ops/backup.py --verify-only BACKUP`;
@@ -211,7 +284,8 @@ Restaurare:
 bash ops/verify_deploy.sh \
   --origin-ip 157.90.144.210 \
   --domain dunarea.info \
-  --backups /home/dunarea/dunarea.info/backups
+  --backups /home/dunarea/dunarea.info/backups \
+  --offsite-config /home/dunarea/dunarea.info/data/keys/offsite-backup.env
 ```
 
 În plus față de postura tehnică, acceptanța cere o revizuire a datelor live:

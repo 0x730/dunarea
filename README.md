@@ -9,13 +9,14 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.1](https://github.com/0x730/dunarea/tree/v1.0.1)
+- **Release curent:** [v1.0.2](https://github.com/0x730/dunarea/tree/v1.0.2)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
 Producția este livrată prin Laravel Forge pe Hetzner și protejată de Cloudflare.
 Tag-ul release-ului identifică exact codul publicat; endpoint-ul de sănătate
-întoarce aceeași versiune din fișierul `VERSION`.
+întoarce aceeași versiune din fișierul `VERSION` și SHA-ul Git complet al
+checkout-ului care rulează în `buildSha`.
 
 Vederea `/romania` aplică un test determinist de proporționalitate: separă
 severitatea Dunării, impactul confirmat la CNE Cernavodă și criticitatea

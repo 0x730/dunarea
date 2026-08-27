@@ -1,0 +1,4 @@
+Contact: mailto:daniel@0x730.com
+Expires: 2027-08-27T23:59:59Z
+Canonical: https://dunarea.info/.well-known/security.txt
+Preferred-Languages: ro, en
