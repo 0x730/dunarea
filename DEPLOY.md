@@ -6,7 +6,7 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 ## Starea instalată la 27 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.3`](https://github.com/0x730/dunarea/tree/v1.0.3);
+- release instalat: [`v1.0.4`](https://github.com/0x730/dunarea/tree/v1.0.4);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -18,9 +18,13 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - Cloudflare proxied (nor portocaliu), SSL/TLS `Full (strict)`;
 - certificat Let's Encrypt administrat de Forge prin DNS-01;
 - baza SQLite și cheile sunt shared paths între release-uri;
-- backup SQLite verificat zilnic la `03:15 UTC`, retenție 14 zile.
-- deploy manual din Forge; Quick Deploy este dezactivat și un push nu pornește
-  singur producția.
+- job Forge `2117004` instalat la `03:15 UTC`: copie SQLite locală verificată,
+  apoi criptare și upload în Spaces sub prefixul Danube;
+- job Forge `2117005` instalat la `08:17 UTC`: read-back de prospețime și alertă
+  prin TEM la lipsă/eșec/stale;
+- Quick Deploy este `false`. Workflow-ul manual are două acțiuni explicite în
+  aceeași sesiune a proprietarului: push-ul commit-ului curat, apoi invocarea
+  deploy-ului prin Forge API. Push-ul singur nu pornește producția.
 
 Serverul găzduiește și alte site-uri. Nu restrângeți global porturile 80/443 și
 nu modificați procesele, vhost-urile sau firewall-ul celorlalte aplicații.
@@ -54,6 +58,17 @@ un test eșuează. După activare, aceleași 40 de cifre hex trebuie să existe 
 Git HEAD și în `.build-revision`; procesul este repornit numai după aceste două
 probe. `/api/health.buildSha` citește exclusiv fișierul din release-ul care
 rulează, nu o valoare de mediu ce ar putea deriva.
+
+În acest runbook, „deploy manual” înseamnă exact workflow-ul owner-session în
+doi pași, nu Quick Deploy și nu un webhook pornit automat de push:
+
+1. validați și împingeți commit-ul/tag-ul curat, apoi confirmați SHA-ul remote;
+2. în aceeași sesiune, invocați explicit `POST
+   /orgs/{organization}/servers/{server}/sites/{site}/deployments` prin Forge
+   API și verificați deployment ID-ul rezultat.
+
+Nu activați Quick Deploy. Existența commit-ului pe `origin/main` nu constituie
+dovadă de deploy; numai deployment-ul API terminat și SHA-ul public îl închid.
 
 Înainte de un deploy manual:
 
@@ -246,15 +261,29 @@ python3 ops/offsite_backup.py monitor \
   --max-age-hours 30 --test-alert
 ```
 
-Dacă credentialele Danube nu există, nu instalați joburile off-box și nu
-pretindeți livrare. Operatorul trebuie să creeze în DigitalOcean o cheie Spaces
-nouă numită `danube-backup`, cu un singur grant `readwrite` pentru bucketul
-privat comun existent, apoi să copieze o singură dată ID-ul și secretul în
-`offsite-backup.env`. Nu creați bucket sau CDN. În proiectul TEM existent,
-creați/alegeți o cheie Danube autorizată pentru expeditorul verificat și
-completați grupul `DANUBE_BACKUP_TEM_*`; vedeți
-`ops/offsite-backup.env.example`. Generați separat cheia de criptare cu 256+ biți
-și păstrați-o numai în fișierul 0600 indicat de configurație.
+Configurația instalată reutilizează bucketul privat comun și identitatea de
+recovery acceptată pentru flotă; nu creați alt bucket, provider sau serviciu.
+Izolarea Danube este dată de configurația sa 0600, prefixul fix
+`database/danube/` și cheia de criptare proprie, distinctă de credentialul
+Spaces și de cheile celorlalte produse. TEM reutilizează identitatea existentă,
+dar configurația și mesajele sunt Danube-only. Dacă aceste fișiere lipsesc, nu
+reinstalați joburile și nu pretindeți livrare; restaurați configurația prin
+procedura operatorului fără a tipări valori. Modelul fără secrete rămâne
+`ops/offsite-backup.env.example`.
+
+### Starea recovery verificată manual la 27 august 2026
+
+- jobul `2117004` și jobul `2117005` sunt `installed` în Forge ca `dunarea`;
+- o copie SQLite WAL-aware a produs 949 rânduri, dintre care 638 permanente;
+- obiectul client-criptat sub `database/danube/` a trecut HEAD și GET
+  autentificate cu mărime/SHA identice, iar accesul anonim a fost refuzat;
+- restore-drill-ul a măsurat `RPO=13s` și `RTO=1.088s`, nu a suprascris
+  producția și a eliminat bytes decriptați, stagingul și artefactele temporare;
+- Scaleway TEM a acceptat cererea de test la nivel API; primirea în inbox nu
+  este probată și nu trebuie declarată;
+- aceasta este o probă manuală. Prima execuție programată a jobului `2117004`
+  rămâne de verificat după `2026-08-28 03:15 UTC`, iar prima execuție a jobului
+  `2117005` după `2026-08-28 08:17 UTC`; cadența programată nu este încă probată.
 
 Restaurare de probă off-box, fără oprirea daemonului și fără destinație aleasă
 de operator:

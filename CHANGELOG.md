@@ -4,6 +4,18 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.4](https://github.com/0x730/dunarea/tree/v1.0.4) — 2026-08-27
+
+Reconciliere operațională după verificarea independentă a flotei:
+
+- Quick Deploy rămâne dezactivat, iar runbook-ul numește precis fluxul în doi
+  pași: push curat, urmat de invocarea explicită a deploy-ului prin Forge API;
+- documentația reflectă joburile Forge instalate `2117004` și `2117005`, proba
+  manuală criptată și faptul că primele execuții programate sunt încă în așteptare;
+- proba TEM se oprește la acceptarea API și nu pretinde primire în inbox;
+- `ops/verify_deploy.sh` folosește un singur workspace `mktemp -d`, eliminat prin
+  trap la ieșire normală, eroare sau semnal, fără căi temporare predictibile.
+
 ## [v1.0.3](https://github.com/0x730/dunarea/tree/v1.0.3) — 2026-08-27
 
 Remediere operațională pentru recovery și contractele publice:
@@ -14,7 +26,8 @@ Remediere operațională pentru recovery și contractele publice:
   numai într-o copie temporară și măsoară RPO/RTO;
 - `/api/health.buildSha` este legat de checkout-ul Forge activ;
 - `/.well-known/security.txt` publică contactul canonic cu MIME `text/plain`;
-- producția trece la deploy manual, cu Quick Deploy dezactivat.
+- Quick Deploy este dezactivat; după push, producția este pornită numai printr-o
+  invocare explicită a deploy-ului Forge API în sesiunea proprietarului.
 
 Testul parserului GRDC ocolește explicit cache-ul persistent de runtime, astfel
 încât poarta Forge verifică fixture-ul izolat și rămâne deterministă pe server.

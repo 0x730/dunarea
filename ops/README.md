@@ -30,13 +30,10 @@ Pe orice eroare de copiere, `.partial`, `-wal` și `-shm` sunt eliminate. Testel
 acoperă explicit un rând comis rămas în WAL și o schemă defectă care nu lasă
 staging în urmă.
 
-Job zilnic Laravel Forge, ca utilizatorul izolat `dunarea` (03:15 UTC):
-
-```cron
-15 3 * * * cd /home/dunarea/dunarea.info/current && /usr/bin/python3 ops/backup.py \
-  --dest /home/dunarea/dunarea.info/backups --keep-days 14 \
-  >> /home/dunarea/dunarea.info/backup.log 2>&1
-```
+`ops/backup.py` nu mai este programat singur în producție. Rămâne primitiva
+obligatorie apelată prima de jobul compus `2117004`; astfel copia locală zilnică
+și verificarea WAL-aware sunt păstrate înaintea criptării sau a oricărui apel
+Spaces.
 
 **Restaurare:** opriți daemonul, înlocuiți `cache.db` cu backupul, reporniți.
 Instanța pornește direct din arhivă și sare warmup-ul dacă `warmup_done` e în
@@ -66,6 +63,20 @@ poate suprascrie producția; raportează doar număr de rânduri, RPO/RTO și cl
 niciodată conținutul bazei.
 
 Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
+
+### Joburi Forge instalate
+
+- `2117004`, `15 3 * * *`, user `dunarea`: rulează
+  `ops/offsite_backup.py backup`, care începe obligatoriu cu `ops/backup.py`,
+  păstrează copia SQLite locală 14 zile, apoi criptează și verifică obiectul
+  privat Spaces sub prefixul Danube;
+- `2117005`, `17 8 * * *`, user `dunarea`: rulează
+  `ops/offsite_backup.py monitor --max-age-hours 30 --alert` pentru read-back de
+  prospețime și acceptare TEM la lipsă/eșec/stale.
+
+Ambele joburi sunt instalate în Forge, nu în crontab-ul vizibil utilizatorului.
+Proba manuală este verde, dar primele execuții programate rămân de verificat pe
+28 august 2026 după 03:15, respectiv 08:17 UTC.
 
 ## `write_build_revision.py` — checkout-ul care rulează
 

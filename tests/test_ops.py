@@ -248,5 +248,71 @@ class BuildRevisionContractTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="ascii").strip(), expected)
 
 
+class OperationsDocumentationContractTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(__file__).resolve().parents[1]
+
+    def test_release_workflow_is_push_then_explicit_forge_api_deploy(self):
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        readme = self.root.joinpath("README.md").read_text(encoding="utf-8")
+        changelog = self.root.joinpath("CHANGELOG.md").read_text(encoding="utf-8")
+        normalized = " ".join(deploy.split())
+
+        self.assertIn("Quick Deploy este `false`", deploy)
+        self.assertIn("Push-ul singur nu pornește producția", deploy)
+        self.assertIn(
+            "POST /orgs/{organization}/servers/{server}/sites/{site}/deployments",
+            normalized,
+        )
+        self.assertIn("Push-ul singur nu pornește producția", readme)
+        self.assertIn("invocarea explicită a deploy-ului prin Forge API", changelog)
+
+    def test_installed_recovery_state_and_pending_first_runs_are_explicit(self):
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        ops_readme = self.root.joinpath("ops/README.md").read_text(encoding="utf-8")
+        normalized_deploy = " ".join(deploy.split())
+        normalized_ops = " ".join(ops_readme.split())
+
+        for token in (
+            "2117004",
+            "2117005",
+            "949 rânduri",
+            "638 permanente",
+            "RPO=13s",
+            "RTO=1.088s",
+            "primirea în inbox nu este probată",
+            "2026-08-28 03:15 UTC",
+            "2026-08-28 08:17 UTC",
+        ):
+            self.assertIn(token, normalized_deploy)
+        self.assertIn("2117004", ops_readme)
+        self.assertIn("2117005", ops_readme)
+        self.assertIn("ops/backup.py", ops_readme)
+        self.assertNotIn(
+            "15 3 * * * cd /home/dunarea/dunarea.info/current && "
+            "/usr/bin/python3 ops/backup.py",
+            normalized_ops,
+        )
+
+
+class VerifyDeployShellContractTests(unittest.TestCase):
+    def test_one_unpredictable_workspace_is_trapped_and_syntax_is_valid(self):
+        script = Path(__file__).resolve().parents[1] / "ops/verify_deploy.sh"
+        text = script.read_text(encoding="utf-8")
+
+        self.assertEqual(text.count("mktemp -d"), 1)
+        self.assertIn("/tmp/danube-verify.XXXXXX", text)
+        self.assertIn("trap cleanup_workspace EXIT", text)
+        self.assertIn("trap 'exit 130' HUP INT TERM", text)
+        self.assertIn('rm -rf -- "$VERIFY_WORKSPACE"', text)
+        self.assertIn('--status-file "$OFFSITE_CHECK_STATUS_FILE"', text)
+        self.assertNotIn('--status-file "$OFFSITE_STATUS"', text)
+        self.assertNotIn("$$", text)
+        self.assertNotIn("/tmp/_health", text)
+        self.assertNotIn("/tmp/_offsite-monitor", text)
+        self.assertNotIn("/tmp/_security-", text)
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
+
 if __name__ == "__main__":
     unittest.main()

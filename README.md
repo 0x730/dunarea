@@ -9,7 +9,7 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.3](https://github.com/0x730/dunarea/tree/v1.0.3)
+- **Release curent:** [v1.0.4](https://github.com/0x730/dunarea/tree/v1.0.4)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
@@ -17,6 +17,13 @@ Producția este livrată prin Laravel Forge pe Hetzner și protejată de Cloudfl
 Tag-ul release-ului identifică exact codul publicat; endpoint-ul de sănătate
 întoarce aceeași versiune din fișierul `VERSION` și SHA-ul Git complet al
 checkout-ului care rulează în `buildSha`.
+
+Quick Deploy rămâne dezactivat. Fluxul de release are două acțiuni explicite în
+aceeași sesiune a proprietarului: commit-ul curat este împins în GitHub, apoi
+deploy-ul este invocat prin Forge API. Push-ul singur nu pornește producția.
+Backupul compus și monitorul de prospețime sunt administrate de joburile Forge
+`2117004` și `2117005`; primele lor execuții programate trebuie verificate după
+03:15, respectiv 08:17 UTC, pe 28 august 2026.
 
 Vederea `/romania` aplică un test determinist de proporționalitate: separă
 severitatea Dunării, impactul confirmat la CNE Cernavodă și criticitatea

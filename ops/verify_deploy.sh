@@ -30,6 +30,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+VERIFY_WORKSPACE="$(mktemp -d /tmp/danube-verify.XXXXXX)" || {
+  echo "nu pot crea workspace-ul temporar de verificare" >&2
+  exit 2
+}
+chmod 700 "$VERIFY_WORKSPACE"
+cleanup_workspace() {
+  exit_code=$?
+  trap - EXIT
+  if ! rm -rf -- "$VERIFY_WORKSPACE"; then
+    echo "nu pot elimina workspace-ul temporar de verificare" >&2
+    exit 1
+  fi
+  exit "$exit_code"
+}
+trap cleanup_workspace EXIT
+trap 'exit 130' HUP INT TERM
+
+HEALTH_FILE="$VERIFY_WORKSPACE/health.json"
+OFFSITE_OUTPUT_FILE="$VERIFY_WORKSPACE/offsite-monitor.json"
+OFFSITE_CHECK_STATUS_FILE="$VERIFY_WORKSPACE/offsite-status.json"
+SECURITY_HEADERS_FILE="$VERIFY_WORKSPACE/security-headers.txt"
+SECURITY_BODY_FILE="$VERIFY_WORKSPACE/security.txt"
+
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$1"; }
 bad()  { printf '  \033[31mPICĂ\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); }
 warn() { printf '  \033[33mATENȚIE\033[0m %s\n' "$1"; WARN=$((WARN+1)); }
@@ -37,16 +60,16 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 # --------------------------------------------------------------- aplicație ---
 head_ "Aplicație"
-if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >/tmp/_health.$$ 2>/dev/null; then
+if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >"$HEALTH_FILE" 2>/dev/null; then
   ok "/api/health răspunde pe 127.0.0.1:${APP_PORT}"
   EXPECTED_VERSION=$(tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION")
-  if grep -q "\"version\": \"${EXPECTED_VERSION}\"" /tmp/_health.$$; then
+  if grep -q "\"version\": \"${EXPECTED_VERSION}\"" "$HEALTH_FILE"; then
     ok "runtime-ul raportează versiunea ${EXPECTED_VERSION}"
   else
     bad "versiunea runtime nu coincide cu VERSION (${EXPECTED_VERSION})"
   fi
   EXPECTED_SHA=$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" rev-parse HEAD)
-  if grep -q "\"buildSha\": \"${EXPECTED_SHA}\"" /tmp/_health.$$; then
+  if grep -q "\"buildSha\": \"${EXPECTED_SHA}\"" "$HEALTH_FILE"; then
     ok "runtime-ul raportează checkout-ul exact ${EXPECTED_SHA}"
   else
     bad "buildSha runtime nu coincide cu checkout-ul activ (${EXPECTED_SHA})"
@@ -57,7 +80,7 @@ if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >/tmp/_heal
   else
     bad ".build-revision lipsește sau nu coincide cu checkout-ul activ"
   fi
-  if grep -q '"warmup_done": true' /tmp/_health.$$; then
+  if grep -q '"warmup_done": true' "$HEALTH_FILE"; then
     ok "warmup terminat"
   else
     warn "warmup neterminat (normal în primele minute după pornire)"
@@ -65,7 +88,6 @@ if curl -fsS --max-time 10 "http://127.0.0.1:${APP_PORT}/api/health" >/tmp/_heal
 else
   bad "aplicația nu răspunde pe 127.0.0.1:${APP_PORT}"
 fi
-rm -f /tmp/_health.$$
 
 # Serverul TREBUIE să asculte doar pe loopback: dacă ascultă pe 0.0.0.0, portul
 # aplicației e expus direct și ocolește nginx, limitarea de rată și Cloudflare.
@@ -133,15 +155,13 @@ crontab -l 2>/dev/null | grep -Eq "ops/(backup|offsite_backup)\.py" \
   || warn "niciun cron cu ops/backup.py în crontab-ul acestui utilizator"
 
 if [ -f "$OFFSITE_CONFIG" ]; then
-  offsite_out="/tmp/_offsite-monitor.$$"
   if python3 "$APP_DIR/ops/offsite_backup.py" monitor \
-      --config "$OFFSITE_CONFIG" --status-file "$OFFSITE_STATUS" \
-      --max-age-hours 30 >"$offsite_out" 2>&1; then
+      --config "$OFFSITE_CONFIG" --status-file "$OFFSITE_CHECK_STATUS_FILE" \
+      --max-age-hours 30 >"$OFFSITE_OUTPUT_FILE" 2>&1; then
     ok "obiectul criptat off-box este proaspăt și citit autentificat"
   else
     bad "monitorul off-box nu confirmă un obiect proaspăt"
   fi
-  rm -f "$offsite_out"
   crontab -l 2>/dev/null | grep -q "offsite_backup.py backup" \
     && ok "jobul compus SQLite + off-box este instalat" \
     || warn "jobul off-box nu este vizibil în crontab-ul acestui utilizator; verifică programarea în Forge"
@@ -191,22 +211,19 @@ if [ -n "$DOMAIN" ]; then
   for h in content-security-policy x-content-type-options referrer-policy; do
     echo "$hdrs" | grep -qi "^${h}:" && ok "antet $h prezent" || bad "antet $h lipsă"
   done
-  security_headers="/tmp/_security-headers.$$"
-  security_body="/tmp/_security-body.$$"
-  if curl -fsS --max-time 10 -D "$security_headers" \
-      -o "$security_body" "https://${DOMAIN}/.well-known/security.txt"; then
-    grep -qi '^content-type: text/plain' "$security_headers" \
+  if curl -fsS --max-time 10 -D "$SECURITY_HEADERS_FILE" \
+      -o "$SECURITY_BODY_FILE" "https://${DOMAIN}/.well-known/security.txt"; then
+    grep -qi '^content-type: text/plain' "$SECURITY_HEADERS_FILE" \
       && ok "security.txt are MIME text/plain" \
       || bad "security.txt nu are MIME text/plain"
-    grep -qx 'Contact: mailto:daniel@0x730.com' "$security_body" \
-      && grep -qx "Canonical: https://${DOMAIN}/.well-known/security.txt" "$security_body" \
-      && grep -q '^Expires: 2027-08-27T23:59:59Z$' "$security_body" \
+    grep -qx 'Contact: mailto:daniel@0x730.com' "$SECURITY_BODY_FILE" \
+      && grep -qx "Canonical: https://${DOMAIN}/.well-known/security.txt" "$SECURITY_BODY_FILE" \
+      && grep -q '^Expires: 2027-08-27T23:59:59Z$' "$SECURITY_BODY_FILE" \
       && ok "security.txt public are contact, expirare și URL canonic" \
       || bad "security.txt public nu respectă contractul RFC 9116"
   else
     bad "security.txt public nu răspunde"
   fi
-  rm -f "$security_headers" "$security_body"
 fi
 
 # -------------------------------------------------------------------- raport ---
