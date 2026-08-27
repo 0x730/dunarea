@@ -4,7 +4,7 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
-## [v1.0.2](https://github.com/0x730/dunarea/tree/v1.0.2) — 2026-08-27
+## [v1.0.3](https://github.com/0x730/dunarea/tree/v1.0.3) — 2026-08-27
 
 Remediere operațională pentru recovery și contractele publice:
 
@@ -15,6 +15,15 @@ Remediere operațională pentru recovery și contractele publice:
 - `/api/health.buildSha` este legat de checkout-ul Forge activ;
 - `/.well-known/security.txt` publică contactul canonic cu MIME `text/plain`;
 - producția trece la deploy manual, cu Quick Deploy dezactivat.
+
+Testul parserului GRDC ocolește explicit cache-ul persistent de runtime, astfel
+încât poarta Forge verifică fixture-ul izolat și rămâne deterministă pe server.
+
+## [v1.0.2](https://github.com/0x730/dunarea/tree/v1.0.2) — 2026-08-27
+
+Release candidate respins corect înainte de activare: testul GRDC folosea un
+rezultat vechi din cache-ul persistent în locul fixture-ului temporar. Producția
+nu a rulat această revizie; corecția și remedierea sunt publicate în `v1.0.3`.
 
 ## [v1.0.1](https://github.com/0x730/dunarea/tree/v1.0.1) — 2026-08-11
 

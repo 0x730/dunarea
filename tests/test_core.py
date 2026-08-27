@@ -1711,7 +1711,9 @@ class ConnectorTests(unittest.TestCase):
             with open(os.path.join(tmp, "6742900_Q_Day.Cmd.txt"), "w") as fh:
                 fh.write(daily_file("6742900", "CEATAL IZMAIL", 5000))
             with mock.patch.object(C, "GRDC_DIR", tmp):
-                out = C.grdc_series()
+                # Parser contract: do not let an existing runtime cache entry
+                # bypass the temporary station directory used by this test.
+                out = C._grdc_series_uncached(C.GRDC_CEATAL_ID)
 
         self.assertTrue(out["activ"])
         self.assertEqual(out["grdc_id"], "6742900")

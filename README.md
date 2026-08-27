@@ -9,7 +9,7 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.2](https://github.com/0x730/dunarea/tree/v1.0.2)
+- **Release curent:** [v1.0.3](https://github.com/0x730/dunarea/tree/v1.0.3)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
