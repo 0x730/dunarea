@@ -3,6 +3,11 @@
 Patru scripturi, fără pachete Python externe, pentru lucrurile pe care
 documentația le *descrie* dar nimeni nu le *verifică*.
 
+Politica Cloudflare separată, inclusiv scopul exact al singurei reguli Free de
+rate limiting și read-back-ul sanitizat, este în
+[`cloudflare-edge-policy.md`](cloudflare-edge-policy.md). Ea nu schimbă scriptul
+de deploy sau aplicația.
+
 ## `backup.py` — backup verificat al `cache.db`
 
 ```bash

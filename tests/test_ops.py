@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -300,6 +301,25 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         for document in (deploy, readme):
             self.assertIn("https://dunarea.info/", document)
             self.assertIn("/sitemap.xml", document)
+
+    def test_cloudflare_free_api_rate_limit_matches_the_shipped_route_model(self):
+        policy = self.root.joinpath("ops/cloudflare-edge-policy.md").read_text(
+            encoding="utf-8"
+        )
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        source = self.root.joinpath("server.py").read_text(encoding="utf-8")
+        api_routes = re.findall(r'^    "(/api/[^"]+)":', source, re.MULTILINE)
+
+        self.assertEqual(len(api_routes), 47)
+        self.assertIn("do_POST = _method_not_allowed", source)
+        self.assertIn("do_DELETE = _method_not_allowed", source)
+        self.assertIn('starts_with(http.request.uri.path, "/api/")', policy)
+        self.assertIn("60 cereri / 10 secunde / IP", policy)
+        self.assertIn("durată blocare | 10 secunde", policy)
+        self.assertIn("exact o regulă", policy)
+        self.assertNotIn("| `matches`", policy)
+        self.assertIn("ar cere Advanced Rate Limiting", policy)
+        self.assertIn("DMARC este deja strict `p=reject`", deploy)
 
 
 class VerifyDeployShellContractTests(unittest.TestCase):

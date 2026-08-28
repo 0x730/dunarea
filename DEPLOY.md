@@ -203,6 +203,21 @@ cache-uit la edge; aplicația gestionează prospețimea și cadențarea surselor
 Fișierele versionate din `/vendor/*` pot primi un TTL lung dacă se adaugă o
 regulă explicită.
 
+### Limitare edge a API-ului
+
+Pe 28 august 2026, zona Free `dunarea.info` a primit exact o regulă Cloudflare
+`http_ratelimit`, limitată la `starts_with(http.request.uri.path, "/api/")`.
+Regula numără `ip.src` (plus `cf.colo.id`, cerut de Cloudflare), permite 60
+cereri în 10 secunde și blochează 10 secunde după depășirea pragului. Danube nu
+are endpointuri de autentificare sau scriere: toate cele 47 rute `/api/` acceptă
+doar `GET`/`HEAD`, iar metodele de scriere primesc `405`. Nu include pagini,
+asset-uri sau `/vendor/*` și nu se adaugă o a doua regulă.
+
+DMARC este deja strict `p=reject`; pentru acest proiect s-a verificat, nu s-a
+modificat. Nu activați aici o adresă de raportare, inbox, furnizor sau produs
+DMARC nou. Detaliile sanitizate de read-back și testul `429` sunt în
+[`ops/cloudflare-edge-policy.md`](ops/cloudflare-edge-policy.md).
+
 Verificări din afara serverului:
 
 ```bash
