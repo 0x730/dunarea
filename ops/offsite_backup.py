@@ -72,28 +72,32 @@ STORAGE_KEYS = (
     "DANUBE_BACKUP_ENCRYPTION_KEY_FILE",
 )
 ALERT_KEYS = (
-    "DANUBE_BACKUP_TEM_SECRET_KEY",
-    "DANUBE_BACKUP_TEM_PROJECT_ID",
-    "DANUBE_BACKUP_TEM_REGION",
+    "DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID",
+    "DANUBE_BACKUP_CLOUDFLARE_API_TOKEN",
     "DANUBE_BACKUP_ALERT_FROM",
     "DANUBE_BACKUP_ALERT_REPLY_TO",
     "DANUBE_BACKUP_ALERT_TO",
+)
+LEGACY_ALERT_KEYS = (
+    "DANUBE_BACKUP_TEM_SECRET_KEY",
+    "DANUBE_BACKUP_TEM_PROJECT_ID",
+    "DANUBE_BACKUP_TEM_REGION",
 )
 
 
 class BackupError(RuntimeError):
     """Eroare publicabilă numai printr-un reason code stabil."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, alert_accepted: bool = False):
         super().__init__(code)
         self.code = code
+        self.alert_accepted = alert_accepted
 
 
 @dataclasses.dataclass(frozen=True)
 class AlertConfig:
-    secret_key: str
-    project_id: str
-    region: str
+    account_id: str
+    api_token: str
     sender: str
     reply_to: str
     recipient: str
@@ -209,15 +213,20 @@ def load_config(path: str | Path) -> Config:
     }:
         raise BackupError("backup_encryption_key_reused")
 
+    if any(values.get(key) for key in LEGACY_ALERT_KEYS):
+        raise BackupError("backup_alert_configuration_legacy")
+
     configured_alert_values = [bool(values.get(key)) for key in ALERT_KEYS]
     if any(configured_alert_values) and not all(configured_alert_values):
         raise BackupError("backup_alert_configuration_partial")
     alert = None
     if all(configured_alert_values):
+        account_id = values["DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID"]
+        if not re.fullmatch(r"[0-9a-f]{32}", account_id):
+            raise BackupError("backup_alert_account_id_invalid")
         alert = AlertConfig(
-            secret_key=values["DANUBE_BACKUP_TEM_SECRET_KEY"],
-            project_id=values["DANUBE_BACKUP_TEM_PROJECT_ID"],
-            region=values["DANUBE_BACKUP_TEM_REGION"],
+            account_id=account_id,
+            api_token=values["DANUBE_BACKUP_CLOUDFLARE_API_TOKEN"],
             sender=values["DANUBE_BACKUP_ALERT_FROM"],
             reply_to=values["DANUBE_BACKUP_ALERT_REPLY_TO"],
             recipient=values["DANUBE_BACKUP_ALERT_TO"],
@@ -650,8 +659,8 @@ class SpacesClient:
 def _parse_mailbox(value: str) -> dict[str, str]:
     named = re.fullmatch(r"\s*([^<>]+?)\s*<([^<>]+)>\s*", value)
     if named:
-        return {"name": named.group(1).strip(), "email": named.group(2).strip()}
-    return {"email": value.strip()}
+        return {"name": named.group(1).strip(), "address": named.group(2).strip()}
+    return {"address": value.strip()}
 
 
 def deliver_alert(
@@ -674,30 +683,57 @@ def deliver_alert(
         else "Treat this as an application recovery incident.",
     ]
     payload = {
-        "project_id": alert.project_id,
         "from": _parse_mailbox(alert.sender),
-        "to": [{"email": alert.recipient}],
+        "to": alert.recipient,
+        "reply_to": _parse_mailbox(alert.reply_to),
         "subject": f"[Danube] SQLite backup {label}",
         "text": "\n".join(line for line in lines if line),
-        "additional_headers": [{"key": "Reply-To", "value": alert.reply_to}],
     }
     url = (
-        "https://api.scaleway.com/transactional-email/v1alpha1/regions/"
-        + urllib.parse.quote(alert.region, safe="")
-        + "/emails"
+        "https://api.cloudflare.com/client/v4/accounts/"
+        + urllib.parse.quote(alert.account_id, safe="")
+        + "/email/sending/send"
     )
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
-        headers={"X-Auth-Token": alert.secret_key, "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {alert.api_token}",
+            "Content-Type": "application/json",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             if response.status < 200 or response.status >= 300:
                 raise BackupError("backup_alert_delivery_failed")
+            response_body = response.read(65537)
     except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
         raise BackupError("backup_alert_delivery_failed") from exc
+    if len(response_body) > 65536:
+        raise BackupError("backup_alert_delivery_failed")
+    try:
+        accepted = json.loads(response_body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise BackupError("backup_alert_delivery_failed") from exc
+    if not isinstance(accepted, dict) or accepted.get("success") is not True:
+        raise BackupError("backup_alert_delivery_failed")
+    result = accepted.get("result")
+    if not isinstance(result, dict):
+        raise BackupError("backup_alert_delivery_failed")
+    for field in ("delivered", "queued", "permanent_bounces"):
+        if not isinstance(result.get(field), list):
+            raise BackupError("backup_alert_delivery_failed")
+    recipient = alert.recipient.casefold()
+    delivered = {
+        str(address).casefold() for address in result.get("delivered", [])
+    }
+    queued = {str(address).casefold() for address in result.get("queued", [])}
+    bounced = {
+        str(address).casefold() for address in result.get("permanent_bounces", [])
+    }
+    if recipient in bounced or recipient not in delivered | queued:
+        raise BackupError("backup_alert_delivery_failed")
 
 
 def _write_status(path: str | Path, section: str, value: dict[str, object]) -> None:
@@ -859,7 +895,12 @@ def perform_monitor(args: argparse.Namespace) -> dict[str, object]:
     _write_status(args.status_file, "monitor", evidence)
     _emit("backup_monitor", **evidence)
     if evidence["state"] != "fresh":
-        raise BackupError(f"backup_{evidence['state']}")
+        raise BackupError(
+            f"backup_{evidence['state']}",
+            alert_accepted=bool(
+                evidence.get("alertAccepted") or evidence.get("testAlertAccepted")
+            ),
+        )
     return evidence
 
 
@@ -992,12 +1033,14 @@ def main(argv: list[str] | None = None) -> int:
                 section,
                 {"state": "failed", "at": _iso(_utcnow()), "reason": code},
             )
-        alert_state = "not-requested"
+        alert_already_accepted = isinstance(exc, BackupError) and exc.alert_accepted
+        alert_state = "accepted" if alert_already_accepted else "not-requested"
         alert_requested = (
             args.command == "backup" and args.alert_on_failure
         ) or (
             args.command == "monitor" and (args.alert or args.test_alert)
         )
+        alert_requested = alert_requested and not alert_already_accepted
         if alert_requested:
             if config is None:
                 with contextlib.suppress(BackupError):

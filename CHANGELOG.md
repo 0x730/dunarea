@@ -4,6 +4,22 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.6](https://github.com/0x730/dunarea/tree/v1.0.6) — 2026-08-28
+
+- alerta operațională pentru backup migrează de la Scaleway TEM la API-ul REST
+  Cloudflare Email Sending, cu token separat `Email Sending: Edit` și expeditor
+  pe domeniul `0x730.com` deja onboarded; `dunarea.info` nu devine domeniu de
+  email;
+- răspunsul Cloudflare este acceptat numai dacă destinatarul apare în
+  `delivered` sau `queued`, iar bounce-ul permanent și răspunsurile ambigue sunt
+  eșecuri;
+- monitorul nu mai trimite a doua alertă după ce alerta incidentului a fost deja
+  acceptată înaintea ieșirii non-zero;
+- `0x730.com` a fost citit ca activ pentru Email Sending, iar testul controlat
+  cu tokenul separat a primit starea `delivered` sau `queued`; operatorul a
+  confirmat mesajul în inbox. Configurarea, deploy-ul și testul post-deploy
+  rămân porți distincte.
+
 ## [v1.0.5](https://github.com/0x730/dunarea/tree/v1.0.5) — 2026-08-28
 
 Contractele publice corectate după doctorul flotei:

@@ -62,10 +62,12 @@ doilea fișier 0600 și trebuie să fie distinctă de credentialele storage.
 Succesul cere toate probele: `backup.py` WAL-aware, verificare SQLite, arhivă
 permanentă nenulă, criptare autentificată, PUT privat, HEAD+GET semnate cu
 mărime/SHA identice, refuz la GET nesemnat, retenție post-verificare și cleanup
-al stagingului. `monitor` face un read-back independent și poate folosi
-Scaleway TEM fără serviciu nou. `restore-drill` nu acceptă cale destinație și nu
-poate suprascrie producția; raportează doar număr de rânduri, RPO/RTO și cleanup,
-niciodată conținutul bazei.
+al stagingului. `monitor` face un read-back independent și poate apela direct
+Cloudflare Email Sending, fără Worker, cu token separat limitat la `Email
+Sending: Edit`. Expeditorul folosește domeniul `0x730.com` deja onboarded;
+`dunarea.info` nu este domeniu de email. `restore-drill` nu acceptă cale
+destinație și nu poate suprascrie producția; raportează doar număr de rânduri,
+RPO/RTO și cleanup, niciodată conținutul bazei.
 
 Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
 
@@ -77,11 +79,13 @@ Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
   privat Spaces sub prefixul Danube;
 - `2117005`, `17 8 * * *`, user `dunarea`: rulează
   `ops/offsite_backup.py monitor --max-age-hours 30 --alert` pentru read-back de
-  prospețime și acceptare TEM la lipsă/eșec/stale.
+  prospețime și alertă Cloudflare la lipsă/eșec/stale.
 
 Ambele joburi sunt instalate în Forge, nu în crontab-ul vizibil utilizatorului.
-Proba manuală este verde, dar primele execuții programate rămân de verificat pe
-28 august 2026 după 03:15, respectiv 08:17 UTC.
+Primele execuții programate și probele providerului anterior sunt consemnate în
+`DEPLOY.md`. Testul controlat Cloudflare din checkout a trecut, dar migrarea de
+producție nu este închisă până la schimbarea configurației 0600 în aceeași
+sesiune cu deploy-ul explicit și până la testul post-deploy.
 
 ## `write_build_revision.py` — checkout-ul care rulează
 

@@ -6,7 +6,7 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 ## Starea instalată la 28 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.5`](https://github.com/0x730/dunarea/tree/v1.0.5);
+- release instalat: [`v1.0.6`](https://github.com/0x730/dunarea/tree/v1.0.6);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -23,7 +23,8 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - job Forge `2117004` instalat la `03:15 UTC`: copie SQLite locală verificată,
   apoi criptare și upload în Spaces sub prefixul Danube;
 - job Forge `2117005` instalat la `08:17 UTC`: read-back de prospețime și alertă
-  prin TEM la lipsă/eșec/stale;
+  la lipsă/eșec/stale prin Cloudflare Email Sending, cu token separat și
+  expeditor `alerts@0x730.com`;
 - Quick Deploy este `false`. Workflow-ul manual are două acțiuni explicite în
   aceeași sesiune a proprietarului: push-ul commit-ului curat, apoi invocarea
   deploy-ului prin Forge API. Push-ul singur nu pornește producția.
@@ -269,8 +270,12 @@ copie lipsă/eșuată/mai veche de 30h:
   >> /home/dunarea/dunarea.info/backup-monitor.log 2>&1
 ```
 
-Alertarea folosește proiectul existent Scaleway TEM, dar cu configurație
-Danube. Un test explicit se face fără a simula un incident:
+Alertarea folosește direct API-ul REST Cloudflare Email Sending; nu cere Worker.
+Configurația 0600 conține ID-ul contului și un token Danube separat, limitat la
+permisiunea `Email Sending: Edit`. Expeditorul este o adresă `@0x730.com` deja
+onboarded în Cloudflare Email Service. `dunarea.info` nu este folosit ca domeniu
+de trimitere și nu trebuie configurat pentru email. Un test explicit se face
+fără a simula un incident:
 
 ```bash
 python3 ops/offsite_backup.py monitor \
@@ -278,15 +283,16 @@ python3 ops/offsite_backup.py monitor \
   --max-age-hours 30 --test-alert
 ```
 
-Configurația instalată reutilizează bucketul privat comun și identitatea de
-recovery acceptată pentru flotă; nu creați alt bucket, provider sau serviciu.
+Configurația reutilizează bucketul privat comun și identitatea de recovery
+acceptată pentru flotă; nu creați alt bucket, provider sau Worker.
 Izolarea Danube este dată de configurația sa 0600, prefixul fix
 `database/danube/` și cheia de criptare proprie, distinctă de credentialul
-Spaces și de cheile celorlalte produse. TEM reutilizează identitatea existentă,
-dar configurația și mesajele sunt Danube-only. Dacă aceste fișiere lipsesc, nu
-reinstalați joburile și nu pretindeți livrare; restaurați configurația prin
-procedura operatorului fără a tipări valori. Modelul fără secrete rămâne
-`ops/offsite-backup.env.example`.
+Spaces și de cheile celorlalte produse. Cloudflare reutilizează domeniul de
+trimitere `0x730.com`, dar tokenul, configurația și mesajele sunt Danube-only.
+Cheile vechi `DANUBE_BACKUP_TEM_*` sunt refuzate explicit. Dacă aceste fișiere
+lipsesc, nu reinstalați joburile și nu pretindeți livrare; restaurați
+configurația prin procedura operatorului fără a tipări valori. Modelul fără
+secrete rămâne `ops/offsite-backup.env.example`.
 
 ### Starea recovery verificată la 28 august 2026
 
@@ -306,6 +312,17 @@ procedura operatorului fără a tipări valori. Modelul fără secrete rămâne
   de 30 h;
 - testul explicit TEM de la `2026-08-28T09:38:20Z` a fost acceptat de API pentru
   obiectul curent; nu există probă de primire în inbox și nu trebuie declarată.
+- acceptările TEM de mai sus sunt probe istorice ale providerului înlocuit; nu
+  validează Cloudflare Email Sending;
+- read-back-ul Cloudflare a confirmat `0x730.com` activ pentru Email Sending și
+  return-path-ul `cf-bounce.0x730.com`;
+- tokenul separat a fost validat activ, iar testul controlat din checkout de la
+  `2026-08-28T20:10:56Z` a primit pentru `daniel@0x730.com` starea `delivered`
+  sau `queued` de la API; operatorul a confirmat mesajul în inbox la 23:10 EEST;
+- configurația instalată pe server folosește grupul Cloudflare complet în
+  fișierul 0600 și nu mai conține chei `DANUBE_BACKUP_TEM_*`. Configurarea,
+  deploy-ul explicit și testul post-deploy rămân probe separate în fiecare
+  release și nu trebuie deduse una din alta.
 
 Restaurare de probă off-box, fără oprirea daemonului și fără destinație aleasă
 de operator:

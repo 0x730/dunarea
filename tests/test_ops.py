@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -87,10 +88,9 @@ class OffsiteBackupContractTests(unittest.TestCase):
         if alerts:
             values.update(
                 {
-                    "DANUBE_BACKUP_TEM_SECRET_KEY": "scw-secret",
-                    "DANUBE_BACKUP_TEM_PROJECT_ID": "project-id",
-                    "DANUBE_BACKUP_TEM_REGION": "fr-par",
-                    "DANUBE_BACKUP_ALERT_FROM": "Danube <noreply@dunarea.info>",
+                    "DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID": "a" * 32,
+                    "DANUBE_BACKUP_CLOUDFLARE_API_TOKEN": "cf-email-token",
+                    "DANUBE_BACKUP_ALERT_FROM": "Danube <alerts@0x730.com>",
                     "DANUBE_BACKUP_ALERT_REPLY_TO": "daniel@0x730.com",
                     "DANUBE_BACKUP_ALERT_TO": "daniel@0x730.com",
                 }
@@ -103,7 +103,7 @@ class OffsiteBackupContractTests(unittest.TestCase):
         os.chmod(config_file, 0o600)
         return offsite_backup.load_config(config_file), config_file
 
-    def test_configuration_requires_owner_only_files_and_complete_alert_group(self):
+    def test_configuration_requires_owner_only_files_and_complete_cloudflare_group(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, config_file = self._config(root)
@@ -119,11 +119,110 @@ class OffsiteBackupContractTests(unittest.TestCase):
             root = Path(directory)
             _config, config_file = self._config(root)
             with config_file.open("a", encoding="utf-8") as handle:
-                handle.write("DANUBE_BACKUP_TEM_REGION=fr-par\n")
+                handle.write(
+                    "DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID=" + "a" * 32 + "\n"
+                )
             with self.assertRaisesRegex(
                 offsite_backup.BackupError, "backup_alert_configuration_partial"
             ):
                 offsite_backup.load_config(config_file)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _config, config_file = self._config(root)
+            with config_file.open("a", encoding="utf-8") as handle:
+                handle.write("DANUBE_BACKUP_TEM_REGION=fr-par\n")
+            with self.assertRaisesRegex(
+                offsite_backup.BackupError, "backup_alert_configuration_legacy"
+            ):
+                offsite_backup.load_config(config_file)
+
+    def test_cloudflare_alert_requires_accepted_recipient_and_keeps_token_in_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, _ = self._config(Path(directory), alerts=True)
+            self.assertIsNotNone(config.alert)
+            response = mock.MagicMock()
+            response.status = 200
+            response.read.return_value = json.dumps(
+                {
+                    "success": True,
+                    "errors": [],
+                    "result": {
+                        "delivered": [],
+                        "queued": ["daniel@0x730.com"],
+                        "permanent_bounces": [],
+                    },
+                }
+            ).encode("utf-8")
+            response.__enter__.return_value = response
+
+            with mock.patch.object(
+                offsite_backup.urllib.request, "urlopen", return_value=response
+            ) as urlopen:
+                offsite_backup.deliver_alert(config.alert, "stale", age_hours=31)
+
+            request = urlopen.call_args.args[0]
+            self.assertEqual(
+                request.full_url,
+                "https://api.cloudflare.com/client/v4/accounts/"
+                + "a" * 32
+                + "/email/sending/send",
+            )
+            self.assertEqual(
+                request.get_header("Authorization"), "Bearer cf-email-token"
+            )
+            payload = json.loads(request.data.decode("utf-8"))
+            self.assertEqual(
+                payload["from"],
+                {"name": "Danube", "address": "alerts@0x730.com"},
+            )
+            self.assertEqual(payload["to"], "daniel@0x730.com")
+            self.assertEqual(
+                payload["reply_to"], {"address": "daniel@0x730.com"}
+            )
+            self.assertNotIn("cf-email-token", request.data.decode("utf-8"))
+
+    def test_cloudflare_alert_rejects_bounce_or_unconfirmed_recipient(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, _ = self._config(Path(directory), alerts=True)
+            self.assertIsNotNone(config.alert)
+            for result in (
+                {
+                    "delivered": [],
+                    "queued": [],
+                    "permanent_bounces": ["daniel@0x730.com"],
+                },
+                {"delivered": [], "queued": [], "permanent_bounces": []},
+            ):
+                with self.subTest(result=result):
+                    response = mock.MagicMock()
+                    response.status = 200
+                    response.read.return_value = json.dumps(
+                        {"success": True, "errors": [], "result": result}
+                    ).encode("utf-8")
+                    response.__enter__.return_value = response
+                    with mock.patch.object(
+                        offsite_backup.urllib.request,
+                        "urlopen",
+                        return_value=response,
+                    ), self.assertRaisesRegex(
+                        offsite_backup.BackupError,
+                        "backup_alert_delivery_failed",
+                    ):
+                        offsite_backup.deliver_alert(config.alert, "stale")
+
+    def test_main_does_not_duplicate_an_alert_accepted_before_monitor_failure(self):
+        accepted_failure = offsite_backup.BackupError(
+            "backup_stale", alert_accepted=True
+        )
+        with mock.patch.object(
+            offsite_backup, "perform_monitor", side_effect=accepted_failure
+        ), mock.patch.object(
+            offsite_backup, "deliver_alert"
+        ) as deliver, mock.patch.object(offsite_backup, "_write_status"):
+            result = offsite_backup.main(["monitor", "--alert"])
+        self.assertEqual(result, 1)
+        deliver.assert_not_called()
 
     def test_object_parser_and_retention_are_danube_prefix_bounded(self):
         now = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
@@ -282,6 +381,8 @@ class OperationsDocumentationContractTests(unittest.TestCase):
             "2026-08-28T03:15:01Z",
             "2026-08-28T08:17:01Z",
             "2026-08-28T09:38:20Z",
+            "2026-08-28T20:10:56Z",
+            "cf-bounce.0x730.com",
             "nu există probă de primire în inbox",
         ):
             self.assertIn(token, normalized_deploy)
@@ -293,6 +394,22 @@ class OperationsDocumentationContractTests(unittest.TestCase):
             "/usr/bin/python3 ops/backup.py",
             normalized_ops,
         )
+
+    def test_recovery_alert_contract_uses_cloudflare_without_dunarea_sender(self):
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        ops_readme = self.root.joinpath("ops/README.md").read_text(encoding="utf-8")
+        example = self.root.joinpath("ops/offsite-backup.env.example").read_text(
+            encoding="utf-8"
+        )
+
+        for document in (deploy, ops_readme):
+            self.assertIn("Cloudflare Email Sending", document)
+            self.assertIn("`dunarea.info`", document)
+        self.assertIn("DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID=", example)
+        self.assertIn("DANUBE_BACKUP_CLOUDFLARE_API_TOKEN=", example)
+        self.assertIn("alerts@0x730.com", example)
+        self.assertNotIn("DANUBE_BACKUP_TEM_SECRET_KEY=", example)
+        self.assertNotIn("@dunarea.info", example)
 
     def test_public_discovery_contract_is_documented(self):
         deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
