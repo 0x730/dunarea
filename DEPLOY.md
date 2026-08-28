@@ -3,10 +3,10 @@
 Acesta este runbook-ul canonic pentru `https://dunarea.info`. Valorile secrete
 nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este public.
 
-## Starea instalată la 27 august 2026
+## Starea instalată la 28 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.4`](https://github.com/0x730/dunarea/tree/v1.0.4);
+- release instalat: [`v1.0.5`](https://github.com/0x730/dunarea/tree/v1.0.5);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -18,6 +18,8 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - Cloudflare proxied (nor portocaliu), SSL/TLS `Full (strict)`;
 - certificat Let's Encrypt administrat de Forge prin DNS-01;
 - baza SQLite și cheile sunt shared paths între release-uri;
+- pagina de start declară exact canonicalul `https://dunarea.info/`, iar
+  `/sitemap.xml` servește sitemap XML pentru cele șapte vederi publice;
 - job Forge `2117004` instalat la `03:15 UTC`: copie SQLite locală verificată,
   apoi criptare și upload în Spaces sub prefixul Danube;
 - job Forge `2117005` instalat la `08:17 UTC`: read-back de prospețime și alertă
@@ -271,7 +273,7 @@ reinstalați joburile și nu pretindeți livrare; restaurați configurația prin
 procedura operatorului fără a tipări valori. Modelul fără secrete rămâne
 `ops/offsite-backup.env.example`.
 
-### Starea recovery verificată manual la 27 august 2026
+### Starea recovery verificată la 28 august 2026
 
 - jobul `2117004` și jobul `2117005` sunt `installed` în Forge ca `dunarea`;
 - o copie SQLite WAL-aware a produs 949 rânduri, dintre care 638 permanente;
@@ -281,9 +283,14 @@ procedura operatorului fără a tipări valori. Modelul fără secrete rămâne
   producția și a eliminat bytes decriptați, stagingul și artefactele temporare;
 - Scaleway TEM a acceptat cererea de test la nivel API; primirea în inbox nu
   este probată și nu trebuie declarată;
-- aceasta este o probă manuală. Prima execuție programată a jobului `2117004`
-  rămâne de verificat după `2026-08-28 03:15 UTC`, iar prima execuție a jobului
-  `2117005` după `2026-08-28 08:17 UTC`; cadența programată nu este încă probată.
+- prima execuție a jobului `2117004` a reușit la `2026-08-28T03:15:01Z`: 963
+  rânduri, 647 permanente, obiect privat în Spaces cu read-back autentificat și
+  cleanup verificat;
+- prima execuție a jobului `2117005` a reușit la `2026-08-28T08:17:01Z`: același
+  obiect a fost citit autentificat și era `fresh` la 18.120 secunde, sub limita
+  de 30 h;
+- testul explicit TEM de la `2026-08-28T09:38:20Z` a fost acceptat de API pentru
+  obiectul curent; nu există probă de primire în inbox și nu trebuie declarată.
 
 Restaurare de probă off-box, fără oprirea daemonului și fără destinație aleasă
 de operator:

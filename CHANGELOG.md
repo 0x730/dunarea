@@ -4,6 +4,19 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.5](https://github.com/0x730/dunarea/tree/v1.0.5) — 2026-08-28
+
+Contractele publice corectate după doctorul flotei:
+
+- pagina de start declară canonicalul exact `https://dunarea.info/`;
+- `/sitemap.xml` răspunde cu sitemap XML valid pentru cele șapte vederi publice,
+  în locul răspunsului JSON 404;
+- testele verifică markup-ul, schema/URL-urile sitemapului și răspunsurile GET/
+  HEAD cu MIME XML;
+- documentația consemnează primele rulări reușite ale joburilor Forge `2117004`
+  și `2117005`, prospețimea obiectului și acceptarea API a testului TEM, fără
+  afirmație despre primirea în inbox.
+
 ## [v1.0.4](https://github.com/0x730/dunarea/tree/v1.0.4) — 2026-08-27
 
 Reconciliere operațională după verificarea independentă a flotei:

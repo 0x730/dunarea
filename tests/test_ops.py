@@ -267,7 +267,7 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         self.assertIn("Push-ul singur nu pornește producția", readme)
         self.assertIn("invocarea explicită a deploy-ului prin Forge API", changelog)
 
-    def test_installed_recovery_state_and_pending_first_runs_are_explicit(self):
+    def test_recovery_state_records_first_runs_and_alert_boundary(self):
         deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
         ops_readme = self.root.joinpath("ops/README.md").read_text(encoding="utf-8")
         normalized_deploy = " ".join(deploy.split())
@@ -276,13 +276,12 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         for token in (
             "2117004",
             "2117005",
-            "949 rânduri",
-            "638 permanente",
-            "RPO=13s",
-            "RTO=1.088s",
-            "primirea în inbox nu este probată",
-            "2026-08-28 03:15 UTC",
-            "2026-08-28 08:17 UTC",
+            "963 rânduri",
+            "647 permanente",
+            "2026-08-28T03:15:01Z",
+            "2026-08-28T08:17:01Z",
+            "2026-08-28T09:38:20Z",
+            "nu există probă de primire în inbox",
         ):
             self.assertIn(token, normalized_deploy)
         self.assertIn("2117004", ops_readme)
@@ -293,6 +292,14 @@ class OperationsDocumentationContractTests(unittest.TestCase):
             "/usr/bin/python3 ops/backup.py",
             normalized_ops,
         )
+
+    def test_public_discovery_contract_is_documented(self):
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        readme = self.root.joinpath("README.md").read_text(encoding="utf-8")
+
+        for document in (deploy, readme):
+            self.assertIn("https://dunarea.info/", document)
+            self.assertIn("/sitemap.xml", document)
 
 
 class VerifyDeployShellContractTests(unittest.TestCase):

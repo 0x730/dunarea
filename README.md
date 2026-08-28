@@ -9,7 +9,7 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.4](https://github.com/0x730/dunarea/tree/v1.0.4)
+- **Release curent:** [v1.0.5](https://github.com/0x730/dunarea/tree/v1.0.5)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
@@ -22,8 +22,15 @@ Quick Deploy rămâne dezactivat. Fluxul de release are două acțiuni explicite
 aceeași sesiune a proprietarului: commit-ul curat este împins în GitHub, apoi
 deploy-ul este invocat prin Forge API. Push-ul singur nu pornește producția.
 Backupul compus și monitorul de prospețime sunt administrate de joburile Forge
-`2117004` și `2117005`; primele lor execuții programate trebuie verificate după
-03:15, respectiv 08:17 UTC, pe 28 august 2026.
+`2117004` și `2117005`. Primele lor execuții programate sunt verificate la
+03:15, respectiv 08:17 UTC, pe 28 august 2026; testul TEM a fost acceptat de
+API, fără a pretinde primirea în inbox.
+
+Contractul public de descoperire este intenționat mic: pagina de start declară
+exact `<link rel="canonical" href="https://dunarea.info/">`, iar
+[`/sitemap.xml`](https://dunarea.info/sitemap.xml) este un sitemap XML care
+enumeră numai cele șapte vederi publice ale monitorului. Endpointurile API,
+exporturile și fișierele statice nu intră în sitemap.
 
 Vederea `/romania` aplică un test determinist de proporționalitate: separă
 severitatea Dunării, impactul confirmat la CNE Cernavodă și criticitatea

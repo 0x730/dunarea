@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 import zlib
 from datetime import date, datetime, timedelta, timezone
+from xml.etree import ElementTree
 from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -24,6 +25,31 @@ import server
 
 
 class StaticOptionsPageTests(unittest.TestCase):
+    def test_homepage_canonical_and_xml_sitemap_cover_every_public_view(self):
+        root = Path(__file__).parents[1]
+        page = root.joinpath("static/index.html").read_text(encoding="utf-8")
+        sitemap = root.joinpath("static/sitemap.xml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '<link rel="canonical" href="https://dunarea.info/">', page
+        )
+        document = ElementTree.fromstring(sitemap)
+        namespace = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+        self.assertEqual(document.tag, f"{namespace}urlset")
+        locations = [node.text for node in document.findall(f"{namespace}url/{namespace}loc")]
+        self.assertEqual(
+            locations,
+            [
+                "https://dunarea.info/",
+                "https://dunarea.info/romania",
+                "https://dunarea.info/bazin",
+                "https://dunarea.info/integritate",
+                "https://dunarea.info/sectoare",
+                "https://dunarea.info/optiuni",
+                "https://dunarea.info/date-lipsa",
+            ],
+        )
+
     def test_brand_and_svg_favicon_are_local_accessible_and_script_free(self):
         root = Path(__file__).parents[1]
         page = root.joinpath("static/index.html").read_text()
@@ -237,6 +263,34 @@ class PublicApiSecurityTests(unittest.TestCase):
             200,
             expected,
             "text/plain; charset=utf-8",
+            True,
+            cache_control="no-cache",
+        )
+
+    def test_sitemap_handler_serves_xml_for_get_and_head(self):
+        expected = Path(__file__).resolve().parents[1].joinpath(
+            "static/sitemap.xml"
+        ).read_bytes()
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/sitemap.xml"
+        handler.headers = {}
+        handler._send = mock.Mock()
+
+        handler.do_GET()
+        handler._send.assert_called_once_with(
+            200,
+            expected,
+            "application/xml; charset=utf-8",
+            False,
+            cache_control="no-cache",
+        )
+
+        handler._send.reset_mock()
+        handler.do_HEAD()
+        handler._send.assert_called_once_with(
+            200,
+            expected,
+            "application/xml; charset=utf-8",
             True,
             cache_control="no-cache",
         )
