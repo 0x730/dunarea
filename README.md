@@ -9,7 +9,7 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.6](https://github.com/0x730/dunarea/tree/v1.0.6)
+- **Release curent:** [v1.0.7](https://github.com/0x730/dunarea/tree/v1.0.7)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
@@ -25,7 +25,8 @@ Backupul compus și monitorul de prospețime sunt administrate de joburile Forge
 `2117004` și `2117005`. Primele lor execuții programate sunt verificate la
 03:15, respectiv 08:17 UTC, pe 28 august 2026. Alertele de recovery folosesc
 Cloudflare Email Sending cu token separat și expeditor `alerts@0x730.com`;
-testul controlat a fost acceptat de API și confirmat de operator în inbox.
+mesajele includ un template HTML autonom și fallback plain-text. Testul
+controlat a fost acceptat de API și confirmat de operator în inbox.
 
 Contractul public de descoperire este intenționat mic: pagina de start declară
 exact `<link rel="canonical" href="https://dunarea.info/">`, iar

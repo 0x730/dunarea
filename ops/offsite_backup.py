@@ -24,6 +24,7 @@ import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
+import html
 import hmac
 import json
 import os
@@ -663,6 +664,137 @@ def _parse_mailbox(value: str) -> dict[str, str]:
     return {"address": value.strip()}
 
 
+def _alert_message(
+    state: str,
+    *,
+    object_name: str | None,
+    age_hours: int | None,
+    test: bool,
+) -> dict[str, str]:
+    label = f"test: {state}" if test else state
+    state_key = state.casefold()
+    if state_key == "fresh":
+        status_label = "Fresh"
+        headline = "Encrypted backup is fresh"
+        accent = "#0f766e"
+        accent_soft = "#ccfbf1"
+    elif state_key == "stale":
+        status_label = "Stale"
+        headline = "Encrypted backup needs attention"
+        accent = "#b45309"
+        accent_soft = "#fef3c7"
+    elif state_key == "missing":
+        status_label = "Missing"
+        headline = "No valid encrypted backup was found"
+        accent = "#b91c1c"
+        accent_soft = "#fee2e2"
+    else:
+        status_label = state.replace("-", " ").strip().title() or "Failed"
+        headline = "The recovery check did not complete"
+        accent = "#b91c1c"
+        accent_soft = "#fee2e2"
+
+    object_value = object_name or "No valid Danube object"
+    age_value = f"{age_hours} hours" if age_hours is not None else "Unavailable"
+    checked_at = _iso(_utcnow())
+    purpose = "Delivery test" if test else "Recovery incident"
+    action = (
+        "This operator-requested test did not raise an incident."
+        if test
+        else "Treat this as a recovery incident and inspect the Forge backup jobs."
+    )
+    text_lines = [
+        f"Danube encrypted SQLite backup monitor: {label}.",
+        f"Latest object: {object_name}." if object_name else "No valid Danube object exists.",
+        f"Age: {age_hours}h (limit 30h)." if age_hours is not None else None,
+        f"Checked: {checked_at}.",
+        "This is the operator-requested delivery test."
+        if test
+        else "Treat this as an application recovery incident.",
+    ]
+
+    escaped = {
+        "action": html.escape(action),
+        "age": html.escape(age_value),
+        "checked_at": html.escape(checked_at),
+        "headline": html.escape(headline),
+        "object": html.escape(object_value),
+        "purpose": html.escape(purpose.upper()),
+        "status": html.escape(status_label.upper()),
+    }
+    body = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escaped["headline"]}</title>
+</head>
+<body style="margin:0;background:#f3f5f4;color:#17221f;font-family:Arial,Helvetica,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+    {escaped["headline"]}. Latest object: {escaped["object"]}.
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f3f5f4;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border:1px solid #dce4e1;border-radius:18px;overflow:hidden;">
+          <tr>
+            <td style="padding:24px 28px;background:#102923;color:#ffffff;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="font-size:21px;font-weight:700;letter-spacing:-0.3px;">Danube</td>
+                  <td align="right" style="font-size:11px;font-weight:700;letter-spacing:1.4px;color:#b8d8cf;">RECOVERY MONITOR</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 28px 14px;">
+              <div style="font-size:11px;font-weight:700;letter-spacing:1.3px;color:#60736d;">{escaped["purpose"]}</div>
+              <h1 style="margin:10px 0 14px;font-size:28px;line-height:1.2;letter-spacing:-0.7px;color:#17221f;">{escaped["headline"]}</h1>
+              <span style="display:inline-block;padding:7px 12px;border-radius:999px;background:{accent_soft};color:{accent};font-size:12px;font-weight:700;letter-spacing:0.6px;">{escaped["status"]}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px 10px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;background:#f7f9f8;border:1px solid #e1e8e5;border-radius:12px;">
+                <tr>
+                  <td style="width:118px;padding:15px 16px;border-bottom:1px solid #e1e8e5;color:#60736d;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Latest object</td>
+                  <td style="padding:15px 16px;border-bottom:1px solid #e1e8e5;color:#17221f;font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;word-break:break-all;">{escaped["object"]}</td>
+                </tr>
+                <tr>
+                  <td style="padding:15px 16px;border-bottom:1px solid #e1e8e5;color:#60736d;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Age</td>
+                  <td style="padding:15px 16px;border-bottom:1px solid #e1e8e5;color:#17221f;font-size:14px;font-weight:700;">{escaped["age"]} <span style="font-weight:400;color:#60736d;">/ 30-hour limit</span></td>
+                </tr>
+                <tr>
+                  <td style="padding:15px 16px;color:#60736d;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Checked</td>
+                  <td style="padding:15px 16px;color:#17221f;font-size:13px;">{escaped["checked_at"]}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px 30px;">
+              <div style="padding:14px 16px;border-left:4px solid {accent};background:{accent_soft};color:#293b36;font-size:14px;line-height:1.55;">{escaped["action"]}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 28px;background:#edf2f0;color:#60736d;font-size:11px;line-height:1.5;">
+              Automated recovery evidence from Danube · 0x730
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+    return {
+        "subject": f"[Danube] SQLite backup {label}",
+        "text": "\n".join(line for line in text_lines if line),
+        "html": body,
+    }
+
+
 def deliver_alert(
     alert: AlertConfig | None,
     state: str,
@@ -673,21 +805,17 @@ def deliver_alert(
 ) -> None:
     if alert is None:
         raise BackupError("backup_alert_configuration_missing")
-    label = f"test: {state}" if test else state
-    lines = [
-        f"Danube encrypted SQLite backup monitor: {label}.",
-        f"Latest object: {object_name}." if object_name else "No valid Danube object exists.",
-        f"Age: {age_hours}h (limit 30h)." if age_hours is not None else None,
-        "This is the operator-requested delivery test."
-        if test
-        else "Treat this as an application recovery incident.",
-    ]
+    message = _alert_message(
+        state,
+        object_name=object_name,
+        age_hours=age_hours,
+        test=test,
+    )
     payload = {
         "from": _parse_mailbox(alert.sender),
         "to": alert.recipient,
         "reply_to": _parse_mailbox(alert.reply_to),
-        "subject": f"[Danube] SQLite backup {label}",
-        "text": "\n".join(line for line in lines if line),
+        **message,
     }
     url = (
         "https://api.cloudflare.com/client/v4/accounts/"

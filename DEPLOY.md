@@ -6,7 +6,7 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 ## Starea instalată la 28 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.6`](https://github.com/0x730/dunarea/tree/v1.0.6);
+- release instalat: [`v1.0.7`](https://github.com/0x730/dunarea/tree/v1.0.7);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -274,8 +274,10 @@ Alertarea folosește direct API-ul REST Cloudflare Email Sending; nu cere Worker
 Configurația 0600 conține ID-ul contului și un token Danube separat, limitat la
 permisiunea `Email Sending: Edit`. Expeditorul este o adresă `@0x730.com` deja
 onboarded în Cloudflare Email Service. `dunarea.info` nu este folosit ca domeniu
-de trimitere și nu trebuie configurat pentru email. Un test explicit se face
-fără a simula un incident:
+de trimitere și nu trebuie configurat pentru email. Corpul trimis conține atât
+un template HTML autonom, cu stiluri inline și stări vizuale distincte, cât și
+fallback plain-text; nu încarcă imagini sau CSS extern. Un test explicit se
+face fără a simula un incident:
 
 ```bash
 python3 ops/offsite_backup.py monitor \

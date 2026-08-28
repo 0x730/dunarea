@@ -65,9 +65,10 @@ mărime/SHA identice, refuz la GET nesemnat, retenție post-verificare și clean
 al stagingului. `monitor` face un read-back independent și poate apela direct
 Cloudflare Email Sending, fără Worker, cu token separat limitat la `Email
 Sending: Edit`. Expeditorul folosește domeniul `0x730.com` deja onboarded;
-`dunarea.info` nu este domeniu de email. `restore-drill` nu acceptă cale
-destinație și nu poate suprascrie producția; raportează doar număr de rânduri,
-RPO/RTO și cleanup, niciodată conținutul bazei.
+`dunarea.info` nu este domeniu de email. Mesajul include un template HTML
+autonom, email-safe, și fallback plain-text, fără resurse externe.
+`restore-drill` nu acceptă cale destinație și nu poate suprascrie producția;
+raportează doar număr de rânduri, RPO/RTO și cleanup, niciodată conținutul bazei.
 
 Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
 

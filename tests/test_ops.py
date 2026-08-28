@@ -180,7 +180,49 @@ class OffsiteBackupContractTests(unittest.TestCase):
             self.assertEqual(
                 payload["reply_to"], {"address": "daniel@0x730.com"}
             )
+            self.assertIn("Danube encrypted SQLite backup monitor", payload["text"])
+            self.assertIn("Encrypted backup needs attention", payload["html"])
+            self.assertIn(">STALE<", payload["html"])
+            self.assertNotIn("<img", payload["html"])
+            self.assertNotIn("https://", payload["html"])
             self.assertNotIn("cf-email-token", request.data.decode("utf-8"))
+
+    def test_cloudflare_alert_html_is_self_contained_and_escapes_object_name(self):
+        message = offsite_backup._alert_message(
+            "fresh",
+            object_name="database/danube/<latest&ready>.sqlite3.enc",
+            age_hours=2,
+            test=True,
+        )
+
+        self.assertEqual(message["subject"], "[Danube] SQLite backup test: fresh")
+        self.assertIn("operator-requested delivery test", message["text"])
+        self.assertIn("DELIVERY TEST", message["html"])
+        self.assertIn("Encrypted backup is fresh", message["html"])
+        self.assertIn(">FRESH<", message["html"])
+        self.assertIn(
+            "database/danube/&lt;latest&amp;ready&gt;.sqlite3.enc",
+            message["html"],
+        )
+        self.assertNotIn("<latest&ready>", message["html"])
+        self.assertNotIn("src=", message["html"])
+        self.assertLess(len(message["html"].encode("utf-8")), 20_000)
+
+    def test_cloudflare_alert_html_distinguishes_missing_and_failure_states(self):
+        missing = offsite_backup._alert_message(
+            "missing", object_name=None, age_hours=None, test=False
+        )
+        failed = offsite_backup._alert_message(
+            "provider-check-failed", object_name=None, age_hours=None, test=False
+        )
+
+        self.assertIn("No valid encrypted backup was found", missing["html"])
+        self.assertIn(">MISSING<", missing["html"])
+        self.assertIn("The recovery check did not complete", failed["html"])
+        self.assertIn(">PROVIDER CHECK FAILED<", failed["html"])
+        for message in (missing, failed):
+            self.assertIn("Treat this as an application recovery incident", message["text"])
+            self.assertIn("Treat this as a recovery incident", message["html"])
 
     def test_cloudflare_alert_rejects_bounce_or_unconfirmed_recipient(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -408,6 +450,9 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         self.assertIn("DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID=", example)
         self.assertIn("DANUBE_BACKUP_CLOUDFLARE_API_TOKEN=", example)
         self.assertIn("alerts@0x730.com", example)
+        self.assertIn("template HTML", deploy)
+        self.assertIn("fallback plain-text", deploy)
+        self.assertIn("fallback plain-text", ops_readme)
         self.assertNotIn("DANUBE_BACKUP_TEM_SECRET_KEY=", example)
         self.assertNotIn("@dunarea.info", example)
 

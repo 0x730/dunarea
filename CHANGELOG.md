@@ -4,6 +4,16 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.7](https://github.com/0x730/dunarea/tree/v1.0.7) — 2026-08-28
+
+- alertele de recovery trimise prin Cloudflare includ acum un template HTML
+  autonom, cu stiluri inline și stări vizuale distincte pentru fresh, stale,
+  missing și failure;
+- fiecare mesaj păstrează fallbackul plain-text, nu încarcă imagini, fonturi sau
+  CSS extern și escapează valorile obiectului înainte de randarea HTML;
+- testele fixează contractul multipart, diferențierea incidentelor, lipsa
+  resurselor externe și limita de dimensiune a template-ului.
+
 ## [v1.0.6](https://github.com/0x730/dunarea/tree/v1.0.6) — 2026-08-28
 
 - alerta operațională pentru backup migrează de la Scaleway TEM la API-ul REST
