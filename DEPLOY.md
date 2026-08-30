@@ -3,10 +3,10 @@
 Acesta este runbook-ul canonic pentru `https://dunarea.info`. Valorile secrete
 nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este public.
 
-## Starea instalată la 28 august 2026
+## Starea instalată la 30 august 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.7`](https://github.com/0x730/dunarea/tree/v1.0.7);
+- release instalat: [`v1.0.8`](https://github.com/0x730/dunarea/tree/v1.0.8);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;

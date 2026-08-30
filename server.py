@@ -71,6 +71,9 @@ def _load_build_sha(path=None):
 BUILD_SHA = _load_build_sha()
 PUBLIC_URL = "https://dunarea.info"
 PROJECT_URL = "https://github.com/0x730/dunarea"
+REPORT_SNAPSHOT_CACHE_KEY = f"api_report_snapshot:v1:{APP_VERSION}"
+REPORT_SNAPSHOT_TTL_S = 5 * 60
+REPORT_SNAPSHOT_MAX_STALE_S = 24 * 3600
 
 # Jurnal: erorile și cererile lente se scriu întotdeauna; access log-ul complet
 # se activează la cerere, ca să nu inunde consola supervisorului.
@@ -95,6 +98,10 @@ MIME = {
 
 class BadRequest(ValueError):
     """Parametru public invalid; nu este o defecțiune a sursei externe."""
+
+
+class ServiceUnavailable(RuntimeError):
+    """Rezultat local încă nepregătit; clientul poate reîncerca fără 502."""
 
 
 _SENSITIVE_QUERY_KEYS = {
@@ -813,7 +820,7 @@ def api_bilant_apa(q):
     return {**r["data"], "stale": r["stale"]}
 
 
-def api_raport(q):
+def _build_report_snapshot():
     """Snapshot complet, descărcabil: toate verdictele + intrările lor, cu
     marcaj de timp — proba arhivabilă a oricărei afirmații din aplicație."""
     import datetime
@@ -851,6 +858,39 @@ def api_raport(q):
             out["sectiuni"][nume] = fn()
         except Exception as exc:
             out["sectiuni"][nume] = {"eroare": C.public_error(exc)}
+    return out
+
+
+def _refresh_report_snapshot():
+    """Construiește snapshotul în afara firului unei cereri publice."""
+    return C.cached(
+        REPORT_SNAPSHOT_CACHE_KEY,
+        REPORT_SNAPSHOT_TTL_S,
+        _build_report_snapshot,
+    )
+
+
+def api_raport(q):
+    """Livrează ultimul snapshot complet fără a aștepta upstreamurile.
+
+    Un snapshot expirat rămâne arhivabil și este marcat explicit, în timp ce
+    reîmprospătarea rulează single-flight în fundal. Numai un cache complet gol
+    primește 503 rapid; clientul nu mai poate rămâne blocat minute întregi.
+    """
+    result = C.cached_stale_while_revalidate(
+        REPORT_SNAPSHOT_CACHE_KEY,
+        REPORT_SNAPSHOT_TTL_S,
+        _build_report_snapshot,
+        max_stale=REPORT_SNAPSHOT_MAX_STALE_S,
+    )
+    if result["data"] is None:
+        raise ServiceUnavailable("raportul complet se pregătește; reîncercați")
+    out = dict(result["data"])
+    out["livrare_snapshot"] = {
+        "cache_age_s": result["cache_age_s"],
+        "stale": result["stale"],
+        "refreshing": result["refreshing"],
+    }
     return out
 
 
@@ -1058,6 +1098,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, res, head_only=head_only)
             except BadRequest as exc:
                 self._send(400, {"error": str(exc)}, head_only=head_only)
+            except ServiceUnavailable as exc:
+                self._send(
+                    503,
+                    {"error": str(exc)},
+                    head_only=head_only,
+                    extra_headers={"Retry-After": "5"},
+                )
             except Exception:
                 # detaliile în log, nu la client (pot conține căi interne)
                 traceback.print_exc()
@@ -1098,6 +1145,10 @@ def warmup():
     from concurrent.futures import ThreadPoolExecutor
 
     if C.cache_get("warmup_done", max_age=6 * 3600):
+        # Snapshotul are cheie versionată și poate lipsi imediat după deploy,
+        # chiar dacă warmup-ul surselor a rulat recent în release-ul anterior.
+        # Suntem deja într-un fir daemon: îl construim aici, nu în request.
+        _refresh_report_snapshot()
         print("warmup sărit (rulat recent)")
         return
 
@@ -1132,6 +1183,7 @@ def warmup():
     # ajungeau într-un fir de cerere și puteau depăși proxy_read_timeout.
     safe(lambda: C.cached(anomalii.STATS_CACHE_KEY, 6 * 3600, anomalii.full_stats))
     safe(lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget))
+    safe(_refresh_report_snapshot)
     safe(C.cache_gc)
     # `safe` înghite orice excepție: marcarea necondiționată însemna că, dacă
     # rețeaua a fost jos tot warmup-ul, fiecare repornire îl sărea 6 ore și
@@ -1166,6 +1218,10 @@ def maintenance_watcher():
                 C.anar_water_resources()
                 C.glofas_romanian_tributary_climatology()
                 C.cache_gc()
+            # Recompunerea poate dura minute când expiră mai multe surse, dar
+            # acest watcher este separat de firele HTTP. Cererile continuă să
+            # primească ultimul snapshot complet pe durata refresh-ului.
+            _refresh_report_snapshot()
         except Exception:
             pass
 

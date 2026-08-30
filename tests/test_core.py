@@ -209,6 +209,79 @@ class PublicApiSecurityTests(unittest.TestCase):
         self.assertIn("uptime_s", out)
         self.assertIn("warmup_done", out)
 
+    def test_report_serves_stale_snapshot_without_running_builder_in_request(self):
+        snapshot = {
+            "generat_utc": "2026-08-30T07:00:00+00:00",
+            "versiune": server.APP_VERSION,
+            "sectiuni": {"anomalii": {"state": "cached"}},
+        }
+        delivery = {
+            "data": snapshot,
+            "cache_age_s": 601,
+            "stale": True,
+            "refreshing": True,
+        }
+        with mock.patch.object(
+            C, "cached_stale_while_revalidate", return_value=delivery
+        ) as stale_cache, mock.patch.object(
+            server, "_build_report_snapshot", side_effect=AssertionError
+        ) as builder:
+            out = server.api_raport({})
+
+        builder.assert_not_called()
+        self.assertEqual(out["sectiuni"], snapshot["sectiuni"])
+        self.assertEqual(
+            out["livrare_snapshot"],
+            {"cache_age_s": 601, "stale": True, "refreshing": True},
+        )
+        self.assertEqual(
+            stale_cache.call_args.kwargs["max_stale"],
+            server.REPORT_SNAPSHOT_MAX_STALE_S,
+        )
+
+    def test_empty_report_cache_returns_fast_retryable_service_unavailable(self):
+        delivery = {
+            "data": None,
+            "cache_age_s": None,
+            "stale": True,
+            "refreshing": True,
+        }
+        with mock.patch.object(
+            C, "cached_stale_while_revalidate", return_value=delivery
+        ), mock.patch.object(
+            server, "_build_report_snapshot", side_effect=AssertionError
+        ) as builder:
+            with self.assertRaisesRegex(
+                server.ServiceUnavailable, "raportul complet se pregătește"
+            ):
+                server.api_raport({})
+        builder.assert_not_called()
+
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/api/raport"
+        handler.headers = {}
+        handler._send = mock.Mock()
+
+        def unavailable(_query):
+            raise server.ServiceUnavailable("raportul complet se pregătește")
+
+        with mock.patch.dict(server.ROUTES, {"/api/raport": unavailable}):
+            handler.do_GET()
+        handler._send.assert_called_once_with(
+            503,
+            {"error": "raportul complet se pregătește"},
+            head_only=False,
+            extra_headers={"Retry-After": "5"},
+        )
+
+    def test_recent_warmup_marker_still_builds_versioned_report_snapshot(self):
+        with mock.patch.object(
+            C, "cache_get", return_value={"data": True, "age": 1}
+        ), mock.patch.object(server, "_refresh_report_snapshot") as refresh:
+            server.warmup()
+
+        refresh.assert_called_once_with()
+
     def test_build_revision_accepts_only_a_full_git_sha(self):
         with tempfile.TemporaryDirectory() as directory:
             revision = Path(directory, ".build-revision")
@@ -928,12 +1001,16 @@ class CacheTests(unittest.TestCase):
         with C._inflight_lock:
             C._inflight.clear()
             C._last_fail.clear()
+        with C._background_refresh_lock:
+            C._background_refreshing.clear()
 
     def tearDown(self):
         C.DB_PATH = self.old_db_path
         with C._inflight_lock:
             C._inflight.clear()
             C._last_fail.clear()
+        with C._background_refresh_lock:
+            self.assertEqual(C._background_refreshing, set())
         self.tmp.cleanup()
 
     def test_stale_fallback_uses_failure_backoff(self):
@@ -955,6 +1032,87 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(first["stale"])
         self.assertTrue(second["stale"])
         self.assertEqual(calls, 1)
+
+    def test_stale_while_revalidate_is_immediate_and_background_single_flight(self):
+        C.cache_put("report", {"generation": "old"}, ttl=1)
+        with sqlite3.connect(C.DB_PATH) as conn:
+            conn.execute(
+                "UPDATE cache SET fetched_at=? WHERE key='report'",
+                (time.time() - 10,),
+            )
+
+        started = threading.Event()
+        release = threading.Event()
+        calls = 0
+
+        def slow_fetch():
+            nonlocal calls
+            calls += 1
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"generation": "new"}
+
+        before = time.monotonic()
+        first = C.cached_stale_while_revalidate(
+            "report", 60, slow_fetch, max_stale=3600
+        )
+        second = C.cached_stale_while_revalidate(
+            "report", 60, slow_fetch, max_stale=3600
+        )
+        elapsed = time.monotonic() - before
+
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual(first["data"], {"generation": "old"})
+        self.assertEqual(second["data"], {"generation": "old"})
+        self.assertTrue(first["stale"])
+        self.assertTrue(first["refreshing"])
+        self.assertTrue(started.wait(timeout=1))
+        self.assertEqual(calls, 1)
+
+        release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            fresh = C.cache_get("report")
+            with C._background_refresh_lock:
+                refreshing = bool(C._background_refreshing)
+            if fresh and not refreshing:
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("refresh-ul de fundal nu s-a încheiat")
+
+        self.assertEqual(fresh["data"], {"generation": "new"})
+        self.assertEqual(calls, 1)
+
+    def test_empty_stale_while_revalidate_never_waits_for_first_snapshot(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_fetch():
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"ready": True}
+
+        before = time.monotonic()
+        result = C.cached_stale_while_revalidate(
+            "empty-report", 60, slow_fetch, max_stale=3600
+        )
+        elapsed = time.monotonic() - before
+
+        self.assertLess(elapsed, 0.2)
+        self.assertIsNone(result["data"])
+        self.assertTrue(result["refreshing"])
+        self.assertTrue(started.wait(timeout=1))
+        release.set()
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with C._background_refresh_lock:
+                if not C._background_refreshing:
+                    break
+            time.sleep(0.01)
+        else:
+            self.fail("refresh-ul inițial nu s-a încheiat")
 
     def test_sen_history_comparison_self_enables_only_after_minimum_days(self):
         start = date(2026, 7, 20)

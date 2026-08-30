@@ -37,6 +37,8 @@ _inflight_lock = threading.Lock()
 _inflight = {}          # cheie -> [lacăt, nr. așteptători] (se golește singur)
 _last_fail = {}         # cheie -> moment ultimului eșec (evită N reîncercări)
 FAIL_BACKOFF_S = 60
+_background_refresh_lock = threading.Lock()
+_background_refreshing = set()
 
 # ---------------------------------------------------------------- cache ----
 
@@ -295,6 +297,78 @@ def cached(key, ttl, fetch_fn, stale_ok=True):
                 prag = time.time() - FAIL_BACKOFF_S
                 for k in [k for k, t in _last_fail.items() if t < prag]:
                     _last_fail.pop(k, None)
+
+
+def _ensure_background_refresh(key, ttl, fetch_fn):
+    """Pornește cel mult un refresh daemon pentru o cheie.
+
+    `cached()` păstrează single-flight-ul real și backoff-ul; registrul separat
+    de aici evită să creăm câte un fir care doar așteaptă același lacăt pentru
+    fiecare client al unui snapshot expirat.
+    """
+    with _background_refresh_lock:
+        if key in _background_refreshing:
+            return True
+        _background_refreshing.add(key)
+
+    def refresh():
+        try:
+            cached(key, ttl, fetch_fn)
+        except Exception:
+            # Consumatorul a primit deja copia veche sau un răspuns de
+            # pregătire. Eșecul rămâne în backoff-ul `cached()` și nu trebuie
+            # transformat într-o excepție necapturată a firului daemon.
+            pass
+        finally:
+            with _background_refresh_lock:
+                _background_refreshing.discard(key)
+
+    thread = threading.Thread(
+        target=refresh,
+        name="danube-cache-refresh",
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except Exception:
+        with _background_refresh_lock:
+            _background_refreshing.discard(key)
+        return False
+    return True
+
+
+def cached_stale_while_revalidate(key, ttl, fetch_fn, *, max_stale):
+    """Servește imediat ultimul snapshot complet și îl reîmprospătează în fundal.
+
+    Spre deosebire de `cached()`, o intrare expirată nu ține cererea publică
+    deschisă cât timp sunt interogate sursele externe. Dacă nu există încă
+    niciun snapshot în limita `max_stale`, `data` este `None`; ruta poate
+    răspunde rapid și explicit cu 503/Retry-After.
+    """
+    hit = cache_get(key)
+    if hit:
+        return {
+            "data": hit["data"],
+            "cache_age_s": int(hit["age"]),
+            "stale": False,
+            "refreshing": False,
+        }
+
+    old = cache_get(key, max_age=max_stale)
+    refreshing = _ensure_background_refresh(key, ttl, fetch_fn)
+    if old:
+        return {
+            "data": old["data"],
+            "cache_age_s": int(old["age"]),
+            "stale": True,
+            "refreshing": refreshing,
+        }
+    return {
+        "data": None,
+        "cache_age_s": None,
+        "stale": True,
+        "refreshing": refreshing,
+    }
 
 
 def _fetch_and_store(key, ttl, fetch_fn, stale_ok):

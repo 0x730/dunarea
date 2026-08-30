@@ -4,6 +4,19 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.8](https://github.com/0x730/dunarea/tree/v1.0.8) — 2026-08-30
+
+- `/api/raport` livrează imediat ultimul snapshot complet și mută
+  reîmprospătarea potențial lentă în fundal, single-flight, astfel încât o
+  expirare simultană a surselor nu mai ține cererea deschisă peste timeoutul
+  proxy-ului;
+- snapshoturile expirate sunt marcate explicit prin `livrare_snapshot`, iar un
+  cache inițial gol răspunde rapid cu `503` și `Retry-After` până când warmup-ul
+  finalizează prima copie;
+- warmup-ul și watcherul de mentenanță pregătesc periodic snapshotul în afara
+  firelor HTTP, iar testele acoperă livrarea imediată, refreshul concurent și
+  contractul retryabil pentru cache rece.
+
 ## [v1.0.7](https://github.com/0x730/dunarea/tree/v1.0.7) — 2026-08-28
 
 - alertele de recovery trimise prin Cloudflare includ acum un template HTML

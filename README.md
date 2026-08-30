@@ -9,7 +9,7 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.0.7](https://github.com/0x730/dunarea/tree/v1.0.7)
+- **Release curent:** [v1.0.8](https://github.com/0x730/dunarea/tree/v1.0.8)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 
@@ -396,9 +396,13 @@ cache.db         cache local + arhiva zilnică (generat la rulare)
 `/api/istoric` · `/api/analiza-ai` ·
 `/api/statistici` (+`.csv` pentru export)
 
-`/api/raport` întoarce, într-o singură cerere neautentificată, un instantaneu
-JSON cu toate secțiunile monitorului și verdictele lor — util pentru arhivare
-sau pentru verificarea independentă a unei afirmații de pe pagină.
+`/api/raport` întoarce, într-o singură cerere neautentificată, ultimul
+instantaneu JSON complet cu toate secțiunile monitorului și verdictele lor —
+util pentru arhivare sau pentru verificarea independentă a unei afirmații de pe
+pagină. Un snapshot expirat este livrat imediat cu `livrare_snapshot.stale=true`
+și reîmprospătat single-flight în fundal; dacă nu există încă niciun snapshot,
+ruta răspunde rapid cu `503` și `Retry-After`, fără să țină conexiunea deschisă
+cât timp sunt consultate sursele externe.
 
 Parametrii numerici acceptă doar valori dintr-o listă scurtă (`days`, `start`);
 o valoare din afara ei întoarce 400 cu lista permisă. Restricția există pentru
