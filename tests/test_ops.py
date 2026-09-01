@@ -672,6 +672,8 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         for token in (
             "/home/dunarea/.forge/*.log",
             "/home/dunarea/dunarea.info/*.log",
+            "/home/forge/.pm2/logs/*.log",
+            "/home/forge/swing.boostit.dev/logs/*.log",
             "daily",
             "maxsize 20M",
             "rotate 14",
@@ -680,9 +682,18 @@ class OperationsDocumentationContractTests(unittest.TestCase):
             "delaycompress",
             "copytruncate",
             "su dunarea dunarea",
+            "su forge forge",
         ):
             self.assertIn(token, logrotate)
-        self.assertNotIn("/home/forge/.pm2/logs", logrotate)
+        self.assertEqual(logrotate.count("/home/forge/.pm2/logs/*.log"), 1)
+        self.assertEqual(
+            logrotate.count("/home/forge/swing.boostit.dev/logs/*.log"), 1
+        )
+        self.assertEqual(logrotate.count("maxsize 20M"), 2)
+        self.assertEqual(logrotate.count("rotate 14"), 2)
+        self.assertEqual(logrotate.count("maxage 14"), 2)
+        self.assertEqual(logrotate.count("delaycompress"), 2)
+        self.assertEqual(logrotate.count("copytruncate"), 2)
         for token in (
             "deployment_retention=1",
             "maximum două",
@@ -692,6 +703,8 @@ class OperationsDocumentationContractTests(unittest.TestCase):
             "șase ore",
             "runtime_hygiene.py",
             "prune_releases.py",
+            "singurul proprietar",
+            "pm2-logrotate",
         ):
             self.assertIn(token, deploy)
 

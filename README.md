@@ -29,10 +29,12 @@ mesajele includ un template HTML autonom și fallback plain-text. Testul
 controlat a fost acceptat de API și confirmat de operator în inbox.
 
 Igiena hostului comun urmează contractul Ops al flotei: cel mult două
-release-uri per site, rotație zilnică/20 MiB pentru cele două căi de log Danube
-și o singură alertă fizică Danube + Portfolio, cu praguri 80/90/75 și
-re-alertare la șase ore. Activarea pe host rămâne separată de existența codului
-și este documentată în [`DEPLOY.md`](DEPLOY.md#7-igiena-hostului-comun).
+release-uri per site, un singur proprietar system logrotate pentru căile Danube
+și PM2 Portfolio, plus o singură alertă fizică Danube + Portfolio, cu praguri
+80/90/75 și re-alertare la șase ore. Configurația live, exercițiul de stare și
+acceptarea separată a transportului sunt documentate în
+[`DEPLOY.md`](DEPLOY.md#7-igiena-hostului-comun) și în dovada sanitizată din
+[`ops/runtime-hygiene-evidence-2026-09-01.md`](ops/runtime-hygiene-evidence-2026-09-01.md).
 
 Contractul public de descoperire este intenționat mic: pagina de start declară
 exact `<link rel="canonical" href="https://dunarea.info/">`, iar

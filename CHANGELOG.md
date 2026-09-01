@@ -9,9 +9,10 @@ codului lansat.
 - disciplina de runtime decisă de Ops pentru hostul Forge comun limitează
   explicit ambele rădăcini de release la cel mult două directoare, cu un
   pruner fail-closed care păstrează release-ul activ și cel mai nou rollback;
-- configurația logrotate source-owned acoperă exact cele două căi Danube
-  lipsă, zilnic sau la 20 MiB, cu 14 generații/14 zile, compresie întârziată și
-  `copytruncate`;
+- configurația logrotate source-owned este unicul proprietar al celor două căi
+  Danube și al tuturor logurilor PM2 de pe host, zilnic sau la 20 MiB, cu 14
+  generații/14 zile, compresie întârziată și `copytruncate`; modulul duplicat
+  `pm2-logrotate` este retras de pe host;
 - un singur monitor de presiune pentru hostul fizic comun folosește pragurile
   80% warning, 90% critical și sub 75% recovery, re-alertează la șase ore și
   trimite o singură tranziție de recovery prin transportul Cloudflare existent;

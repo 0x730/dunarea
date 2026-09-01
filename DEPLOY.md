@@ -384,7 +384,7 @@ un release anterior pe lângă cel activ, adică două directoare în total. Scr
 de deploy Danube rulează suplimentar prunerul după activare. Rețeta temporară și
 orice artefact de probă se șterg după verificare.
 
-### Două căi Danube cu rotație comună
+### Un singur proprietar de rotație pentru hostul comun
 
 Fișierul source-owned [`ops/logrotate/0x730-processes`](ops/logrotate/0x730-processes)
 se instalează root-owned `0644` la `/etc/logrotate.d/0x730-processes`. El
@@ -393,8 +393,14 @@ acoperă exact `/home/dunarea/.forge/*.log` și
 zile, compresie cu `delaycompress`, `copytruncate`, `missingok` și `notifempty`.
 Directiva `su dunarea dunarea` este obligatorie fiindcă rădăcina site-ului este
 group-writable pentru utilizatorul izolat; validați cu `logrotate -d` înainte
-de prima rotație. Logurile PM2 Portfolio au propriul rotator și nu sunt
-modificate de această configurație Danube.
+de prima rotație. Un al doilea stanza din același fișier acoperă exact
+`/home/forge/.pm2/logs/*.log` și
+`/home/forge/swing.boostit.dev/logs/*.log`, cu același contract și
+`su forge forge`. Acestea sunt toate căile de log declarate de procesele PM2
+salvate pe host. Modulul `pm2-logrotate` trebuie dezinstalat după validarea
+configurației, astfel încât system logrotate să rămână singurul proprietar;
+nu se păstrează două mecanisme active pentru aceeași cale și nu rămâne vreun
+proces PM2 fără rotație.
 
 ### O singură alertă pentru hostul fizic
 
@@ -415,6 +421,10 @@ este atomic și `0600`; transportul Cloudflare și contractul strict
 `delivered`/`queued` sunt aceleași primitive deja verificate pentru Danube.
 Testul explicit `--test-alert` nu deschide și nu închide un incident. Acceptarea
 API rămâne distinctă de primirea în inbox.
+
+Dovada sanitizată a instalării, exercițiului de stare și acceptării transportului
+este în
+[`ops/runtime-hygiene-evidence-2026-09-01.md`](ops/runtime-hygiene-evidence-2026-09-01.md).
 
 ## 8. Acceptanță post-deploy
 

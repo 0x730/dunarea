@@ -10,3 +10,16 @@
     copytruncate
     su dunarea dunarea
 }
+
+/home/forge/.pm2/logs/*.log /home/forge/swing.boostit.dev/logs/*.log {
+    daily
+    maxsize 20M
+    rotate 14
+    maxage 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su forge forge
+}

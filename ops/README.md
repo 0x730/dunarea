@@ -99,7 +99,11 @@ sub 75% recovery, cu re-alertare la șase ore și o singură tranziție de recov
 Starea atomică `0600` păstrează histerezisul; alerta reutilizează numai grupul
 Cloudflare din configurația existentă și nu cere cheile S3. Configurația
 [`logrotate/0x730-processes`](logrotate/0x730-processes) acoperă separat cele
-două directoare de log Danube declarate de Ops.
+două directoare de log Danube și toate căile declarate de procesele PM2:
+`/home/forge/.pm2/logs/*.log` și
+`/home/forge/swing.boostit.dev/logs/*.log`, în stanzas cu utilizatorii corecți.
+System logrotate este singurul proprietar; modulul PM2 `pm2-logrotate` nu
+rămâne instalat.
 
 ## `source_freshness.py` — sursele de date rămân proaspete
 
