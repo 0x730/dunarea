@@ -175,6 +175,39 @@ def _read_config_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _alert_config_from_values(
+    values: dict[str, str], *, required: bool
+) -> AlertConfig | None:
+    if any(values.get(key) for key in LEGACY_ALERT_KEYS):
+        raise BackupError("backup_alert_configuration_legacy")
+
+    configured = [bool(values.get(key)) for key in ALERT_KEYS]
+    if required and not all(configured):
+        raise BackupError("backup_alert_configuration_missing")
+    if not any(configured):
+        return None
+    if not all(configured):
+        raise BackupError("backup_alert_configuration_partial")
+
+    account_id = values["DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID"]
+    if not re.fullmatch(r"[0-9a-f]{32}", account_id):
+        raise BackupError("backup_alert_account_id_invalid")
+    return AlertConfig(
+        account_id=account_id,
+        api_token=values["DANUBE_BACKUP_CLOUDFLARE_API_TOKEN"],
+        sender=values["DANUBE_BACKUP_ALERT_FROM"],
+        reply_to=values["DANUBE_BACKUP_ALERT_REPLY_TO"],
+        recipient=values["DANUBE_BACKUP_ALERT_TO"],
+    )
+
+
+def load_alert_config(path: str | Path) -> AlertConfig:
+    alert = _alert_config_from_values(_read_config_file(Path(path)), required=True)
+    if alert is None:  # pragma: no cover - required=True makes this unreachable
+        raise BackupError("backup_alert_configuration_missing")
+    return alert
+
+
 def load_config(path: str | Path) -> Config:
     values = _read_config_file(Path(path))
     if any(not values.get(key) for key in STORAGE_KEYS):
@@ -214,24 +247,7 @@ def load_config(path: str | Path) -> Config:
     }:
         raise BackupError("backup_encryption_key_reused")
 
-    if any(values.get(key) for key in LEGACY_ALERT_KEYS):
-        raise BackupError("backup_alert_configuration_legacy")
-
-    configured_alert_values = [bool(values.get(key)) for key in ALERT_KEYS]
-    if any(configured_alert_values) and not all(configured_alert_values):
-        raise BackupError("backup_alert_configuration_partial")
-    alert = None
-    if all(configured_alert_values):
-        account_id = values["DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID"]
-        if not re.fullmatch(r"[0-9a-f]{32}", account_id):
-            raise BackupError("backup_alert_account_id_invalid")
-        alert = AlertConfig(
-            account_id=account_id,
-            api_token=values["DANUBE_BACKUP_CLOUDFLARE_API_TOKEN"],
-            sender=values["DANUBE_BACKUP_ALERT_FROM"],
-            reply_to=values["DANUBE_BACKUP_ALERT_REPLY_TO"],
-            recipient=values["DANUBE_BACKUP_ALERT_TO"],
-        )
+    alert = _alert_config_from_values(values, required=False)
 
     return Config(
         endpoint=f"https://{endpoint.netloc}",

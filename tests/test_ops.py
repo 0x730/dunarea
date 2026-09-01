@@ -1,18 +1,22 @@
 import json
+import math
 import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import unittest
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from ops import backup
 from ops import offsite_backup
+from ops import prune_releases
+from ops import runtime_hygiene
 from ops import source_freshness
 from ops import write_build_revision
 
@@ -379,6 +383,180 @@ class OffsiteBackupContractTests(unittest.TestCase):
             request.assert_not_called()
 
 
+class ReleasePruneContractTests(unittest.TestCase):
+    def _layout(self, root: Path):
+        releases = root / "releases"
+        releases.mkdir(parents=True)
+        paths = []
+        for index, name in enumerate(("100", "200", "300"), start=1):
+            release = releases / name
+            release.mkdir()
+            release.joinpath("payload.bin").write_bytes(bytes([index]) * index)
+            os.utime(release, ns=(index, index))
+            paths.append(release)
+        current = root / "current"
+        current.symlink_to(paths[2], target_is_directory=True)
+        return releases, current, paths
+
+    def test_plan_keeps_active_and_newest_rollback_then_apply_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory) / "site"
+            releases, current, paths = self._layout(site)
+            allowed = {releases: current}
+
+            plan = prune_releases.plan_releases(
+                releases, current_link=current, allowed_roots=allowed
+            )
+            self.assertEqual([path.name for path in plan.keep], ["300", "200"])
+            self.assertEqual([path.name for path in plan.remove], ["100"])
+            self.assertTrue(paths[0].exists())
+
+            reclaimed = prune_releases.apply_plan(plan)
+            self.assertGreater(reclaimed, 0)
+            self.assertFalse(paths[0].exists())
+            self.assertEqual(
+                sorted(path.name for path in releases.iterdir()), ["200", "300"]
+            )
+            self.assertEqual(current.resolve(), paths[2])
+
+    def test_apply_refuses_when_the_active_release_changed_after_dry_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory) / "site"
+            releases, current, paths = self._layout(site)
+            plan = prune_releases.plan_releases(
+                releases,
+                current_link=current,
+                allowed_roots={releases: current},
+            )
+            current.unlink()
+            current.symlink_to(paths[0], target_is_directory=True)
+
+            with self.assertRaisesRegex(
+                prune_releases.PruneError, "release_current_changed"
+            ):
+                prune_releases.apply_plan(plan)
+            self.assertTrue(all(path.exists() for path in paths))
+
+    def test_plan_refuses_unknown_roots_foreign_links_and_non_directory_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory) / "site"
+            releases, current, _paths = self._layout(site)
+            with self.assertRaisesRegex(
+                prune_releases.PruneError, "release_root_refused"
+            ):
+                prune_releases.plan_releases(
+                    releases, current_link=current, allowed_roots={}
+                )
+
+            foreign = site / "foreign-current"
+            foreign.symlink_to(releases / "300", target_is_directory=True)
+            with self.assertRaisesRegex(
+                prune_releases.PruneError, "release_current_link_refused"
+            ):
+                prune_releases.plan_releases(
+                    releases,
+                    current_link=foreign,
+                    allowed_roots={releases: current},
+                )
+
+            releases.joinpath("unexpected.txt").write_text("stop", encoding="ascii")
+            with self.assertRaisesRegex(
+                prune_releases.PruneError, "release_entry_invalid"
+            ):
+                prune_releases.plan_releases(
+                    releases, current_link=current, allowed_roots={releases: current}
+                )
+
+
+class RuntimeHygieneContractTests(unittest.TestCase):
+    def test_thresholds_realert_escalation_and_recovery_hysteresis(self):
+        now = datetime(2026, 9, 1, 10, tzinfo=timezone.utc)
+        healthy = runtime_hygiene.Observation(34, 13, 179 * 1024 * 1024)
+        warning = runtime_hygiene.Observation(80, 13, 179 * 1024 * 1024)
+        critical = runtime_hygiene.Observation(90, 13, 179 * 1024 * 1024)
+
+        self.assertEqual(
+            runtime_hygiene.decide_alert(healthy, {}, now).state, "healthy"
+        )
+        first = runtime_hygiene.decide_alert(warning, {}, now)
+        self.assertEqual((first.state, first.send), ("warning", "incident"))
+
+        active = {
+            "active": True,
+            "severity": "warning",
+            "lastAlertAt": "2026-09-01T10:00:00Z",
+        }
+        muted = runtime_hygiene.decide_alert(warning, active, now + timedelta(hours=1))
+        self.assertEqual((muted.state, muted.send), ("warning_muted", None))
+        realert = runtime_hygiene.decide_alert(
+            warning, active, now + timedelta(hours=6)
+        )
+        self.assertEqual((realert.state, realert.send), ("warning", "incident"))
+        escalated = runtime_hygiene.decide_alert(
+            critical, active, now + timedelta(hours=1)
+        )
+        self.assertEqual((escalated.state, escalated.send), ("critical", "incident"))
+
+        recovering = runtime_hygiene.decide_alert(
+            runtime_hygiene.Observation(78, 13, 100), active, now
+        )
+        self.assertEqual((recovering.state, recovering.send), ("recovering", None))
+        recovered = runtime_hygiene.decide_alert(
+            runtime_hygiene.Observation(74, 13, 100), active, now
+        )
+        self.assertEqual((recovered.state, recovered.send), ("recovered", "recovery"))
+
+    def test_journal_parser_accepts_systemd_units_and_rejects_ambiguous_output(self):
+        self.assertEqual(
+            runtime_hygiene._journal_bytes(
+                "Archived and active journals take up 178.7M in the file system."
+            ),
+            math.ceil(178.7 * 1024 * 1024),
+        )
+        self.assertEqual(
+            runtime_hygiene._journal_bytes("Journals take up 1.5 GiB."),
+            1536 * 1024 * 1024,
+        )
+        with self.assertRaises(runtime_hygiene.HygieneError):
+            runtime_hygiene._journal_bytes("unavailable")
+
+    def test_main_records_owner_only_incident_and_one_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "host-status.json"
+            base_args = [
+                "--config",
+                "unused.env",
+                "--state-file",
+                str(state),
+                "--alert",
+            ]
+            critical = runtime_hygiene.Observation(91, 13, 179 * 1024 * 1024)
+            healthy = runtime_hygiene.Observation(34, 13, 179 * 1024 * 1024)
+
+            with mock.patch.object(
+                runtime_hygiene, "collect_observation", return_value=critical
+            ), mock.patch.object(
+                offsite_backup, "load_alert_config", return_value=mock.sentinel.alert
+            ), mock.patch.object(offsite_backup, "_send_email") as send:
+                self.assertEqual(runtime_hygiene.main(base_args), 1)
+                send.assert_called_once()
+                self.assertIn("shared host critical", send.call_args.args[1]["subject"])
+            recorded = json.loads(state.read_text(encoding="utf-8"))
+            self.assertTrue(recorded["active"])
+            self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o600)
+
+            with mock.patch.object(
+                runtime_hygiene, "collect_observation", return_value=healthy
+            ), mock.patch.object(
+                offsite_backup, "load_alert_config", return_value=mock.sentinel.alert
+            ), mock.patch.object(offsite_backup, "_send_email") as send:
+                self.assertEqual(runtime_hygiene.main(base_args), 0)
+                send.assert_called_once()
+                self.assertIn("shared host recovered", send.call_args.args[1]["subject"])
+            recorded = json.loads(state.read_text(encoding="utf-8"))
+            self.assertFalse(recorded["active"])
+
+
 class BuildRevisionContractTests(unittest.TestCase):
     def test_generated_revision_is_the_checkout_head(self):
         root = Path(__file__).resolve().parents[1]
@@ -484,6 +662,38 @@ class OperationsDocumentationContractTests(unittest.TestCase):
         self.assertNotIn("| `matches`", policy)
         self.assertIn("ar cere Advanced Rate Limiting", policy)
         self.assertIn("DMARC este deja strict `p=reject`", deploy)
+
+    def test_shared_host_hygiene_contract_is_source_owned_and_bounded(self):
+        deploy = self.root.joinpath("DEPLOY.md").read_text(encoding="utf-8")
+        logrotate = self.root.joinpath(
+            "ops/logrotate/0x730-processes"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "/home/dunarea/.forge/*.log",
+            "/home/dunarea/dunarea.info/*.log",
+            "daily",
+            "maxsize 20M",
+            "rotate 14",
+            "maxage 14",
+            "compress",
+            "delaycompress",
+            "copytruncate",
+            "su dunarea dunarea",
+        ):
+            self.assertIn(token, logrotate)
+        self.assertNotIn("/home/forge/.pm2/logs", logrotate)
+        for token in (
+            "deployment_retention=1",
+            "maximum două",
+            "80%",
+            "90%",
+            "75%",
+            "șase ore",
+            "runtime_hygiene.py",
+            "prune_releases.py",
+        ):
+            self.assertIn(token, deploy)
 
 
 class VerifyDeployShellContractTests(unittest.TestCase):
@@ -670,7 +880,7 @@ class SourceFreshnessContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config_file = self._alert_env(root)
-            alert = source_freshness._load_alert_config(config_file)
+            alert = offsite_backup.load_alert_config(config_file)
             self.assertEqual(alert.recipient, "daniel@0x730.com")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -684,7 +894,7 @@ class SourceFreshnessContractTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 offsite_backup.BackupError, "backup_alert_configuration_missing"
             ):
-                source_freshness._load_alert_config(config_file)
+                offsite_backup.load_alert_config(config_file)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -694,7 +904,7 @@ class SourceFreshnessContractTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 offsite_backup.BackupError, "backup_alert_configuration_legacy"
             ):
-                source_freshness._load_alert_config(config_file)
+                offsite_backup.load_alert_config(config_file)
 
     def test_base_url_rejects_credentials_paths_and_other_schemes(self):
         good = source_freshness._validated_base_url("http://127.0.0.1:7300")

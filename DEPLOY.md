@@ -11,7 +11,8 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
 - repo GitHub `0x730/dunarea`, branch `main`;
-- deploy-uri Forge zero-downtime, cu patru release-uri păstrate;
+- deploy-uri Forge zero-downtime, cu `deployment_retention=4` — patru
+  rollbackuri plus release-ul activ la read-back-ul din 1 septembrie;
 - proces Python administrat ca Forge Background Process;
 - aplicația ascultă numai pe `127.0.0.1:7300`;
 - Nginx reverse proxy pentru `dunarea.info`;
@@ -60,6 +61,8 @@ $ACTIVATE_RELEASE()
 test "$(git -C /home/dunarea/dunarea.info/current rev-parse HEAD)" = "$RELEASE_SHA"
 test "$(cat /home/dunarea/dunarea.info/current/.build-revision)" = "$RELEASE_SHA"
 sudo supervisorctl restart daemon-ID_DIN_FORGE:*
+python3 /home/dunarea/dunarea.info/current/ops/prune_releases.py \
+  --root /home/dunarea/dunarea.info/releases --apply
 ```
 
 ID-ul procesului rămâne în Forge, nu în repo. Ordinea este intenționată:
@@ -67,7 +70,9 @@ release-ul nu devine activ dacă revizia nu poate fi legată de checkout sau dac
 un test eșuează. După activare, aceleași 40 de cifre hex trebuie să existe în
 Git HEAD și în `.build-revision`; procesul este repornit numai după aceste două
 probe. `/api/health.buildSha` citește exclusiv fișierul din release-ul care
-rulează, nu o valoare de mediu ce ar putea deriva.
+rulează, nu o valoare de mediu ce ar putea deriva. Prunerul rulează ultimul și
+refuză orice rădăcină în afara celor două site-uri declarate pe hostul comun;
+pentru Danube păstrează întotdeauna release-ul activ și cel mai nou rollback.
 
 În acest runbook, „deploy manual” înseamnă exact workflow-ul owner-session în
 doi pași, nu Quick Deploy și nu un webhook pornit automat de push:
@@ -355,7 +360,63 @@ Restaurare reală în caz de incident (separată de drill):
 4. reporniți procesul și verificați `/api/health`, `/api/overview` și arhiva;
 5. păstrați copia înlocuită până când revizuirea datelor este terminată.
 
-## 7. Acceptanță post-deploy
+## 7. Igiena hostului comun
+
+Contractul Ops `fleet-runtime-hygiene-v1` se aplică o singură dată hostului
+fizic Forge `949568`, dar păstrează proprietatea separată a căilor Danube și
+Portfolio. Politica nu autorizează curățarea cache-urilor, backupurilor,
+bazelor de date sau a altor site-uri.
+
+### Release-uri: maximum două pe fiecare site
+
+Înaintea primei curățări, citiți symlinkurile active și rulați dry-run pentru
+ambele rădăcini exacte:
+
+```bash
+python3 ops/prune_releases.py --root /home/dunarea/dunarea.info/releases
+python3 ops/prune_releases.py --root /home/forge/0x730.com/releases
+```
+
+Numai după ce `current` și rollbackul ales coincid cu read-back-ul, rețeta root
+Forge temporară poate repeta comenzile cu `--apply`. Configurați apoi
+`deployment_retention=1` la ambele site-uri: în Forge această valoare păstrează
+un release anterior pe lângă cel activ, adică două directoare în total. Scriptul
+de deploy Danube rulează suplimentar prunerul după activare. Rețeta temporară și
+orice artefact de probă se șterg după verificare.
+
+### Două căi Danube cu rotație comună
+
+Fișierul source-owned [`ops/logrotate/0x730-processes`](ops/logrotate/0x730-processes)
+se instalează root-owned `0644` la `/etc/logrotate.d/0x730-processes`. El
+acoperă exact `/home/dunarea/.forge/*.log` și
+`/home/dunarea/dunarea.info/*.log`: zilnic, maximum 20 MiB, 14 generații și 14
+zile, compresie cu `delaycompress`, `copytruncate`, `missingok` și `notifempty`.
+Directiva `su dunarea dunarea` este obligatorie fiindcă rădăcina site-ului este
+group-writable pentru utilizatorul izolat; validați cu `logrotate -d` înainte
+de prima rotație. Logurile PM2 Portfolio au propriul rotator și nu sunt
+modificate de această configurație Danube.
+
+### O singură alertă pentru hostul fizic
+
+Jobul Forge comun de instalat rulează orar, ca `dunarea`, fără credential nou:
+
+```cron
+13 * * * * cd /home/dunarea/dunarea.info/current && \
+  /usr/bin/python3 ops/runtime_hygiene.py \
+  --config /home/dunarea/dunarea.info/data/keys/offsite-backup.env \
+  --state-file /home/dunarea/dunarea.info/runtime-hygiene-status.json --alert
+```
+
+Monitorul citește numai `/`: utilizarea blocurilor, inodelor și dimensiunea
+jurnalului systemd. Emite warning la `>=80%`, critical la `>=90%`, re-alertează
+cel mult o dată la șase ore și închide incidentul printr-un singur mesaj numai
+când disk și inode sunt sub `75%`, iar jurnalul sub `256 MiB`. Fișierul de stare
+este atomic și `0600`; transportul Cloudflare și contractul strict
+`delivered`/`queued` sunt aceleași primitive deja verificate pentru Danube.
+Testul explicit `--test-alert` nu deschide și nu închide un incident. Acceptarea
+API rămâne distinctă de primirea în inbox.
+
+## 8. Acceptanță post-deploy
 
 ```bash
 bash ops/verify_deploy.sh \

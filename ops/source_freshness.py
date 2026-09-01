@@ -24,14 +24,12 @@ import argparse
 import contextlib
 import html
 import json
-import re
 import signal
 import socket
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 try:
     from ops import offsite_backup as ob
@@ -327,25 +325,6 @@ def _freshness_message(
     }
 
 
-def _load_alert_config(path: str | Path) -> ob.AlertConfig:
-    """Refolosește blocul de alertă din env-ul de backup; nu cere cheile S3."""
-    values = ob._read_config_file(Path(path))
-    if any(values.get(key) for key in ob.LEGACY_ALERT_KEYS):
-        raise ob.BackupError("backup_alert_configuration_legacy")
-    if not all(values.get(key) for key in ob.ALERT_KEYS):
-        raise ob.BackupError("backup_alert_configuration_missing")
-    account_id = values["DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID"]
-    if not re.fullmatch(r"[0-9a-f]{32}", account_id):
-        raise ob.BackupError("backup_alert_account_id_invalid")
-    return ob.AlertConfig(
-        account_id=account_id,
-        api_token=values["DANUBE_BACKUP_CLOUDFLARE_API_TOKEN"],
-        sender=values["DANUBE_BACKUP_ALERT_FROM"],
-        reply_to=values["DANUBE_BACKUP_ALERT_REPLY_TO"],
-        recipient=values["DANUBE_BACKUP_ALERT_TO"],
-    )
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=ob.DEFAULT_CONFIG)
@@ -380,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
                 str(evidence["checkedAt"]),
                 test=args.test_alert,
             )
-            ob._send_email(_load_alert_config(args.config), message)
+            ob._send_email(ob.load_alert_config(args.config), message)
             evidence["testAlertAccepted" if args.test_alert else "alertAccepted"] = True
         ob._write_status(args.status_file, "sourceFreshness", evidence)
         ob._emit("source_freshness", **evidence)

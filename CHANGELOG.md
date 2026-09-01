@@ -4,6 +4,20 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## Unreleased
+
+- disciplina de runtime decisă de Ops pentru hostul Forge comun limitează
+  explicit ambele rădăcini de release la cel mult două directoare, cu un
+  pruner fail-closed care păstrează release-ul activ și cel mai nou rollback;
+- configurația logrotate source-owned acoperă exact cele două căi Danube
+  lipsă, zilnic sau la 20 MiB, cu 14 generații/14 zile, compresie întârziată și
+  `copytruncate`;
+- un singur monitor de presiune pentru hostul fizic comun folosește pragurile
+  80% warning, 90% critical și sub 75% recovery, re-alertează la șase ore și
+  trimite o singură tranziție de recovery prin transportul Cloudflare existent;
+- testele acoperă limitele de ștergere, dry-run-ul, release-ul activ, pragurile,
+  escaladarea, re-alertarea, histerezisul și starea locală owner-only.
+
 ## [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0) — 2026-09-01
 
 - monitor nou de prospețime a surselor (`ops/source_freshness.py`): citește de

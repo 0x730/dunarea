@@ -28,6 +28,12 @@ Cloudflare Email Sending cu token separat și expeditor `alerts@0x730.com`;
 mesajele includ un template HTML autonom și fallback plain-text. Testul
 controlat a fost acceptat de API și confirmat de operator în inbox.
 
+Igiena hostului comun urmează contractul Ops al flotei: cel mult două
+release-uri per site, rotație zilnică/20 MiB pentru cele două căi de log Danube
+și o singură alertă fizică Danube + Portfolio, cu praguri 80/90/75 și
+re-alertare la șase ore. Activarea pe host rămâne separată de existența codului
+și este documentată în [`DEPLOY.md`](DEPLOY.md#7-igiena-hostului-comun).
+
 Contractul public de descoperire este intenționat mic: pagina de start declară
 exact `<link rel="canonical" href="https://dunarea.info/">`, iar
 [`/sitemap.xml`](https://dunarea.info/sitemap.xml) este un sitemap XML care

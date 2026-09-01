@@ -1,0 +1,12 @@
+/home/dunarea/.forge/*.log /home/dunarea/dunarea.info/*.log {
+    daily
+    maxsize 20M
+    rotate 14
+    maxage 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su dunarea dunarea
+}

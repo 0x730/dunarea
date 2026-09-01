@@ -1,7 +1,7 @@
 # ops — backup și verificarea posturii
 
-Patru scripturi, fără pachete Python externe, pentru lucrurile pe care
-documentația le *descrie* dar nimeni nu le *verifică*.
+Utilitare fără pachete Python externe pentru lucrurile pe care documentația le
+*descrie* dar nimeni nu le *verifică*.
 
 Politica Cloudflare separată, inclusiv scopul exact al singurei reguli Free de
 rate limiting și read-back-ul sanitizat, este în
@@ -71,6 +71,35 @@ autonom, email-safe, și fallback plain-text, fără resurse externe.
 raportează doar număr de rânduri, RPO/RTO și cleanup, niciodată conținutul bazei.
 
 Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
+
+## `prune_releases.py` — maximum două release-uri pe hostul comun
+
+```bash
+python3 ops/prune_releases.py --root /home/dunarea/dunarea.info/releases
+python3 ops/prune_releases.py --root /home/dunarea/dunarea.info/releases --apply
+```
+
+Fără `--apply`, scriptul este dry-run. Acceptă numai rădăcinile exacte Danube și
+Portfolio, rezolvă obligatoriu symlinkul `current`, păstrează release-ul activ
+și cel mai nou rollback și refuză symlinkuri sau fișiere neașteptate în
+directorul de release. Nu atinge backupuri, cache, date persistente sau alte
+site-uri.
+
+## `runtime_hygiene.py` — o alertă pentru hostul fizic comun
+
+```bash
+python3 ops/runtime_hygiene.py
+python3 ops/runtime_hygiene.py --alert
+python3 ops/runtime_hygiene.py --test-alert
+```
+
+Monitorul agregă disk, inode și jurnal systemd pentru Forge `949568`, partajat
+de Danube și Portfolio. Aplică exact ciclul Ops 80% warning / 90% critical /
+sub 75% recovery, cu re-alertare la șase ore și o singură tranziție de recovery.
+Starea atomică `0600` păstrează histerezisul; alerta reutilizează numai grupul
+Cloudflare din configurația existentă și nu cere cheile S3. Configurația
+[`logrotate/0x730-processes`](logrotate/0x730-processes) acoperă separat cele
+două directoare de log Danube declarate de Ops.
 
 ## `source_freshness.py` — sursele de date rămân proaspete
 
