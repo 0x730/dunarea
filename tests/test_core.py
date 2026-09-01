@@ -3,6 +3,7 @@ import html
 import json
 import os
 import sqlite3
+import ssl
 import struct
 import tempfile
 import threading
@@ -387,6 +388,21 @@ class PublicApiSecurityTests(unittest.TestCase):
                     "https://127.0.0.1/a", "https://example.org/a"):
             with self.assertRaises(RuntimeError):
                 C._validated_https_url(url, {"hydroweb.next.theia-land.fr"})
+
+    def test_hydroinfo_extra_ca_anchors_keep_full_verification(self):
+        ctx = C._ssl_context_for(C.HYDROINFO_URL)
+        self.assertIsNotNone(ctx)
+        # ancorele repară lanțul incomplet al OVF; nu dezactivează verificarea
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+        commons = {rdn[0][1] for cert in ctx.get_ca_certs()
+                   for rdn in cert["subject"] if rdn[0][0] == "commonName"}
+        self.assertIn("e-Szigno RSA OV TLS CA 2026", commons)
+        self.assertIn("e-Szigno RSA TLS Root CA 2025", commons)
+        # contextul se construiește o singură dată per host
+        self.assertIs(ctx, C._ssl_context_for(C.HYDROINFO_URL))
+        # restul hosturilor rămân pe depozitul implicit al sistemului
+        self.assertIsNone(C._ssl_context_for("https://www.pegelonline.wsv.de/"))
 
 
 class MissingDataRegistryTests(unittest.TestCase):

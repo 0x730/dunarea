@@ -498,12 +498,116 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+# ------------------------------------------------ ancore TLS per host -------
+# www.hydroinfo.hu (OVF) a reînnoit certificatul pe 25.08.2026, dar serverul
+# trimite alt intermediar („e-Szigno OV TLS CA 2026”) decât emitentul real al
+# certificatului frunză („e-Szigno RSA OV TLS CA 2026”). Browserele repară
+# lanțul descărcând emitentul din AIA; urllib nu face asta, așa că fetch-ul
+# eșua cu „unable to get local issuer certificate”, iar tabelul Dunării
+# rămânea blocat pe snapshotul din 25.08. Mai jos sunt cele două certificate
+# CA PUBLICE care închid lanțul: intermediarul corect (AIA:
+# http://ovtlsca2026-ca.e-szigno.hu/ovtlsca2026.crt) și rădăcina
+# „e-Szigno RSA TLS Root CA 2025” în varianta cross-semnată de
+# „Microsec e-Szigno Root CA 2009”, care există în depozitul de sistem.
+# Ancorele se ADAUGĂ la depozitul implicit — verificarea TLS rămâne completă;
+# nu este verify=off, iar dacă OVF își repară lanțul nimic nu se schimbă.
+
+_HYDROINFO_EXTRA_CA = """\
+-----BEGIN CERTIFICATE-----
+MIIGPTCCBCWgAwIBAgINAUD2P2jVGzuXbGcgCjANBgkqhkiG9w0BAQ0FADBgMQsw
+CQYDVQQGEwJIVTERMA8GA1UEBwwIQnVkYXBlc3QxFjAUBgNVBAoMDU1pY3Jvc2Vj
+IEx0ZC4xJjAkBgNVBAMMHWUtU3ppZ25vIFJTQSBUTFMgUm9vdCBDQSAyMDI1MB4X
+DTI2MDMxODE0MDAwMFoXDTI5MDMxNzEzNTk1OVowdzELMAkGA1UEBhMCSFUxETAP
+BgNVBAcMCEJ1ZGFwZXN0MRYwFAYDVQQKDA1NaWNyb3NlYyBMdGQuMRcwFQYDVQRh
+DA5WQVRIVS0yMzU4NDQ5NzEkMCIGA1UEAwwbZS1Temlnbm8gUlNBIE9WIFRMUyBD
+QSAyMDI2MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtZhDf+jYTCk5
+bbEzOC5au8bIi5U0ZloioOy0DtQcEV6w902/Ag5ohz6MVu6HqulwDbYmd9v0anI9
+J5XvC+JYHvxyfWxXTJ00ZFW/wo4lSrH2FmkRx/Tggmvw4NsgBkq2cH+nEQsu79dA
+u3jBvARqnaDyd5DjOLMNX2FHNZNUiGSU0yp089A1DAiT1CMt/fgnEdtrLMDeNCG9
+GwYlS00s5ShJhpdAE2LbuoJLG0Aq13eRN6sHu18JJS4X8MCQ1xkoDK/BCozRBqxO
+3+lZ+Qm1A5EMDoTEcm3vYDYzeJ/ScY3T+h7yemjmIcdTgpgHDbYh/n3B16tO330u
+H46KBTkycchoRYCcGrp/r1UqHNvHO67UXwYUIc/y9ir4pDeDwfL6CosikvgMucCK
+C+V10BStk3+a/RkZQGx5M3sKyJosSf2eq9ILyrCFa1oCQM82CF0zD39OiH7fd3db
+zbDSmYd2Eg4E3XH1VZyBOeVmAL/Ae88myg+9/q9pyBQQFHyJABFRAgMBAAGjggFd
+MIIBWTAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjATBgNVHSUEDDAK
+BggrBgEFBQcDATARBgNVHSAECjAIMAYGBFUdIAAwHQYDVR0OBBYEFGJVSSlLTSkA
+wv7doULMImWrrMd5MB8GA1UdIwQYMBaAFHzx4i7GSbEDeMkgreAcnMRLyX/sMEcG
+A1UdHwRAMD4wPKA6oDiGNmh0dHA6Ly90bHNyb290Y2EyMDI1LWNybC5lLXN6aWdu
+by5odS90bHNyb290Y2EyMDI1LmNybDCBhAYIKwYBBQUHAQEEeDB2MDEGCCsGAQUF
+BzABhiVodHRwOi8vdGxzcm9vdGNhMjAyNS1vY3NwLmUtc3ppZ25vLmh1MEEGCCsG
+AQUFBzAChjVodHRwOi8vdGxzcm9vdGNhMjAyNS1jYS5lLXN6aWduby5odS90bHNy
+b290Y2EyMDI1LmNydDANBgkqhkiG9w0BAQ0FAAOCAgEAO9kV7eUFUdotj01+trNb
+4dwMDtPvUPQ9DiDfgTf02CUewAM94iaujidnyOkH4JXla5A6Yn1f0smghGxmRIsa
+aADNpGNnCirpCw0aanWA9AEyo8vfwKYSImdOLCJFC3pNmK4CCUqsoNhI60lfjVT3
+fiIsetORO9n0L7E7qWT35QiS7wvKu6aowgS0j2kJWyfogQuLuw/ciMqfg6nCE+Tp
+i1gHkVuTHuxDxFzFEIn0ZjFSt0WkAMnv1Cs5k6QJVZ0WGhAAkpexZlXsOChMVUrm
+71MRIOwDV6tau16NzIbAWXQKUojsE1ZJZaZHOWDlOvFUl/vstL00RsomxNxVlgtA
+Ava+HdA8lrFvL/DSRDB1N35Yn/RB2hfjPeXybJVbgS9YmuZW9k2pYvuDlQmFkVO1
++b+DNzRLvAdnmB7+hViwf7Z1aFmvbemQGtYi+L62mt+Le0MLtZyBXkxQ4opwZlA/
+BM87uDoExTr4DXx/lYd8edPF3Is2CYwrs/o2ND3Hh6v1WMduMbsRXHh1gwzetgfD
+X30ACMg8ZqphpzmfRWD9IW40QBY7LRX6oN9Y9cPDclGCefS3v+g9boKStz7/Yhrm
+knkZWb2Ny0q/uRz0GfRB8AVYIO2sPcVT8+ElBXEueUXKZjnKiRSPTk0JD5FMLLSk
+9XMg3jcrY4ps+i7nizoNe0A=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIFoTCCBImgAwIBAgINATEa+5J6hX9i0JWCCjANBgkqhkiG9w0BAQsFADCBgjEL
+MAkGA1UEBhMCSFUxETAPBgNVBAcMCEJ1ZGFwZXN0MRYwFAYDVQQKDA1NaWNyb3Nl
+YyBMdGQuMScwJQYDVQQDDB5NaWNyb3NlYyBlLVN6aWdubyBSb290IENBIDIwMDkx
+HzAdBgkqhkiG9w0BCQEWEGluZm9AZS1zemlnbm8uaHUwHhcNMjUwNzMwMTUxNTAw
+WhcNMjkxMjMwMDkxNDU5WjBgMQswCQYDVQQGEwJIVTERMA8GA1UEBwwIQnVkYXBl
+c3QxFjAUBgNVBAoMDU1pY3Jvc2VjIEx0ZC4xJjAkBgNVBAMMHWUtU3ppZ25vIFJT
+QSBUTFMgUm9vdCBDQSAyMDI1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKC
+AgEAoc3tWRO/7f76XCROhCTaYB8lXjXjdoqzDdoociAA5Rs1BvK3Zj7nFHX8v4SU
+JB8RFlIEHt3f9pV5ntLXLYdupK2Rg3c2MyYN53FkIPVjSwWfYLKEee0z7BJMsxsq
+n+udsO6Ve9nJsCijbvc3fIXjXiAKHB1cjVJNozDGcriWmmMZWu8nT9PQ0QbQV3xQ
+1F+P0Vo2gIgwgWFHFCznOVsnSLvn5/z5dfOd1SEF/tq5iy/7s33jZgMwMscxxKSm
++qxIdqlJjO3Cq7J3x+kuFdccGQxkRjzqBa0vYCLcqJDy1GGZWpDr9jEYaw2s1w8T
+ZG0QzLNzhP1AnspAkvsXnQgZC6AXFjR2zXxeDL4tRISuB8UsW54Bi6bVZsB48Fsb
+eMJat++PMP7Wikkvm1XzB2OEMhWTmgfpJLZCf5HVtkxmwExqukEsw93yNjX9PgGL
+ByFZPSO3UJhZ+ip553skB3HIG/LDPchrPVeUdkC+E4ere9EPFnptFJ6d9YlYOeGk
+CaH8XvImyX7lSXaOBo/c61X6L3hICkYUDYYjtGPs8Aj43AJ8zFrtAVGd4oKVcfiv
+k03aYEaelHRV18zPMSVSO27Qokk5La35cj9v15pI3mK7KieUge7+WGF0vXYzg1Ff
+yXqp3n5mOebXrhv7soBYpcFg8QyVakrf/iDtfmsCIcWWn/UCAwEAAaOCATUwggEx
+MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBMGA1UdJQQMMAoGCCsG
+AQUFBwMBMBEGA1UdIAQKMAgwBgYEVR0gADAdBgNVHQ4EFgQUfPHiLsZJsQN4ySCt
+4BycxEvJf+wwHwYDVR0jBBgwFoAUyw/G30JDzD3LtUgjoRp6piq7NGgwNgYDVR0f
+BC8wLTAroCmgJ4YlaHR0cDovL2NybC5lLXN6aWduby5odS9yb290Y2EyMDA5LmNy
+bDBuBggrBgEFBQcBAQRiMGAwKwYIKwYBBQUHMAGGH2h0dHA6Ly9yb290b2NzcDIw
+MDkuZS1zemlnbm8uaHUwMQYIKwYBBQUHMAKGJWh0dHA6Ly93d3cuZS1zemlnbm8u
+aHUvcm9vdGNhMjAwOS5jcnQwDQYJKoZIhvcNAQELBQADggEBADpWte8hztVBdyhx
+5TDMHOSWv9xj9Wv1xUEkdqXkqh6ic3GHMZUBp0U3pOZ0K+ejXYIQCU1rr6JUzuNR
+cGNfTy9tIP/A1zN1g7ivsRA3xtmgkdpiZ0ZLcyXIcmzH6cfcXU7SYUmvK5NemB52
+8QvR25eQzAuNqkkeZqDqtU8XZftkRQFRVpLCsUnX2BX6IuKzR/u83r3WwR7fOy8e
+hrQ9rkJgcB3J1tnACofpwnRttl1KbWAH0OkAclYxmcjIvK6y5FnNbjrgLs8gc725
+M4FfPfLjiEsLB+Qf9VlmqXQRg0jcjJPl06AWGboslv7KYB5T6O+z9b/y5vZ6iJwA
+Hs9XKuQ=
+-----END CERTIFICATE-----
+"""
+
+_EXTRA_CA_PEM = {"www.hydroinfo.hu": _HYDROINFO_EXTRA_CA}
+_extra_ca_contexts = {}
+
+
+def _ssl_context_for(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower().rstrip(".")
+    pem = _EXTRA_CA_PEM.get(host)
+    if pem is None:
+        return None
+    ctx = _extra_ca_contexts.get(host)
+    if ctx is None:
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=pem)
+        _extra_ca_contexts[host] = ctx
+    return ctx
+
+
 def http_get(url, timeout=25, binary=False, max_bytes=None):
     _throttle(url)
     limit = max_bytes if max_bytes is not None else (
         MAX_BINARY_BYTES if binary else MAX_TEXT_BYTES)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout,
+                                context=_ssl_context_for(url)) as resp:
         raw = _read_bounded(resp, limit)
     return raw if binary else raw.decode("utf-8", errors="replace")
 

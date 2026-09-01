@@ -4,6 +4,20 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.0.9](https://github.com/0x730/dunarea/tree/v1.0.9) — 2026-09-01
+
+- Hydroinfo (OVF Ungaria) își reînnoise certificatul TLS pe 25.08.2026, dar
+  serverul lor trimite alt intermediar decât emitentul real al certificatului;
+  fetch-ul pica la verificare și tabelul Dunării rămânea blocat pe snapshotul
+  din 25 august, marcat `stale`;
+- `http_get` primește ancore CA suplimentare per host: intermediarul corect
+  (din AIA) și rădăcina „e-Szigno RSA TLS Root CA 2025" cross-semnată de
+  „Microsec e-Szigno Root CA 2009" din depozitul de sistem — lanțul se închide
+  cu verificare TLS completă, fără `verify=off`;
+- testele fixează contractul: verificarea rămâne `CERT_REQUIRED` cu
+  `check_hostname`, ancorele sunt prezente, iar celelalte hosturi rămân pe
+  depozitul implicit al sistemului.
+
 ## [v1.0.8](https://github.com/0x730/dunarea/tree/v1.0.8) — 2026-08-30
 
 - `/api/raport` livrează imediat ultimul snapshot complet și mută
