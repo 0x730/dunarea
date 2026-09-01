@@ -803,14 +803,25 @@ def deliver_alert(
     age_hours: int | None = None,
     test: bool = False,
 ) -> None:
-    if alert is None:
-        raise BackupError("backup_alert_configuration_missing")
     message = _alert_message(
         state,
         object_name=object_name,
         age_hours=age_hours,
         test=test,
     )
+    _send_email(alert, message)
+
+
+def _send_email(alert: AlertConfig | None, message: dict[str, str]) -> None:
+    """Trimite un mesaj deja compus prin Cloudflare Email Sending.
+
+    Transportul și contractul de acceptare sunt partajate cu monitorul de
+    prospețime a surselor (``ops/source_freshness.py``): destinatarul trebuie
+    să apară în ``delivered`` sau ``queued``, iar bounce-ul permanent și
+    răspunsurile ambigue rămân eșecuri.
+    """
+    if alert is None:
+        raise BackupError("backup_alert_configuration_missing")
     payload = {
         "from": _parse_mailbox(alert.sender),
         "to": alert.recipient,

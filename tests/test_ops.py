@@ -6,12 +6,14 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 from ops import backup
 from ops import offsite_backup
+from ops import source_freshness
 from ops import write_build_revision
 
 
@@ -501,6 +503,208 @@ class VerifyDeployShellContractTests(unittest.TestCase):
         self.assertNotIn("/tmp/_offsite-monitor", text)
         self.assertNotIn("/tmp/_security-", text)
         subprocess.run(["bash", "-n", str(script)], check=True)
+
+
+class SourceFreshnessContractTests(unittest.TestCase):
+    def _alert_env(self, root: Path, extra: dict[str, str] | None = None) -> Path:
+        values = {
+            "DANUBE_BACKUP_CLOUDFLARE_ACCOUNT_ID": "a" * 32,
+            "DANUBE_BACKUP_CLOUDFLARE_API_TOKEN": "cf-email-token",
+            "DANUBE_BACKUP_ALERT_FROM": "Danube <alerts@0x730.com>",
+            "DANUBE_BACKUP_ALERT_REPLY_TO": "daniel@0x730.com",
+            "DANUBE_BACKUP_ALERT_TO": "daniel@0x730.com",
+            **(extra or {}),
+        }
+        config_file = root / "offsite.env"
+        config_file.write_text(
+            "\n".join(f"{name}={value}" for name, value in values.items()) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(config_file, 0o600)
+        return config_file
+
+    def test_stale_paths_report_only_true_flags_with_their_json_path(self):
+        payload = {
+            "stale": False,
+            "statii": [{"stale": False}, {"nume": "x", "stale": True}],
+            "surse": {"afdj": {"stale": True}, "sen": {"stale": False}},
+        }
+        self.assertEqual(
+            source_freshness._stale_paths(payload),
+            ["statii[1]", "surse.afdj"],
+        )
+        self.assertEqual(source_freshness._stale_paths({"stale": True}), ["."])
+        # un "stale" cu valoare ne-booleana nu declanșează și nu e explorat
+        self.assertEqual(source_freshness._stale_paths({"stale": {"x": 1}}), [])
+
+    def test_collect_evidence_aggregates_health_stale_and_overview_errors(self):
+        responses = {
+            "/api/health": {
+                "status": "ok",
+                "warmup_done": True,
+                "anomaly_report_age_s": 13 * 3600,
+            },
+            "/api/overview": {"errors": {"inhga": "upstream_timeout"}},
+            "/api/hydroinfo": {"stale": True, "statii": []},
+        }
+
+        def fetch(base, path, timeout):
+            return responses.get(path, {"stale": False})
+
+        with mock.patch.object(source_freshness, "_fetch_json", fetch):
+            evidence = source_freshness.collect_evidence("http://x", 5, 12)
+
+        self.assertEqual(evidence["state"], "failed")
+        self.assertIn(
+            "/api/overview: sursa inhga: upstream_timeout", evidence["failures"]
+        )
+        self.assertIn("/api/hydroinfo: stale", evidence["staleSources"])
+        self.assertTrue(
+            any("raport anomalii vechi" in item for item in evidence["staleSources"])
+        )
+        self.assertEqual(evidence["reportAgeSeconds"], 13 * 3600)
+
+        responses["/api/health"]["anomaly_report_age_s"] = 3600
+        responses["/api/overview"] = {"errors": {}}
+        responses["/api/hydroinfo"] = {"stale": False, "statii": []}
+        with mock.patch.object(source_freshness, "_fetch_json", fetch):
+            evidence = source_freshness.collect_evidence("http://x", 5, 12)
+        self.assertEqual(evidence["state"], "fresh")
+        self.assertEqual(evidence["staleSources"], [])
+        self.assertEqual(evidence["failures"], [])
+
+    def test_unreachable_endpoint_is_a_categorized_failure_not_a_crash(self):
+        def fetch(base, path, timeout):
+            if path == "/api/afdj":
+                raise urllib.error.HTTPError(base + path, 503, "busy", None, None)
+            if path == "/api/sen":
+                raise TimeoutError()
+            return {
+                "status": "ok",
+                "warmup_done": True,
+                "anomaly_report_age_s": 60,
+                "stale": False,
+            }
+
+        with mock.patch.object(source_freshness, "_fetch_json", fetch):
+            evidence = source_freshness.collect_evidence("http://x", 5, 12)
+
+        self.assertEqual(evidence["state"], "failed")
+        self.assertIn("/api/afdj: http_503", evidence["failures"])
+        self.assertIn("/api/sen: timeout", evidence["failures"])
+        # motivele publice nu transportă detalii upstream sau URL-uri
+        for item in evidence["failures"]:
+            self.assertNotIn("http://x", item.split(": ", 1)[1])
+
+    def test_alert_html_is_self_contained_and_escapes_sources(self):
+        message = source_freshness._freshness_message(
+            "stale",
+            ["/api/hydroinfo: stale <script>&x", "/api/afdj: http_503"],
+            "2026-09-01T09:25:00Z",
+            test=True,
+        )
+        self.assertEqual(message["subject"], "[Danube] data sources test: stale")
+        self.assertIn("DELIVERY TEST", message["html"])
+        self.assertIn("Some sources serve fallback snapshots", message["html"])
+        self.assertIn(">STALE<", message["html"])
+        self.assertIn("stale &lt;script&gt;&amp;x", message["html"])
+        self.assertNotIn("<script>", message["html"])
+        self.assertNotIn("src=", message["html"])
+        self.assertIn("/api/hydroinfo", message["text"])
+        self.assertLess(len(message["html"].encode("utf-8")), 20_000)
+
+        incident = source_freshness._freshness_message(
+            "failed", [f"sursa-{i}" for i in range(40)], "2026-09-01T09:25:00Z",
+            test=False,
+        )
+        self.assertIn("FRESHNESS INCIDENT", incident["html"])
+        self.assertIn("and 20 more", incident["html"])
+        self.assertLess(len(incident["html"].encode("utf-8")), 20_000)
+
+    def test_main_alerts_only_on_incident_and_always_on_test_alert(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(root)
+            status_file = root / "status.json"
+            base_args = [
+                "--config", str(config_file),
+                "--status-file", str(status_file),
+                "--base-url", "http://127.0.0.1:7300",
+            ]
+
+            fresh = {
+                "state": "fresh", "checkedAt": "2026-09-01T09:25:00Z",
+                "baseUrl": "http://127.0.0.1:7300", "endpointsChecked": 15,
+                "staleSources": [], "failures": [],
+            }
+            with mock.patch.object(
+                source_freshness, "collect_evidence", return_value=dict(fresh)
+            ), mock.patch.object(offsite_backup, "_send_email") as send:
+                self.assertEqual(source_freshness.main(base_args + ["--alert"]), 0)
+                send.assert_not_called()
+
+            stale = dict(fresh, state="stale",
+                         staleSources=["/api/hydroinfo: stale"])
+            with mock.patch.object(
+                source_freshness, "collect_evidence", return_value=dict(stale)
+            ), mock.patch.object(offsite_backup, "_send_email") as send:
+                self.assertEqual(source_freshness.main(base_args + ["--alert"]), 1)
+                send.assert_called_once()
+                _, message = send.call_args[0]
+                self.assertIn("/api/hydroinfo: stale", message["text"])
+
+            with mock.patch.object(
+                source_freshness, "collect_evidence", return_value=dict(fresh)
+            ), mock.patch.object(offsite_backup, "_send_email") as send:
+                self.assertEqual(
+                    source_freshness.main(base_args + ["--test-alert"]), 0
+                )
+                send.assert_called_once()
+
+            recorded = json.loads(status_file.read_text(encoding="utf-8"))
+            self.assertIn("sourceFreshness", recorded)
+            self.assertEqual(recorded["sourceFreshness"]["state"], "fresh")
+            self.assertTrue(recorded["sourceFreshness"]["testAlertAccepted"])
+
+    def test_alert_config_reuses_backup_env_without_requiring_s3_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(root)
+            alert = source_freshness._load_alert_config(config_file)
+            self.assertEqual(alert.recipient, "daniel@0x730.com")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(root)
+            text = config_file.read_text(encoding="utf-8")
+            config_file.write_text(
+                text.replace("DANUBE_BACKUP_ALERT_TO=daniel@0x730.com\n", ""),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                offsite_backup.BackupError, "backup_alert_configuration_missing"
+            ):
+                source_freshness._load_alert_config(config_file)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(
+                root, extra={"DANUBE_BACKUP_TEM_REGION": "fr-par"}
+            )
+            with self.assertRaisesRegex(
+                offsite_backup.BackupError, "backup_alert_configuration_legacy"
+            ):
+                source_freshness._load_alert_config(config_file)
+
+    def test_base_url_rejects_credentials_paths_and_other_schemes(self):
+        good = source_freshness._validated_base_url("http://127.0.0.1:7300")
+        self.assertEqual(good, "http://127.0.0.1:7300")
+        for url in (
+            "ftp://127.0.0.1", "http://user:pw@127.0.0.1:7300",
+            "http://127.0.0.1:7300/api", "http://127.0.0.1:7300/?x=1",
+        ):
+            with self.assertRaises(source_freshness.FreshnessError):
+                source_freshness._validated_base_url(url)
 
 
 if __name__ == "__main__":

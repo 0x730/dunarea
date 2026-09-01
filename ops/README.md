@@ -72,6 +72,31 @@ raportează doar număr de rânduri, RPO/RTO și cleanup, niciodată conținutul
 
 Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
 
+## `source_freshness.py` — sursele de date rămân proaspete
+
+```bash
+python3 ops/source_freshness.py                       # doar verificare, exit 0/1
+python3 ops/source_freshness.py --alert               # e-mail numai la incident
+python3 ops/source_freshness.py --test-alert          # probă de livrare
+python3 ops/source_freshness.py --base-url https://dunarea.info  # de pe alt host
+```
+
+Aplicația își evaluează singură sursele: `stale: true` în payload înseamnă că
+servește un snapshot de rezervă în locul unui fetch reușit. Scriptul citește
+aceste auto-evaluări de pe instanța locală (`127.0.0.1:7300`, nu prin
+Cloudflare), plus erorile din `/api/overview` și vârsta raportului de anomalii
+din `/api/health` (limită implicită 12 h), și iese non-zero când ceva nu e
+proaspăt — Forge marchează job-ul eșuat. Cu `--alert` trimite e-mail prin
+același canal Cloudflare Email Sending și același fișier de configurare 0600 ca
+monitorul de backup (folosește numai grupul de chei de alertă; nu cere cheile
+S3), enumerând exact sursele vinovate, cu template HTML autonom și fallback
+plain-text. Dovada fiecărei rulări se scrie în secțiunea `sourceFreshness` a
+fișierului de status, lângă secțiunile de backup.
+
+Motivul scriptului: în august 2026 Hydroinfo a servit o săptămână snapshotul
+din 25.08, corect marcat `stale` în API, și nimeni nu a aflat — alerta
+existentă privea numai backup-urile.
+
 ### Joburi Forge instalate
 
 - `2117004`, `15 3 * * *`, user `dunarea`: rulează
@@ -80,9 +105,12 @@ Modelul exact, fără secrete, este `ops/offsite-backup.env.example`.
   privat Spaces sub prefixul Danube;
 - `2117005`, `17 8 * * *`, user `dunarea`: rulează
   `ops/offsite_backup.py monitor --max-age-hours 30 --alert` pentru read-back de
-  prospețime și alertă Cloudflare la lipsă/eșec/stale.
+  prospețime și alertă Cloudflare la lipsă/eșec/stale;
+- `2120262`, `25 9 * * *`, user `dunarea`: rulează
+  `ops/source_freshness.py --alert` pentru prospețimea surselor de date și
+  alertă Cloudflare când o sursă servește snapshot de rezervă.
 
-Ambele joburi sunt instalate în Forge, nu în crontab-ul vizibil utilizatorului.
+Joburile sunt instalate în Forge, nu în crontab-ul vizibil utilizatorului.
 Primele execuții programate și probele providerului anterior sunt consemnate în
 `DEPLOY.md`. Testul controlat Cloudflare din checkout a trecut, dar migrarea de
 producție nu este închisă până la schimbarea configurației 0600 în aceeași

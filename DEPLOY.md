@@ -6,7 +6,7 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 ## Starea instalată la 1 septembrie 2026
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
-- release instalat: [`v1.0.9`](https://github.com/0x730/dunarea/tree/v1.0.9);
+- release instalat: [`v1.1.0`](https://github.com/0x730/dunarea/tree/v1.1.0);
 - sănătate runtime: [https://dunarea.info/api/health](https://dunarea.info/api/health);
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
@@ -25,6 +25,13 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - job Forge `2117005` instalat la `08:17 UTC`: read-back de prospețime și alertă
   la lipsă/eșec/stale prin Cloudflare Email Sending, cu token separat și
   expeditor `alerts@0x730.com`;
+- job Forge `2120262` instalat la `09:25 UTC`: `ops/source_freshness.py --alert`
+  citește de pe `127.0.0.1:7300` auto-evaluările de prospețime ale aplicației
+  (flagurile `stale`, erorile din `/api/overview`, vârsta raportului de
+  anomalii din `/api/health`) și alertează pe același canal Cloudflare când o
+  sursă servește snapshot de rezervă — lecția incidentului Hydroinfo, în care
+  o sursă a rămas o săptămână pe snapshotul din 25.08.2026 fără ca cineva să
+  afle;
 - Quick Deploy este `false`. Workflow-ul manual are două acțiuni explicite în
   aceeași sesiune a proprietarului: push-ul commit-ului curat, apoi invocarea
   deploy-ului prin Forge API. Push-ul singur nu pornește producția.

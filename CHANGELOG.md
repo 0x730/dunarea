@@ -4,6 +4,26 @@ Toate versiunile publice ale Monitorului Dunărea sunt documentate aici. Proiect
 folosește versiuni semantice, iar tag-ul Git corespunzător este proba exactă a
 codului lansat.
 
+## [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0) — 2026-09-01
+
+- monitor nou de prospețime a surselor (`ops/source_freshness.py`): citește de
+  pe instanța locală auto-evaluările aplicației (flagurile `stale`, erorile din
+  `/api/overview`, vârsta raportului de anomalii din `/api/health`), iese
+  non-zero la orice incident și, cu `--alert`, enumeră sursele vinovate într-un
+  e-mail Cloudflare Email Sending — lecția incidentului Hydroinfo, în care o
+  sursă a servit o săptămână un snapshot marcat `stale` fără ca cineva să afle;
+- transportul de e-mail este extras în `_send_email` și partajat cu monitorul
+  de backup, cu același contract strict de acceptare (destinatar în `delivered`
+  sau `queued`, bounce permanent = eșec) și același fișier de configurare 0600
+  (numai grupul de chei de alertă, fără cheile S3);
+- job Forge `2120262` instalat la `09:25 UTC` rulează verificarea zilnic;
+  dovada fiecărei rulări se scrie în secțiunea `sourceFreshness` a fișierului
+  de status, lângă secțiunile de backup;
+- testele fixează contractul: colectarea recursivă a flagurilor `stale` cu
+  calea JSON, categorii publice de eșec fără detalii upstream, template HTML
+  autonom cu escape și limită de dimensiune, alertă trimisă numai la incident
+  (sau la `--test-alert`), validarea bazei URL și refuzul cheilor legacy.
+
 ## [v1.0.9](https://github.com/0x730/dunarea/tree/v1.0.9) — 2026-09-01
 
 - Hydroinfo (OVF Ungaria) își reînnoise certificatul TLS pe 25.08.2026, dar
