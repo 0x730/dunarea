@@ -1,7 +1,38 @@
 # ops — backup și verificarea posturii
 
-Utilitare fără pachete Python externe pentru lucrurile pe care documentația le
-*descrie* dar nimeni nu le *verifică*.
+Utilitare fără pachete Python externe pentru backup, prospețime, igiena hostului
+și verificarea posturii. Runbook-ul canonic este [DEPLOY.md](../DEPLOY.md),
+descoperit prin [README.md](../README.md) și [AGENTS.md](../AGENTS.md).
+Înainte de operații citiți și
+[entrypoint-ul Ops](../../ops/0x730/PM/runbooks/devops-entrypoint.md),
+[harta Danube](../../ops/0x730/PM/runbooks/devops-project-map.md#danube) și
+[manifestul Danube](../../ops/packages/fleet/manifests/danube.json) din
+checkout-ul Ops vecin. Nu există un client/deployer nou de instalat aici:
+transportul Forge este `~/.forge/fc <path> [curl-args...]`.
+
+## Efectele comenzilor existente
+
+Acestea sunt comenzi de operare pe host, nu verificări de documentație.
+Inspectați parserul și funcția `main` înainte de utilizare; niciuna nu are un
+gate generic `--write`.
+
+| Comandă | Implicit / efecte și opțiuni |
+| --- | --- |
+| `backup.py` | Scrie copia SQLite și elimină copiile locale expirate (`--keep-days 14`). `--verify-only FIȘIER` verifică o copie existentă. |
+| `offsite_backup.py backup` | Scrie backup local, staging și status, face upload Spaces și retenție locală/off-box; `--alert-on-failure` poate trimite email. |
+| `offsite_backup.py monitor` | Citește obiectul off-box și scrie `--status-file` chiar fără alerte. `--alert` trimite la incident; `--test-alert` trimite mesaj real. |
+| `offsite_backup.py restore-drill` | Citește/decriptează într-un director temporar, verifică și curăță copia; scrie status persistent. Nu acceptă destinație de producție. |
+| `prune_releases.py --root CALE` | Dry-run implicit; `--apply` șterge release-urile din plan. Acceptă numai cele două rădăcini declarate. |
+| `runtime_hygiene.py` | Citește presiunea hostului și scrie `--state-file` chiar fără `--alert`. `--test-alert` trimite un mesaj real, fără schimbarea stării incidentului. |
+| `source_freshness.py` | Citește aplicația pe loopback și scrie `--status-file`, inclusiv fără `--alert`; `--test-alert` trimite email real. |
+| `write_build_revision.py` | Scrie atomic `--output` din SHA-ul checkout-ului `--repository`; folosit în scriptul de deploy. |
+| `verify_deploy.sh` | Verificare pe host: citiri locale/publice/off-box și workspace temporar 0700 cu cleanup; fără alertă sau schimbarea stării persistente. |
+
+Statusul implicit pentru backup/source freshness este
+`/home/dunarea/dunarea.info/backup-status.json`; pentru presiunea hostului este
+`/home/dunarea/dunarea.info/runtime-hygiene-status.json`. O rulare fără flaguri
+de alertă nu este automat read-only. Verificatorul izolează propriul status
+off-box într-un director temporar; păstrați acest comportament.
 
 Politica Cloudflare separată, inclusiv scopul exact al singurei reguli Free de
 rate limiting și read-back-ul sanitizat, este în
@@ -108,7 +139,7 @@ rămâne instalat.
 ## `source_freshness.py` — sursele de date rămân proaspete
 
 ```bash
-python3 ops/source_freshness.py                       # doar verificare, exit 0/1
+python3 ops/source_freshness.py                       # verificare + status, exit 0/1
 python3 ops/source_freshness.py --alert               # e-mail numai la incident
 python3 ops/source_freshness.py --test-alert          # probă de livrare
 python3 ops/source_freshness.py --base-url https://dunarea.info  # de pe alt host
@@ -141,13 +172,21 @@ existentă privea numai backup-urile.
   prospețime și alertă Cloudflare la lipsă/eșec/stale;
 - `2120262`, `25 9 * * *`, user `dunarea`: rulează
   `ops/source_freshness.py --alert` pentru prospețimea surselor de date și
-  alertă Cloudflare când o sursă servește snapshot de rezervă.
+  alertă Cloudflare când o sursă servește snapshot de rezervă;
+- `2120431`, `13 * * * *`, user `dunarea`: rulează
+  `ops/runtime_hygiene.py --alert`, singurul monitor de presiune pentru hostul
+  comun. Programările de mai sus sunt în UTC; recitiți starea Forge înaintea
+  unei schimbări.
 
 Joburile sunt instalate în Forge, nu în crontab-ul vizibil utilizatorului.
-Primele execuții programate și probele providerului anterior sunt consemnate în
-`DEPLOY.md`. Testul controlat Cloudflare din checkout a trecut, dar migrarea de
-producție nu este închisă până la schimbarea configurației 0600 în aceeași
-sesiune cu deploy-ul explicit și până la testul post-deploy.
+Primele execuții programate și probele providerului anterior sunt consemnate ca
+istoric în [DEPLOY.md](../DEPLOY.md#istoric-starea-recovery-verificată-la-28-august-2026).
+Vechea instrucțiune de migrare TEM → Cloudflare este depășită: runbook-ul
+consemnează configurația Cloudflare instalată și eliminarea cheilor legacy.
+Această probă datată nu înlocuiește verificarea configurației, execuției,
+acceptării providerului și primirii în inbox pentru o operație nouă. Dovada
+[igienei din 1 septembrie](runtime-hygiene-evidence-2026-09-01.md) confirmă
+separat acceptarea API a testului de presiune, fără probă de inbox pentru acel test.
 
 ## `write_build_revision.py` — checkout-ul care rulează
 
@@ -159,10 +198,13 @@ comparat din nou după activare înainte de restartul daemonului. `/api/health`
 ## `verify_deploy.sh` — ce *este* configurat, nu ce *ar trebui*
 
 ```bash
+cd /home/dunarea/dunarea.info/current
 bash ops/verify_deploy.sh --origin-ip 157.90.144.210 --domain dunarea.info
 ```
 
-Nu modifică nimic. Verifică: aplicația ascultă doar pe loopback, permisiunile
+Rulați pe hostul de producție. Folosește numai fișiere temporare cu cleanup și
+citiri autentificate, fără modificări persistente sau mesaje. Verifică:
+aplicația ascultă doar pe loopback, versiunea/SHA-ul și `.build-revision`, permisiunile
 cheilor, `data/keys` neurmărit de git și absent din istoric, prospețimea și
 integritatea celui mai recent backup, cronul, ufw, anteturile de securitate.
 
@@ -172,4 +214,10 @@ mai multe vhost-uri, testarea simplă a `https://IP/` verifică doar catch-all-u
 și poate produce un fals pozitiv. Pentru producție, accesul prin Cloudflare
 trebuie să dea 200 și accesul direct cu SNI `dunarea.info` trebuie să dea 403.
 
-Ieșire diferită de zero dacă o verificare esențială pică.
+Ieșire diferită de zero dacă o verificare esențială pică. Citiți și avertismentele:
+exit zero nu confirmă singur warmup, joburile Forge sau UFW când vizibilitatea
+lipsește. Public `buildSha`, prospețimea surselor, primirea în inbox și restaurarea
+se verifică separat conform [acceptanței](../DEPLOY.md#8-acceptanță-post-deploy).
+
+Adoptarea DevOps, verificările locale și limitele probei sunt în
+[nota din 6 septembrie](devops-adoption-evidence-2026-09-06.md).

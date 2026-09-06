@@ -6,6 +6,12 @@ codului lansat.
 
 ## Unreleased
 
+- documentația DevOps este adoptată pentru particularitățile Danube: entrypoint
+  [AGENTS.md](AGENTS.md), runbook-ul existent și indexul `ops/` leagă referința
+  Ops, transporturile/API-ul curent, proprietarii hostului comun, efectele
+  comenzilor și probele de deploy; retenția și exemplele istorice sunt
+  reconciliate. [Dovadă și verificări](ops/devops-adoption-evidence-2026-09-06.md).
+
 - disciplina de runtime decisă de Ops pentru hostul Forge comun limitează
   explicit ambele rădăcini de release la cel mult două directoare, cu un
   pruner fail-closed care păstrează release-ul activ și cel mai nou rollback;

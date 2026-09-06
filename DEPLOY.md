@@ -3,7 +3,52 @@
 Acesta este runbook-ul canonic pentru `https://dunarea.info`. Valorile secrete
 nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este public.
 
-## Starea instalată la 1 septembrie 2026
+## Descoperire DevOps și proprietari
+
+Urmați [AGENTS.md](AGENTS.md) și inventarul local [ops/README.md](ops/README.md),
+apoi [entrypoint-ul Ops](../ops/0x730/PM/runbooks/devops-entrypoint.md),
+[harta Danube](../ops/0x730/PM/runbooks/devops-project-map.md#danube) și
+[manifestul flotei](../ops/packages/fleet/manifests/danube.json).
+Legăturile Ops cer checkout-ul vecin `/home/dacrise/0x730/ops` (Ubuntu-24.04).
+Manifestul declară contractul; înainte de mutație se recitește starea providerului.
+
+| Resursă | Proprietar și limită |
+| --- | --- |
+| Forge org `daniel-vladescu-nud`, server `949568`, site Danube `3331936` | Forge administrează release-uri, Nginx, Background Process și joburile; user `dunarea`, repo `0x730/dunarea`, `main`. |
+| Host comun `157.90.144.210` | Portfolio (`3235234`, PM2) și Swing sunt alți proprietari afectați de operații pe host. Danube folosește Background Process, nu PM2. |
+| Hetzner | ID-ul Forge nu este ID Hetzner. `hcloudHosts: []` înseamnă context nedeclarat, nu server absent; nu creați context/server și nu presupuneți starea backupului/firewall-ului providerului. |
+| Cloudflare `dunarea.info` | Politica edge aparține Danube: [contract local](ops/cloudflare-edge-policy.md). Zona nu este domeniu de email. |
+| Cloudflare Email Sending / Spaces | Portfolio deține domeniul expeditor `0x730.com`; Danube are token runtime de email separat, prefix Spaces `database/danube/` și cheie proprie de criptare. Nu reutilizați tokenul operatorului în runtime. |
+
+Transporturile existente sunt `~/.forge/fc <path> [curl-args...]` și
+`~/.cloudflare/cf <path> [curl-args...]`. Implicit fac GET; `-X POST/PUT/PATCH/DELETE`
+și payloadurile pot modifica resurse, fără gate `--write`, dry-run, paginare,
+polling sau redactare automate. Nu afișați răspunsuri complete de site,
+environment, hook-uri tokenizate, destinatari sau loguri neverificate.
+
+Forge folosește baza `https://forge.laravel.com/api`, fără segment `/v2`,
+slugul organizației în `/orgs/<slug>/...` și resurse în `data`/`attributes`.
+Referințe oficiale: [introducere API](https://laravel.com/forge/docs/api-reference/introduction)
+și [creare deployment](https://laravel.com/forge/docs/api-reference/deployments/create-deployment).
+Exemplele v1 din istoricul providerului nu aleg endpointul actual. Pentru o
+operație neacoperită, verificați întâi metoda/schema oficială și implementarea
+existentă. Cloudflare folosește `https://api.cloudflare.com/client/v4`;
+scope-urile de zonă, cont și token runtime de email sunt distincte.
+
+Pentru audit reutilizați cititorii Ops, din checkout-ul Ops:
+`npm run fleet:doctor -- --project danube --live --lanes forge` sau
+`npm run fleet:hygiene -- --project danube --live`. Sunt citiri, nu deploy sau
+cleanup; declarațiile și un exit zero nu înlocuiesc analiza fiecărui rezultat.
+Pentru lucru privilegiat autorizat folosiți o rețetă Forge temporară, cu host,
+limite și timeout exacte, polling pe run-ul returnat, read-back pe host și
+ștergerea rețetei/artefactelor. Joburile recurente își păstrează proprietarii.
+
+## Starea documentată: 1 septembrie, setări recitite la 6 septembrie 2026
+
+Versiunea și probele runtime de mai jos sunt checkpoint-ul din 1 septembrie.
+Citirea providerului din 6 septembrie confirmă repo/branch/user, Quick Deploy,
+zero-downtime, retenția și scriptul dedicat; nu revalidează sănătatea live,
+numărul fizic de directoare, livrarea mesajelor sau restaurarea.
 
 - stare publică: **deployed** la [https://dunarea.info](https://dunarea.info/);
 - release instalat: [`v1.1.0`](https://github.com/0x730/dunarea/tree/v1.1.0);
@@ -11,8 +56,10 @@ nu apar aici și nu trebuie adăugate vreodată în repo; repo-ul GitHub este pu
 - server Hetzner existent, administrat prin Laravel Forge: `157.90.144.210`;
 - site Forge izolat, utilizator Unix `dunarea`;
 - repo GitHub `0x730/dunarea`, branch `main`;
-- deploy-uri Forge zero-downtime, cu `deployment_retention=4` — patru
-  rollbackuri plus release-ul activ la read-back-ul din 1 septembrie;
+- deploy-uri Forge zero-downtime, cu `deployment_retention=1` la read-back-ul
+  din 6 septembrie; contractul local păstrează maximum două directoare,
+  release-ul activ și cel mai nou rollback (§7). Setarea providerului nu este
+  o măsurătoare a directoarelor de pe disc;
 - proces Python administrat ca Forge Background Process;
 - aplicația ascultă numai pe `127.0.0.1:7300`;
 - Nginx reverse proxy pentru `dunarea.info`;
@@ -43,14 +90,16 @@ Restricția Cloudflare este aplicată numai vhost-ului Danube.
 
 ## 1. Modelul de deploy Forge
 
-Site-ul este conectat la GitHub prin integrarea Forge. Deploy script-ul live:
+Site-ul este conectat la GitHub prin integrarea Forge. Contractul scriptului
+dedicat, recitit la 6 septembrie (`attributes.content`, `auto_source=false`),
+este mai jos; substituiți ID-ul procesului numai după verificarea identității:
 
 ```bash
 set -euo pipefail
 
 $CREATE_RELEASE()
 
-cd $FORGE_RELEASE_DIRECTORY
+cd "$FORGE_RELEASE_DIRECTORY"
 RELEASE_SHA="$(python3 ops/write_build_revision.py \
   --repository "$FORGE_RELEASE_DIRECTORY" \
   --output "$FORGE_RELEASE_DIRECTORY/.build-revision")"
@@ -65,7 +114,8 @@ python3 /home/dunarea/dunarea.info/current/ops/prune_releases.py \
   --root /home/dunarea/dunarea.info/releases --apply
 ```
 
-ID-ul procesului rămâne în Forge, nu în repo. Ordinea este intenționată:
+ID-ul declarat al procesului este `1006295`; verificați în Forge comanda,
+directorul și utilizatorul înainte de a înlocui `ID_DIN_FORGE`. Ordinea este intenționată:
 release-ul nu devine activ dacă revizia nu poate fi legată de checkout sau dacă
 un test eșuează. După activare, aceleași 40 de cifre hex trebuie să existe în
 Git HEAD și în `.build-revision`; procesul este repornit numai după aceste două
@@ -74,18 +124,45 @@ rulează, nu o valoare de mediu ce ar putea deriva. Prunerul rulează ultimul ș
 refuză orice rădăcină în afara celor două site-uri declarate pe hostul comun;
 pentru Danube păstrează întotdeauna release-ul activ și cel mai nou rollback.
 
-În acest runbook, „deploy manual” înseamnă exact workflow-ul owner-session în
-doi pași, nu Quick Deploy și nu un webhook pornit automat de push:
+În acest runbook, „deploy manual” are două acțiuni explicite, push și deploy,
+urmate de probele lor. Schema API este
+`POST /orgs/{organization}/servers/{server}/sites/{site}/deployments`;
+pentru Danube folosiți identitățile verificate mai sus:
 
 1. validați și împingeți commit-ul/tag-ul curat, apoi confirmați SHA-ul remote;
-2. în aceeași sesiune, invocați explicit `POST
-   /orgs/{organization}/servers/{server}/sites/{site}/deployments` prin Forge
-   API și verificați deployment ID-ul rezultat.
+2. în aceeași sesiune autorizată pentru release, invocați explicit `POST
+   /orgs/daniel-vladescu-nud/servers/949568/sites/3331936/deployments` prin
+   `~/.forge/fc <path> -X POST --fail --max-time 30` și rețineți `data.id`;
+3. interogați prin GET aceeași cale cu `/<deployment-id>` până când
+   `data.attributes.status` este `finished`. Verificați
+   `data.attributes.commit.hash`; la eșec/anulare/timeout opriți procedura fără
+   a repeta orbește POST-ul. Acceptarea HTTP 202 nu înseamnă execuție terminată;
+4. citiți outputul separat la `/<deployment-id>/log`, cu redactare înainte de
+   păstrare, apoi comparați SHA-ul GitHub/Forge cu checkout-ul activ,
+   `.build-revision` și `/api/health.buildSha`; încheiați cu verificatorul din §8
+   și revizuirea prospețimii datelor.
 
 Nu activați Quick Deploy. Existența commit-ului pe `origin/main` nu constituie
 dovadă de deploy; numai deployment-ul API terminat și SHA-ul public îl închid.
 
-Înainte de un deploy manual:
+Înainte de un deploy manual, verificați identitatea și setările fără a afișa
+hook-ul de deploy. Acest GET de colecție a fost verificat la 6 septembrie;
+epuizați paginarea înainte de a declara un site absent:
+
+```bash
+set -o pipefail
+~/.forge/fc /orgs/daniel-vladescu-nud/servers/949568/sites --fail --max-time 20 \
+  | jq -e '.data[] | select(.id == "3331936") | {id, name: .attributes.name, user: .attributes.user, repository: .attributes.repository, quick_deploy: .attributes.quick_deploy, deployment_retention: .attributes.deployment_retention}'
+```
+
+Comparați scriptul cu resursa dedicată
+`/orgs/daniel-vladescu-nud/servers/949568/sites/3331936/deployments/script`,
+câmpurile `data.attributes.content` și `data.attributes.auto_source`.
+Un update generic de site acceptat nu probează schimbarea scriptului.
+Verificați procesul în colecția `/orgs/daniel-vladescu-nud/servers/949568/background-processes`.
+
+Rulați gate-ul local înainte de commit/push; după push confirmați exact SHA-ul
+din `git ls-remote origin refs/heads/main`, nu numai remote-tracking-ul local:
 
 ```bash
 git status --short --branch
@@ -308,7 +385,7 @@ lipsesc, nu reinstalați joburile și nu pretindeți livrare; restaurați
 configurația prin procedura operatorului fără a tipări valori. Modelul fără
 secrete rămâne `ops/offsite-backup.env.example`.
 
-### Starea recovery verificată la 28 august 2026
+### Istoric: starea recovery verificată la 28 august 2026
 
 - jobul `2117004` și jobul `2117005` sunt `installed` în Forge ca `dunarea`;
 - o copie SQLite WAL-aware a produs 949 rânduri, dintre care 638 permanente;
@@ -331,7 +408,7 @@ secrete rămâne `ops/offsite-backup.env.example`.
 - read-back-ul Cloudflare a confirmat `0x730.com` activ pentru Email Sending și
   return-path-ul `cf-bounce.0x730.com`;
 - tokenul separat a fost validat activ, iar testul controlat din checkout de la
-  `2026-08-28T20:10:56Z` a primit pentru `daniel@0x730.com` starea `delivered`
+  `2026-08-28T20:10:56Z` a primit pentru destinatarul configurat starea `delivered`
   sau `queued` de la API; operatorul a confirmat mesajul în inbox la 23:10 EEST;
 - configurația instalată pe server folosește grupul Cloudflare complet în
   fișierul 0600 și nu mai conține chei `DANUBE_BACKUP_TEM_*`. Configurarea,
@@ -369,25 +446,30 @@ bazelor de date sau a altor site-uri.
 
 ### Release-uri: maximum două pe fiecare site
 
-Înaintea primei curățări, citiți symlinkurile active și rulați dry-run pentru
-ambele rădăcini exacte:
+Prunerul există deja și Danube îl rulează după activare. Pentru o verificare
+pe host, citiți symlinkurile active și rulați dry-run pentru rădăcinile exacte:
 
 ```bash
 python3 ops/prune_releases.py --root /home/dunarea/dunarea.info/releases
 python3 ops/prune_releases.py --root /home/forge/0x730.com/releases
 ```
 
-Numai după ce `current` și rollbackul ales coincid cu read-back-ul, rețeta root
-Forge temporară poate repeta comenzile cu `--apply`. Configurați apoi
-`deployment_retention=1` la ambele site-uri: în Forge această valoare păstrează
-un release anterior pe lângă cel activ, adică două directoare în total. Scriptul
-de deploy Danube rulează suplimentar prunerul după activare. Rețeta temporară și
-orice artefact de probă se șterg după verificare.
+Ambele site-uri au deja `deployment_retention=1`, confirmat prin GET la
+6 septembrie. Prunerul impune separat maximum două directoare și protejează
+`current` plus cel mai nou rollback. Raportați separat setarea Forge, planul
+prunerului și numărul fizic observat. Numai într-o operație de cleanup autorizată,
+după verificarea ambilor proprietari și a symlinkurilor, rețeta temporară poate
+repeta comenzile cu `--apply`; ștergeți apoi rețeta și artefactele de probă.
+
+**Istoric depășit:** descrierea inițială din 1 septembrie cu
+`deployment_retention=4` nu mai este setarea actuală și nu trebuie folosită
+pentru reconfigurare sau ca dovadă a numărului de directoare.
 
 ### Un singur proprietar de rotație pentru hostul comun
 
 Fișierul source-owned [`ops/logrotate/0x730-processes`](ops/logrotate/0x730-processes)
-se instalează root-owned `0644` la `/etc/logrotate.d/0x730-processes`. El
+este instalat, conform dovezii din 1 septembrie, root-owned `0644` la
+`/etc/logrotate.d/0x730-processes`. El
 acoperă exact `/home/dunarea/.forge/*.log` și
 `/home/dunarea/dunarea.info/*.log`: zilnic, maximum 20 MiB, 14 generații și 14
 zile, compresie cu `delaycompress`, `copytruncate`, `missingok` și `notifempty`.
@@ -397,14 +479,15 @@ de prima rotație. Un al doilea stanza din același fișier acoperă exact
 `/home/forge/.pm2/logs/*.log` și
 `/home/forge/swing.boostit.dev/logs/*.log`, cu același contract și
 `su forge forge`. Acestea sunt toate căile de log declarate de procesele PM2
-salvate pe host. Modulul `pm2-logrotate` trebuie dezinstalat după validarea
-configurației, astfel încât system logrotate să rămână singurul proprietar;
+salvate pe host la checkpoint. Modulul `pm2-logrotate` a fost dezinstalat în
+același checkpoint; recitiți toate căile PM2 și politica instalată înaintea
+unei schimbări, astfel încât system logrotate să rămână singurul proprietar;
 nu se păstrează două mecanisme active pentru aceeași cale și nu rămâne vreun
 proces PM2 fără rotație.
 
 ### O singură alertă pentru hostul fizic
 
-Jobul Forge comun de instalat rulează orar, ca `dunarea`, fără credential nou:
+Jobul Forge comun existent `2120431` rulează orar, ca `dunarea`, fără credential nou:
 
 ```cron
 13 * * * * cd /home/dunarea/dunarea.info/current && \
@@ -428,7 +511,11 @@ este în
 
 ## 8. Acceptanță post-deploy
 
+Rulați din release-ul activ pe host, cu accesul existent al operatorului la
+resursele Danube; nu din checkout-ul workstation (loopback-ul ar fi alt server):
+
 ```bash
+cd /home/dunarea/dunarea.info/current
 bash ops/verify_deploy.sh \
   --origin-ip 157.90.144.210 \
   --domain dunarea.info \
@@ -442,4 +529,11 @@ furnizorului, consistența dintre sumar și seriile brute și diferența dintre
 date stale servite din cache și o sursă oficială indisponibilă. Un endpoint 200
 nu este dovadă că datele sunt actuale.
 
-Pentru detaliile backupului și verificatorului, vedeți `ops/README.md`.
+Verificatorul creează un workspace temporar 0700 cu cleanup și face citiri
+autentificate, fără alertă sau modificarea stării operaționale persistente.
+Un exit zero poate include avertismente: `warmup_done=false`, cronul nevizibil
+utilizatorului sau lipsa vizibilității UFW cer verificare separată. Citiți
+jobul dedicat în Forge și dovada execuției sale; nu instalați un cron duplicat.
+Primirea în inbox și un restore-drill reușit rămân probe separate, cu dată.
+
+Pentru detaliile backupului și verificatorului, vedeți [ops/README.md](ops/README.md).

@@ -7,6 +7,15 @@ pentru fiecare valoare, dacă e **măsurată**, **model/estimare**, **calculată
 
 ## Producție
 
+Pentru operare, începeți cu [DEPLOY.md](DEPLOY.md), apoi cu inventarul de
+utilitare și efecte din [ops/README.md](ops/README.md). Instrucțiunile pentru
+agenți sunt în [AGENTS.md](AGENTS.md); ele trimit la
+[referința DevOps comună](../ops/0x730/PM/runbooks/devops-entrypoint.md) și
+[harta proiectelor](../ops/0x730/PM/runbooks/devops-project-map.md#danube) din
+checkout-ul Ops vecin. Acestea sunt legături de workstation, nu pagini din
+repo-ul public. Adoptarea locală și limitele verificării sunt consemnate în
+[dovada din 6 septembrie](ops/devops-adoption-evidence-2026-09-06.md).
+
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
 - **Release curent:** [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0)
