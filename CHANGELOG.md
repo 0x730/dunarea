@@ -17,6 +17,11 @@ codului lansat.
   ziua 36 din pragul de 35, fără nicio schimbare de cod; data este acum fixată
   cu același tipar ca testul EDO vecin, iar suita a fost reverificată cu ceasul
   împins cu +30, +90 și +365 de zile;
+- `robots.txt` servit de Cloudflare Managed Content intră în inventarul de edge:
+  nu există în repo, declară `search=yes,ai-train=no,use=reference` cu `Allow: /`
+  și blochează crawlerele de antrenare, iar fiind generat la edge se poate
+  schimba fără commit sau deploy — deci se recitește la fiecare verificare a
+  suprafeței publice;
 - inventarul suprafeței publice, confirmarea că ruta AI publică nu poate porni
   un apel plătit, prospețimea surselor verificată cu monitorul existent și
   reconcilierea mailului de recovery cu manifestul sunt consemnate în

@@ -13,6 +13,37 @@ nu cere modificarea aplicației, un deploy Forge sau un serviciu plătit.
 - zona este pe planul Cloudflare Free, deci folosește exact o regulă de rate
   limiting, fără funcții Advanced Rate Limiting sau produse plătite.
 
+### `robots.txt` este generat la edge, nu din repo
+
+Citit pe 9 septembrie 2026: `https://dunarea.info/robots.txt` răspunde `200`
+cu un corp marcat `BEGIN Cloudflare Managed content`. Fișierul **nu există în
+repo** — sub `static/` este versionat doar `.well-known/security.txt` — deci
+aplicația ar întoarce `404` pe această cale; conținutul vine din funcția
+Cloudflare Managed robots.txt a zonei.
+
+Conținutul curent declară `Content-Signal: search=yes,ai-train=no,use=reference`
+pentru `User-agent: *`, cu `Allow: /`, și `Disallow: /` pentru crawlerele de
+antrenare declarate de Cloudflare (Amazonbot, Applebot-Extended, Bytespider,
+CCBot, ClaudeBot, CloudflareBrowserRenderingCrawler, Google-Extended, GPTBot,
+meta-externalagent).
+
+Consecințele care contează pentru contractele deja declarate:
+
+- indexarea rămâne permisă (`search=yes`, `Allow: /`), deci verificarea
+  `robots` și `indexability: index` din manifestul flotei rămâne satisfăcută;
+- semnalul `ai-train=no` este o rezervare de drepturi, nu un control tehnic;
+- fiind generat la edge, conținutul se poate schimba când Cloudflare își
+  actualizează lista gestionată, **fără niciun commit și fără deploy**. Nu
+  există aici o probă care să rămână valabilă între citiri: la orice verificare
+  a suprafeței publice, `robots.txt` se recitește, nu se presupune.
+
+Aceasta este o decizie de zonă a operatorului, consemnată aici pentru că
+inventarul de mai sus trebuie să acopere tot ce răspunde la edge. Dacă politica
+trebuie schimbată — fie dezactivând conținutul gestionat și versionând un
+`static/robots.txt` propriu, fie ajustând semnalele în Cloudflare — este o
+acțiune pe zonă, separată de deploy-ul aplicației, și se reconsemnează aici cu
+data read-back-ului.
+
 ## Read-back Cloudflare — 28 august 2026
 
 Înainte de schimbare, read-back-ul sanitizat a arătat o zonă activă pe planul

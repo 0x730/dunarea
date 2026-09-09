@@ -212,7 +212,7 @@ is a separate value from the directory count on disk.
    0 failures at every offset; a control run with the fix reverted reproduced
    exactly the one failure, so the harness is not a no-op.
 
-2. **Open — `robots.txt` is edge-managed and undocumented.**
+2. **Recorded — `robots.txt` is edge-managed and was undocumented.**
    `https://dunarea.info/robots.txt` returns `200` from Cloudflare Managed
    Content, carrying `Content-Signal: search=yes,ai-train=no,use=reference` and
    `Disallow: /` for ClaudeBot, GPTBot, CCBot, Google-Extended, Amazonbot,
@@ -221,9 +221,12 @@ is a separate value from the directory count on disk.
    **not** recorded in `cloudflare-edge-policy.md`, whose inventory otherwise
    accounts for the edge surface. For a public-interest open-data monitor whose
    stated purpose is provenance and reuse, whether AI crawlers are blocked is an
-   operator policy decision — the finding is that the decision is currently
-   implicit and unrecorded, not that it is wrong. Recording it belongs in the
-   edge policy inventory; changing it would be a zone action.
+   operator policy decision — the finding was that the decision was implicit and
+   unrecorded, not that it is wrong. Now recorded in
+   [`cloudflare-edge-policy.md`](cloudflare-edge-policy.md) as a standing zone
+   decision, including the point that edge-generated content can change without
+   a commit or deploy, so it must be re-read rather than assumed. The zone
+   itself was not changed; that would be a separate provider action.
 
 3. **Note — the Ops project map predates `AGENTS.md`.**
    The map still says "There is no root AGENTS/CLAUDE entrypoint at the review
