@@ -6,11 +6,21 @@ codului lansat.
 
 ## Unreleased
 
+- contract public pentru consumatorii API-ului în [API.md](API.md): unitățile pe
+  sufixe (`_m3s` debit, `_cm` cotă, `_km3` volum, `percentila` ca rang P0–P100),
+  fusul orar al câmpurilor doar-dată față de marcajele cu decalaj propriu al
+  sursei, semnificația exactă a lui `stale` și `cache_age_s`, registrul de
+  proveniență cu regula dependențelor, distincția `requested_start` ≠
+  `effective_start` și tabelul stărilor de eroare;
 - un test cu dependență ascunsă de ceas este reparat: fixtura HydroWeb măsura
   vechimea față de ceasul real, deci suita a început să pice pe 2026-09-08, la
   ziua 36 din pragul de 35, fără nicio schimbare de cod; data este acum fixată
   cu același tipar ca testul EDO vecin, iar suita a fost reverificată cu ceasul
   împins cu +30, +90 și +365 de zile;
+- inventarul suprafeței publice, confirmarea că ruta AI publică nu poate porni
+  un apel plătit, prospețimea surselor verificată cu monitorul existent și
+  reconcilierea mailului de recovery cu manifestul sunt consemnate în
+  [nota din 9 septembrie](ops/api-surface-and-recovery-review-2026-09-09.md);
 
 - documentația DevOps este adoptată pentru particularitățile Danube: entrypoint
   [AGENTS.md](AGENTS.md), runbook-ul existent și indexul `ops/` leagă referința

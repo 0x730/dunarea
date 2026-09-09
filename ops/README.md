@@ -221,3 +221,8 @@ se verifică separat conform [acceptanței](../DEPLOY.md#8-acceptanță-post-dep
 
 Adoptarea DevOps, verificările locale și limitele probei sunt în
 [nota din 6 septembrie](devops-adoption-evidence-2026-09-06.md).
+
+Inventarul suprafeței publice, mărginirea parametrilor, reconcilierea mailului
+de recovery cu manifestul și identitatea build-ului livrat sunt în
+[nota din 9 septembrie](api-surface-and-recovery-review-2026-09-09.md).
+Contractul pentru consumatorii API-ului este în [API.md](../API.md).

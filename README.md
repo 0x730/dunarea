@@ -21,6 +21,7 @@ repo-ul public. Adoptarea locală și limitele verificării sunt consemnate în
 - **Release curent:** [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
+- **Contract API:** [API.md](API.md) — unități, fus orar, prospețime, proveniență, erori
 
 Producția este livrată prin Laravel Forge pe Hetzner și protejată de Cloudflare.
 Tag-ul release-ului identifică exact codul publicat; endpoint-ul de sănătate
@@ -425,3 +426,7 @@ Parametrii numerici acceptă doar valori dintr-o listă scurtă (`days`, `start`
 o valoare din afara ei întoarce 400 cu lista permisă. Restricția există pentru
 că fiecare valoare distinctă înseamnă o cheie de cache nouă și o cerere nouă
 către sursa oficială, deci un interval larg ar fi enumerabil.
+
+Contractul complet pentru cine citește datele programatic — unități pe sufixe,
+fus orar, semnificația lui `stale`, registrul de proveniență, perioadele de
+referință și stările de eroare — este în [API.md](API.md).
