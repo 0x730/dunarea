@@ -6,6 +6,12 @@ codului lansat.
 
 ## Unreleased
 
+- un test cu dependență ascunsă de ceas este reparat: fixtura HydroWeb măsura
+  vechimea față de ceasul real, deci suita a început să pice pe 2026-09-08, la
+  ziua 36 din pragul de 35, fără nicio schimbare de cod; data este acum fixată
+  cu același tipar ca testul EDO vecin, iar suita a fost reverificată cu ceasul
+  împins cu +30, +90 și +365 de zile;
+
 - documentația DevOps este adoptată pentru particularitățile Danube: entrypoint
   [AGENTS.md](AGENTS.md), runbook-ul existent și indexul `ops/` leagă referința
   Ops, transporturile/API-ul curent, proprietarii hostului comun, efectele

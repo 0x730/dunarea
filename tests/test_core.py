@@ -1844,7 +1844,18 @@ class ConnectorTests(unittest.TestCase):
                    "geometry": {"coordinates": [19.0, 47.0]}}
         lines = [f"{year}-08-04 00:00 {1 + i / 10:.2f} 0.05"
                  for i, year in enumerate(range(2020, 2027))]
-        entry = C._hydroweb_station_entry(feature, "\n".join(lines))
+
+        # Vechimea observației se măsoară față de ceasul real. Fără o dată
+        # fixată, testul trecea doar în primele 35 de zile (HYDROWEB_MAX_AGE_DAYS)
+        # de după 2026-08-04, apoi raporta „observatie_veche" fără nicio
+        # schimbare de cod — a picat pe 2026-09-08, la ziua 36.
+        class FixedDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 10)
+
+        with mock.patch.object(C, "date", FixedDate):
+            entry = C._hydroweb_station_entry(feature, "\n".join(lines))
 
         self.assertEqual(entry["km"], 1600)
         self.assertEqual(entry["segment"], "mijlociu")
