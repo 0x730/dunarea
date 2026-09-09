@@ -5,9 +5,10 @@ Baseline revision: `90b95bb4c98b3eb64e23efaef70ffe8e3829a745`; working tree
 initially clean.
 
 Scope: read-only review of the public surface, one local test fix, and
-documentation. **No** commit, push, deployment, provider mutation, host
-maintenance, alert send, backup, prune, or recovery execution. No credential
-file was read or printed. No paid AI inference was run.
+documentation. The review itself performed **no** commit, push, deployment,
+provider mutation, host maintenance, alert send, backup, prune, or recovery
+execution; the separately authorized deployment that followed is recorded in
+§7. No credential file was read or printed. No paid AI inference was run.
 
 Sources: [shared entrypoint](../../ops/0x730/PM/runbooks/devops-entrypoint.md),
 [project map](../../ops/0x730/PM/runbooks/devops-project-map.md#danube),
@@ -165,6 +166,9 @@ deliberately not run.
 
 ## 5. Deployed build identity, dependencies, rollback
 
+State **at review time, before the deployment in §7**, which supersedes the
+first table below.
+
 | Fact | Value |
 | --- | --- |
 | Deployed `buildSha` | `7848f94218567ab691b2c142988bfba8b7b2bf15` |
@@ -174,8 +178,9 @@ deliberately not run.
 | Version / release | `1.1.0` = `VERSION` = tag `v1.1.0` |
 | Uptime at read | 542 106 s (~6.3 days) |
 
-Both undeployed commits are ops/documentation only; no application change is
-waiting. Deploying is a separate authorized action and was not performed.
+Both undeployed commits were ops/documentation only; no application change was
+waiting. Deploying was a separate authorized action, performed afterwards and
+recorded in §7.
 
 **Dependencies.** The application is Python standard library only, with one
 exception: `h5py`, imported lazily inside the GRACE parser and guarded, so its
@@ -232,7 +237,50 @@ is a separate value from the directory count on disk.
    The map still says "There is no root AGENTS/CLAUDE entrypoint at the review
    cutoff"; `AGENTS.md` was added in `90b95bb`. Ops-session correction.
 
-## 7. Local validation
+## 7. Deployment and post-deploy acceptance — 2026-09-09
+
+Separate actions, separate proofs, in order.
+
+| Step | Evidence |
+| --- | --- |
+| Git delivered | `a75da9f7f14b5d3dc5ef4514a0fcaf8dc49571bd` on local `HEAD`, `origin/main` and `git ls-remote` |
+| Deployed | Forge deployment **`77311055`**, type `API`, `finished`, commit `a75da9f7…`, 13:45:26→13:45:40 UTC |
+| Host gate | deployment log: `Ran 145 tests` / `OK` before activation, then `daemon-1006295` stopped→started |
+| Release retention | pruner kept `77311055` + `76649380` (active + newest rollback), removed `76640840`, reclaimed 3 556 851 B |
+| Live verified | `/api/health.buildSha` = `a75da9f7…`, `version` `1.1.0` = `VERSION` = tag `v1.1.0` |
+| Data reviewed | 15 endpoints `fresh`, no stale sources, `/api/overview.errors` empty |
+
+The POST returned **202 with an empty body**. It was not repeated: the
+deployment was bound from the collection by commit and `created_at`. Note that
+this collection is **not** ordered newest-first — `.data[0]` was an unrelated
+record — so bind by field, never by position.
+
+`ops/verify_deploy.sh` was first run over SSH as `forge` and reported three
+failures that were purely access artifacts: `git` refused the release directory
+with *dubious ownership*, and `backups/` is `0700 dunarea`. Re-run as `dunarea`
+through a bounded one-use Forge recipe, it returned **`VERIFY_EXIT=0`**, "toate
+verificările esențiale trec": runtime checkout and `.build-revision` both bound
+to `a75da9f7…`, latest backup `cache-2026-09-09.db` 11 h old passing integrity
+at `0600`, off-box encrypted object fresh and read authenticated, loopback-only
+binding, secrets posture, origin lock, Cloudflare and security.txt.
+
+Its four warnings were then closed separately, as §8 requires:
+
+- three "no cron in this user's crontab" warnings are expected — the work runs
+  as Forge scheduled jobs, not crontab entries. Read back `installed` as
+  `dunarea`: `2117004` (`15 3 * * *`), `2117005` (`17 8 * * *`),
+  `2120262` (`25 9 * * *`), `2120431` (`13 * * * *`);
+- `ufw` is **active**, default deny incoming, allowing only 22/80/443 on v4 and
+  v6. Port 7300 is not exposed, consistent with the loopback-only binding.
+
+Both temporary recipes (`119729` as `dunarea`, `119731` as `root`) were bounded,
+run once on server `949568`, their runs bound from the runs collection after
+empty-bodied 202s, then deleted (`204`) with a readback confirming absence.
+
+Still separate, still unproven here: inbox receipt of an alert after
+2026-08-28, and a restore drill. Neither is implied by the above.
+
+## 8. Local validation
 
 `python3 -m unittest discover -s tests -v` — **145 tests, OK** (one failure
 before the fix in §6.1). `git diff --check` clean. Changed documentation links
