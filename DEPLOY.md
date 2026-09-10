@@ -114,6 +114,27 @@ python3 /home/dunarea/dunarea.info/current/ops/prune_releases.py \
   --root /home/dunarea/dunarea.info/releases --apply
 ```
 
+Entrypoint-ul versionat `ops/write_build_revision.py` scrie acum și
+`.release-receipt.json` la rădăcina release-ului, apelând cu `node` copia
+canonică [ops/write-release-receipt.mjs](ops/write-release-receipt.mjs).
+Scriptul stocat în Forge păstrează aceeași comandă. Node este o cerință a
+pregătirii release-ului și a testelor de receipt; `/usr/bin/node` v22.23.2 a
+fost verificat ca utilizator `dunarea` la 10 septembrie 2026. Runtime-ul Python
+nu îl apelează. Eșecul writer-ului oprește pregătirea înainte de activare.
+Stdout rămâne exclusiv SHA-ul Git; linia `release receipt …` merge pe stderr,
+vizibil în logul de deploy chiar dacă stdout este capturat în `RELEASE_SHA`.
+
+Pentru site-ul `3331936` (`dunarea.info`, grup `web-api`), mapping-ul este
+`artifacts: {}`: nu există compilare sau bundler, fișierele Python și
+`static/` sunt livrate direct, `.build-revision` conține SHA-ul variabil, iar
+SQLite/cache-urile sunt date runtime. Receipt-ul gitignored consemnează
+revizia, momentul pregătirii și versiunea Node; existența lui nu probează
+activarea ori acceptanța post-deploy. Hook-ul este verificat local prin
+pregătirea reală a release-ului, echivalentul disponibil aici pentru un build.
+La acest checkpoint nu a fost rulat un deploy cu noul hook; dovada din
+directorul de release de pe host rămâne pentru următorul deploy autorizat.
+Vezi [dovada din 10 septembrie](ops/release-receipt-evidence-2026-09-10.md).
+
 ID-ul declarat al procesului este `1006295`; verificați în Forge comanda,
 directorul și utilizatorul înainte de a înlocui `ID_DIN_FORGE`. Ordinea este intenționată:
 release-ul nu devine activ dacă revizia nu poate fi legată de checkout sau dacă

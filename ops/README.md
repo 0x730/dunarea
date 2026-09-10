@@ -25,7 +25,8 @@ gate generic `--write`.
 | `prune_releases.py --root CALE` | Dry-run implicit; `--apply` șterge release-urile din plan. Acceptă numai cele două rădăcini declarate. |
 | `runtime_hygiene.py` | Citește presiunea hostului și scrie `--state-file` chiar fără `--alert`. `--test-alert` trimite un mesaj real, fără schimbarea stării incidentului. |
 | `source_freshness.py` | Citește aplicația pe loopback și scrie `--status-file`, inclusiv fără `--alert`; `--test-alert` trimite email real. |
-| `write_build_revision.py` | Scrie atomic `--output` din SHA-ul checkout-ului `--repository`; folosit în scriptul de deploy. |
+| `write_build_revision.py` | Scrie atomic `--output` din SHA-ul checkout-ului `--repository`, apoi apelează writer-ul canonic cu Node; scrie receipt-ul la rădăcina repo-ului. Eșecul oprește pregătirea release-ului. |
+| `write-release-receipt.mjs` | Copie canonică Ops, apelată de entrypoint-ul Python; scrie `.release-receipt.json` în rădăcina Git, îmbină artefactele aceleiași revizii și refuză lipsa reviziei. |
 | `verify_deploy.sh` | Verificare pe host: citiri locale/publice/off-box și workspace temporar 0700 cu cleanup; fără alertă sau schimbarea stării persistente. |
 
 Statusul implicit pentru backup/source freshness este
@@ -194,6 +195,39 @@ Deploy script-ul îl rulează în directorul noului release înainte de teste.
 Fișierul `.build-revision` este generat atomic din `git rev-parse HEAD`, apoi
 comparat din nou după activare înainte de restartul daemonului. `/api/health`
 îl publică drept `buildSha`.
+
+Același entrypoint apelează acum `node ops/write-release-receipt.mjs` cu
+directorul de lucru `--repository` și `FORGE_DEPLOY_SHA` fixat la SHA-ul Git
+deja verificat, pentru ca receipt-ul și `.build-revision` să aibă aceeași
+identitate chiar dacă mediul moștenește alt SHA. Stdout rămâne un singur SHA;
+mesajul writer-ului merge pe stderr în logul de deploy. Node trebuie să fie în
+PATH; absența lui, un exit non-zero sau depășirea limitei de 30 s opresc
+pregătirea. Funcția `write_revision()` își păstrează efectul atomic existent;
+hook-ul este în `main()`.
+
+### Receipt-ul release-ului
+
+[write-release-receipt.mjs](write-release-receipt.mjs) este copiat **verbatim**
+din `packages/fleet/kit/write-release-receipt.mjs` al checkout-ului Ops, fără
+port Python și fără pachete npm. El păstrează rădăcina Git, îmbină artefactele
+pentru aceeași revizie, pornește un receipt nou la altă revizie, consemnează
+explicit artefactele lipsă și refuză scrierea fără revizie.
+
+Mapping: `dunarea.info` / site Forge `3331936` / grup `web-api` →
+`artifacts: {}`. Proiectul livrează sursele direct și nu are output de build
+determinist de declarat. `.build-revision` variază cu SHA-ul, iar baza SQLite
+și cache-urile variază la runtime; niciunul nu este artefact comparabil.
+`.release-receipt.json` este gitignored și aparține fiecărui release, fără
+shared path. Testele folosesc Git și Node local în directoare temporare,
+inclusiv capturarea exactă `RELEASE_SHA` folosită de Forge.
+
+La 10 septembrie, mecanismul este instalat și verificat local prin comanda
+existentă de pregătire; nu există un build de producție separat în Danube.
+Niciun deploy cu hook-ul nou nu a fost rulat, deci existența receipt-ului în
+release-ul de pe host este încă neprobată. La următorul deploy autorizat se
+verifică linia writer-ului din log și concordanța dintre `revision`, SHA-ul
+Git/Forge, `.build-revision` și `/api/health.buildSha`, împreună cu acceptanța
+din [DEPLOY.md](../DEPLOY.md). [Dovadă locală](release-receipt-evidence-2026-09-10.md).
 
 ## `verify_deploy.sh` — ce *este* configurat, nu ce *ar trebui*
 

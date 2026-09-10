@@ -6,6 +6,15 @@ codului lansat.
 
 ## Unreleased
 
+- receipt-ul de release este integrat în `ops/write_build_revision.py` prin
+  copia canonică Ops `ops/write-release-receipt.mjs`, fără port Python sau
+  modificarea scriptului Forge: `.release-receipt.json` este gitignored,
+  păstrează SHA-ul checkout-ului și declară `artifacts: {}` pentru site-ul
+  Python/static fără build; stdout rămâne SHA-ul capturat de Forge, iar logul
+  receipt-ului merge pe stderr. Node este necesar la pregătire și în teste;
+  mecanismul este verificat local, fără deploy nou.
+  [Dovadă și mapping](ops/release-receipt-evidence-2026-09-10.md).
+
 - contract public pentru consumatorii API-ului în [API.md](API.md): unitățile pe
   sufixe (`_m3s` debit, `_cm` cotă, `_km3` volum, `percentila` ca rang P0–P100),
   fusul orar al câmpurilor doar-dată față de marcajele cu decalaj propriu al
