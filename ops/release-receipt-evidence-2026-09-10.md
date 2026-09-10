@@ -1,14 +1,16 @@
 # Danube — release receipt, 10 septembrie 2026
 
-Mecanismul este implementat și verificat local. Nu a fost rulat un deploy cu
-hook-ul nou; receipt-ul din release-ul de pe host rămâne neprobat.
+Mecanismul este implementat și verificat local și live. Prima probă de pe
+host este deployment-ul Forge `77396437`, revizia
+`d155091ba056183b4d4370a8a639b6a7f3aca817`; detaliile sunt în ultima secțiune.
 
 ## Scope și punct de pornire
 
 Cererea execută [promptul Danube](../../ops/0x730/spec/prompts/release-receipt/danube.md)
 și [contractul comun](../../ops/0x730/spec/prompts/release-receipt/README.md),
-versiunea 1.0 din 10 septembrie. Autoritatea include schimbarea locală,
-testarea și commit-ul; nu include deploy. Nu există `CLAUDE.md`, `CURRENT`
+versiunea 1.0 din 10 septembrie. Autoritatea inițială includea schimbarea
+locală, testarea și commit-ul. După commit, operatorul a autorizat explicit
+push și deploy. Nu există `CLAUDE.md`, `CURRENT`
 sau cadru PM local; sunt păstrate [AGENTS.md](../AGENTS.md),
 [README.md](../README.md), [DEPLOY.md](../DEPLOY.md) și [indexul ops](README.md).
 
@@ -115,12 +117,79 @@ schimbări, cu implementarea nouă în worktree; nu este o probă de cod livrat.
   numai pentru `bash -n`, fiind expandate de provider înainte de Bash în
   producție; exemplele din documentație nu au fost modificate sau executate.
 
-## Limite și următoarea probă
+## Prima probă live — push și deploy autorizate ulterior
 
-Acest checkpoint permite commit-ul local. Nu s-a făcut push, deploy sau
-modificare de provider, host, edge, job, backup, alertă ori recovery.
-La următorul deploy autorizat se cere linia writer-ului în logul Forge,
-receipt-ul din directorul release-ului activ și același SHA în
-`revision`, Git/Forge, `.build-revision` și `/api/health.buildSha`, apoi
-acceptanța din [DEPLOY.md](../DEPLOY.md#8-acceptanță-post-deploy).
-Mecanism instalat local; dovada din release-ul de pe host rămâne neprobată.
+Commit-ul implementării `d155091ba056183b4d4370a8a639b6a7f3aca817` a fost
+împins pe `main`. HEAD, `origin/main` și `git ls-remote origin refs/heads/main`
+au coincis înainte de deploy. Readback-ul Forge a confirmat repo/branch/user,
+`quick_deploy=false`, scriptul dedicat neschimbat și procesul `1006295`.
+Colecția completă de deployment-uri nu avea execuții în curs.
+
+POST-ul explicit a întors HTTP `202`, ID **`77396437`**, revizia cerută și
+starea `queued`; același ID a fost urmărit până la **`finished`**.
+`created_at=2026-09-10T10:00:18.000000Z`,
+`started_at=2026-09-10T10:00:33.000000Z`; câmpul `finished_at` nu era furnizat.
+Resursa separată de log a confirmat:
+
+```text
+release receipt d155091ba056 0 artifact(s) -> .release-receipt.json
+Ran 152 tests in 4.697s
+OK
+daemon-1006295:daemon-1006295_00: stopped
+daemon-1006295:daemon-1006295_00: started
+```
+
+Citirea ca `dunarea` a confirmat fișierul gitignored, fără symlink/shared path,
+în `/home/dunarea/dunarea.info/releases/77396437/.release-receipt.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "revision": "d155091ba056183b4d4370a8a639b6a7f3aca817",
+  "artifacts": {},
+  "builtAt": "2026-09-10T10:00:43.879Z",
+  "node": "v22.23.2"
+}
+```
+
+Writer-ul de pe host are același SHA-256 canonic documentat mai sus.
+La `10:03:13 UTC`, Git HEAD din release, receipt-ul, `.build-revision`,
+health pe loopback și health public au același SHA `d155091ba056…`.
+Public: HTTP 200, `status=ok`, `version=1.1.0`, `warmup_done=true`.
+
+`ops/verify_deploy.sh` a rulat ca `dunarea` din release-ul activ, cu
+argumentele complete din [DEPLOY.md](../DEPLOY.md#8-acceptanță-post-deploy):
+exit **0**, toate verificările esențiale trec. Backupul local din 10 septembrie
+avea 6 h, integritate validă și 0600; obiectul off-box era proaspăt și citit
+autentificat. Au trecut identitatea runtime, permisiunile, binding-ul loopback,
+restricția originii, anteturile Cloudflare și contractul `security.txt`.
+
+Patru avertismente rămân separate de exit code: cele trei despre crontab sunt
+reconciliate cu joburile Forge `2117004`, `2117005`, `2120262`, `2120431`,
+toate `installed`, user `dunarea`, programări neschimbate. UFW nu era lizibil
+utilizatorului izolat; starea firewall-ului nu este recertificată prin acest
+release. Nu s-a creat o rețetă root sau un job nou pentru această observație.
+
+Funcția existentă `source_freshness.collect_evidence()` a citit loopback fără
+scriere de status sau alerte: la `10:03:40 UTC`, **15 endpointuri**, stare
+`fresh`, `staleSources=[]`, `failures=[]`, raportul de anomalii vechi de
+21 557 s (sub pragul de 12 h).
+
+Spot-check-ul timestamp-urilor a găsit aceleași observații PegelOnline
+`2026-09-10T11:45:00+02:00` în sumar și endpointul de stații; AFDJ avea
+`2026-09-10T03:00:00+03:00`, GloFAS data `2026-09-10`, iar INHGA păstra
+buletinul `2026-09-09`. Ultima dată nu a fost mutată artificial pe ziua
+curentă; monitorul nu semnala fallback sau eroare de fetch și
+`overview.errors` era gol. Starea `fresh` este evaluarea transportului și a
+cache-ului, nu afirmația că fiecare observație are data zilei curente.
+Evidența existentă de pe host confirma monitorul backup `fresh` la
+`08:17:01 UTC` și jobul source freshness `fresh` la `09:25:05 UTC`.
+După primul deploy existau exact două directoare Danube: `77396437` activ și
+`77322798` rollback.
+
+Aceasta este proba primei activări a mecanismului, nu o afirmație permanentă
+despre branch tip. Commit-ul ulterior care consemnează aceste rezultate
+trebuie verificat separat dacă este livrat. Nu s-au schimbat scriptul Forge,
+edge-ul, configurația hostului sau joburile recurente; deploy-ul a reutilizat
+restartul și prunerul Danube existente. Nu s-a trimis alertă și nu s-a rulat
+restore-drill; primirea mesajelor și restaurarea rămân probe separate.

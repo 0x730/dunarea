@@ -221,13 +221,13 @@ determinist de declarat. `.build-revision` variază cu SHA-ul, iar baza SQLite
 shared path. Testele folosesc Git și Node local în directoare temporare,
 inclusiv capturarea exactă `RELEASE_SHA` folosită de Forge.
 
-La 10 septembrie, mecanismul este instalat și verificat local prin comanda
-existentă de pregătire; nu există un build de producție separat în Danube.
-Niciun deploy cu hook-ul nou nu a fost rulat, deci existența receipt-ului în
-release-ul de pe host este încă neprobată. La următorul deploy autorizat se
-verifică linia writer-ului din log și concordanța dintre `revision`, SHA-ul
+La 10 septembrie, mecanismul este verificat și live prin deployment-ul Forge
+`77396437`: receipt-ul din release corespunde reviziei `d155091ba056`, iar
+logul conține linia writer-ului și 152 de teste reușite. Nu există un build
+de producție separat în Danube. La fiecare deploy autorizat se verifică din
+nou linia writer-ului din log și concordanța dintre `revision`, SHA-ul
 Git/Forge, `.build-revision` și `/api/health.buildSha`, împreună cu acceptanța
-din [DEPLOY.md](../DEPLOY.md). [Dovadă locală](release-receipt-evidence-2026-09-10.md).
+din [DEPLOY.md](../DEPLOY.md). [Dovadă locală și live](release-receipt-evidence-2026-09-10.md).
 
 ## `verify_deploy.sh` — ce *este* configurat, nu ce *ar trebui*
 

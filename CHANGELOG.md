@@ -12,7 +12,8 @@ codului lansat.
   păstrează SHA-ul checkout-ului și declară `artifacts: {}` pentru site-ul
   Python/static fără build; stdout rămâne SHA-ul capturat de Forge, iar logul
   receipt-ului merge pe stderr. Node este necesar la pregătire și în teste;
-  mecanismul este verificat local, fără deploy nou.
+  mecanismul este verificat local și live în deployment-ul Forge `77396437`,
+  cu receipt-ul în release, 152 de teste reușite și SHA identic în runtime.
   [Dovadă și mapping](ops/release-receipt-evidence-2026-09-10.md).
 
 - contract public pentru consumatorii API-ului în [API.md](API.md): unitățile pe

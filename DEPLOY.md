@@ -131,8 +131,10 @@ SQLite/cache-urile sunt date runtime. Receipt-ul gitignored consemnează
 revizia, momentul pregătirii și versiunea Node; existența lui nu probează
 activarea ori acceptanța post-deploy. Hook-ul este verificat local prin
 pregătirea reală a release-ului, echivalentul disponibil aici pentru un build.
-La acest checkpoint nu a fost rulat un deploy cu noul hook; dovada din
-directorul de release de pe host rămâne pentru următorul deploy autorizat.
+Prima probă live a hook-ului este deployment-ul Forge `77396437` din
+10 septembrie 2026: receipt prezent în release, aceeași revizie în
+Git/receipt/runtime și linia writer-ului în log înaintea celor 152 de teste
+reușite. Această probă datată nu înlocuiește verificarea următorului release.
 Vezi [dovada din 10 septembrie](ops/release-receipt-evidence-2026-09-10.md).
 
 ID-ul declarat al procesului este `1006295`; verificați în Forge comanda,
