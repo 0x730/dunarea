@@ -828,7 +828,7 @@ class SourceFreshnessContractTests(unittest.TestCase):
         )
         self.assertEqual(message["subject"], "[Danube] data sources test: stale")
         self.assertIn("DELIVERY TEST", message["html"])
-        self.assertIn("Some sources serve fallback snapshots", message["html"])
+        self.assertIn("Some sources have stale or undated observations or fallback snapshots", message["html"])
         self.assertIn(">STALE<", message["html"])
         self.assertIn("stale &lt;script&gt;&amp;x", message["html"])
         self.assertNotIn("<script>", message["html"])

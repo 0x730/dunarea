@@ -98,11 +98,43 @@ payload.
 | --- | --- |
 | `stale: true` | răspunsul servește un **snapshot de rezervă**; fetch-ul curent a eșuat |
 | `stale: false` | valoarea provine dintr-un fetch reușit în TTL |
+| `observation_freshness` | evaluare separată a datei observației: `fresh`, `partial_stale`, `stale`, `unknown`; număr de observații pe stare și lista problemelor |
+| `source_freshness` (`/api/romania`) | metadatele de livrare și observație ale intrărilor raportului, păstrate inclusiv la fallback |
 | `cache_age_s` | vechimea payloadului din cache, în secunde (unde e expus) |
 | `livrare_snapshot` (`/api/raport`) | `{cache_age_s, stale, refreshing}` pentru raportul complet |
 | `/api/overview.errors` | sursele de bază care au eșuat la ultima recompunere |
 | `/api/health.anomaly_report_age_s` | vârsta raportului de anomalii (TTL 6 h) |
 | `/api/health.warmup_done` | dacă pre-încălzirea cache-ului a reușit |
+
+Politica din `freshness.py` este toleranța monitorului, nu un SLA al
+furnizorului. Datele lipsă, neparsabile sau în viitor sunt `unknown`, niciodată
+proaspete. Limita este inclusivă: numai o vârstă mai mare declanșează `stale`.
+
+| Sursă / măsurare | Vârstă maximă acceptată |
+| --- | --- |
+| INHGA, buletin zilnic | 1 zi calendaristică |
+| AFDJ, Hydroinfo, DanubeHIS HU, RHMZ, puncte GloFAS în overview | 2 zile calendaristice |
+| Secțiuni DanubeHIS RO | 3 zile calendaristice |
+| PEGELONLINE, fiecare parametru Q/W disponibil | 6 ore |
+| DanubeSTREAM, fiecare miră | 48 ore |
+| SEN, timestampul sursei | 30 minute |
+
+Zilele se compară cu ziua din România, păstrând data calendaristică declarată
+de sursă; timestampurile păstrează offsetul. Timestampul SEN fără offset este
+interpretat în Europe/Bucharest; `masurat_utc` DanubeSTREAM este UTC. Alte surse
+(model istoric, reanaliză, satelit, prognoză lunară sau comunicat ANAR) își
+păstrează evaluările existente; nu sunt declarate proaspete prin această politică.
+
+Rutele directe reevaluează vârsta după citirea cache-ului. În rapoartele
+compuse, `checked_at` arată momentul evaluării incluse în snapshot; vârsta
+snapshotului se verifică separat. `/api/raport.sectiuni` păstrează `stale` și
+`cache_age_s` ale fiecărei surse. `livrare_snapshot.stale` poate însemna și
+revalidare normală în fundal, nu doar fetch eșuat.
+
+`/api/health.maintenance` expune ultima încercare, ultimul succes și starea
+per task (epoch UTC). Dicționarul este gol până la primul ciclu după restart;
+nu este probă de succes. Un task eșuat nu oprește celelalte taskuri, iar unul
+zilnic eșuat este reîncercat la ciclul următor, fără a aștepta încă o zi.
 
 Reguli pentru consumatori:
 

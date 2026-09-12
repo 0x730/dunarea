@@ -18,7 +18,7 @@ repo-ul public. Adoptarea locală și limitele verificării sunt consemnate în
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0)
+- **Release curent:** [v1.1.1](https://github.com/0x730/dunarea/tree/v1.1.1)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 - **Contract API:** [API.md](API.md) — unități, fus orar, prospețime, proveniență, erori
@@ -106,6 +106,15 @@ Vederea `/date-lipsa` este registrul auto-actualizat al verigilor care ar putea
 schimba concluzia: ce valoare este necesară, de ce ajută, ce există deja, ce
 lipsește și ce surse oficiale au fost verificate. Un catalog de satelit sau un
 link identificat rămâne separat de o observație efectiv ingerată.
+
+Prospețimea observațiilor este verificată separat de succesul fetch-ului:
+feedurile cu stații de vârste diferite pot fi `partial_stale` chiar dacă
+`stale: false`. Interfața enumeră stațiile afectate, iar monitorul zilnic
+folosește aceleași evaluări. Pragurile și limitele sunt în
+[API.md](API.md#5-prospețime), iar implementarea/verificarea în
+[dovada din 12 septembrie](ops/source-freshness-evidence-2026-09-12.md).
+Refresh-ul din browser așteaptă toate panourile, limitează fiecare cerere la
+45 s, sare taburile ascunse și reia verificarea la revenire.
 
 ## Pornire
 

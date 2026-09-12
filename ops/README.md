@@ -147,7 +147,12 @@ python3 ops/source_freshness.py --base-url https://dunarea.info  # de pe alt hos
 ```
 
 Aplicația își evaluează singură sursele: `stale: true` în payload înseamnă că
-servește un snapshot de rezervă în locul unui fetch reușit. Scriptul citește
+servește un snapshot de rezervă în locul unui fetch reușit. Separat,
+`observation_freshness` detectează observații vechi sau fără dată verificabilă,
+inclusiv un feed doar parțial vechi. Monitorul citește aceste evaluări, inclusiv
+ruta secțiunilor DanubeHIS RO, și taskurile `maintenance` eșuate din health.
+Politica exactă și sursele acoperite sunt în [API.md](../API.md#5-prospețime).
+Nu deduce prospețimea dintr-o dată arbitrară dintr-un tabel istoric. Scriptul citește
 aceste auto-evaluări de pe instanța locală (`127.0.0.1:7300`, nu prin
 Cloudflare), plus erorile din `/api/overview` și vârsta raportului de anomalii
 din `/api/health` (limită implicită 12 h), și iese non-zero când ceva nu e

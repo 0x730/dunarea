@@ -52,6 +52,7 @@ ENDPOINTS = (
     "/api/hidmet",
     "/api/hydroinfo",
     "/api/danubehis",
+    "/api/danubehis/afluenti-romania",
     "/api/sen",
     "/api/inhga",
     "/api/hydroweb",
@@ -139,6 +140,9 @@ def collect_evidence(
             failures.append("/api/health: status neasteptat")
         if health.get("warmup_done") is not True:
             stale.append("/api/health: warmup neterminat")
+        for name, task in (health.get("maintenance") or {}).items():
+            if task.get("status") == "failed":
+                failures.append(f"/api/health: maintenance {name}: failed")
         age = health.get("anomaly_report_age_s")
         if isinstance(age, (int, float)) and age >= 0:
             report_age = int(age)
@@ -161,6 +165,7 @@ def collect_evidence(
         for where in _stale_paths(data):
             suffix = "stale" if where == "." else f"stale la {where}"
             stale.append(f"{path}: {suffix}")
+        stale.extend(f"{path}: {problem}" for problem in _observation_problems(data))
         if path == "/api/overview" and isinstance(data, dict):
             errors = data.get("errors")
             if isinstance(errors, dict):
@@ -181,6 +186,31 @@ def collect_evidence(
     return evidence
 
 
+def _observation_problems(node, path=""):
+    """Read explicit observation policies; never infer age from arbitrary dates."""
+    found = []
+    if isinstance(node, dict):
+        assessment = node.get("observation_freshness")
+        if isinstance(assessment, dict):
+            for item in assessment.get("problems", []):
+                found.append(
+                    f"{path or '.'}: observation {item['station']}: {item['status']}"
+                    f" ({item.get('observed_at')}; limit {assessment['max_age']} {assessment['unit']})"
+                )
+            if assessment.get("status") == "unknown" and not assessment.get("problems"):
+                found.append(f"{path or '.'}: observation date unknown")
+            # A collection summary already includes every problematic row.
+            if "counts" in assessment:
+                return found
+        for key, value in node.items():
+            if key != "observation_freshness":
+                found.extend(_observation_problems(value, f"{path}.{key}" if path else key))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found.extend(_observation_problems(value, f"{path}[{i}]"))
+    return found
+
+
 def _clipped(problems: list[str]) -> tuple[list[str], int]:
     listed = [item[:MAX_PROBLEM_CHARS] for item in problems[:MAX_LISTED_PROBLEMS]]
     return listed, max(0, len(problems) - len(listed))
@@ -197,7 +227,7 @@ def _freshness_message(
         accent = "#0f766e"
         accent_soft = "#ccfbf1"
     elif state_key == "stale":
-        headline = "Some sources serve fallback snapshots"
+        headline = "Some sources have stale or undated observations or fallback snapshots"
         status_label = "Stale"
         accent = "#b45309"
         accent_soft = "#fef3c7"
@@ -213,7 +243,7 @@ def _freshness_message(
         "This operator-requested test did not raise an incident."
         if test
         else "Inspect the listed endpoints on dunarea.info and the upstream "
-        "providers; stale means the app serves its last good snapshot."
+        "providers; distinguish fallback delivery from old or undated observations."
     )
     text_lines = [
         f"Danube source freshness monitor: {label}.",

@@ -29,6 +29,7 @@ import analiza_ai
 import anomalii
 import connectors as C
 import romania
+import freshness
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # realpath: candidatul e comparat tot cu realpath. Pe un deploy cu director de
@@ -71,7 +72,7 @@ def _load_build_sha(path=None):
 BUILD_SHA = _load_build_sha()
 PUBLIC_URL = "https://dunarea.info"
 PROJECT_URL = "https://github.com/0x730/dunarea"
-REPORT_SNAPSHOT_CACHE_KEY = f"api_report_snapshot:v1:{APP_VERSION}"
+REPORT_SNAPSHOT_CACHE_KEY = f"api_report_snapshot:v2:{APP_VERSION}"
 REPORT_SNAPSHOT_TTL_S = 5 * 60
 REPORT_SNAPSHOT_MAX_STALE_S = 24 * 3600
 
@@ -183,7 +184,10 @@ def api_health(q):
         age = (entry or {}).get("age")
         return round(age, 1) if isinstance(age, (int, float)) else None
 
+    with _MAINTENANCE_LOCK:
+        maintenance = {k: dict(v) for k, v in MAINTENANCE_STATUS.items()}
     return {
+        "maintenance": maintenance,
         "status": "ok",
         "version": APP_VERSION,
         "release": RELEASE_TAG,
@@ -201,7 +205,27 @@ def api_health(q):
 
 
 def api_overview(q):
-    return C.overview()
+    out = C.overview()
+    if out.get("inhga"):
+        out["inhga"] = freshness.annotate("inhga", out["inhga"])
+    if out.get("pegelonline"):
+        out["pegelonline"] = freshness.annotate("pegelonline", out["pegelonline"])
+    out["glofas"] = [freshness.annotate("glofas", row) for row in out.get("glofas", [])]
+    return out
+
+
+def source_payload(source, result):
+    """Keep delivery metadata when unwrapping a cached source for composition."""
+    data = result["data"]
+    payload = dict(data) if isinstance(data, dict) else {"values": data}
+    payload.update(stale=bool(result.get("stale")),
+                   cache_age_s=result.get("cache_age_s"))
+    return freshness.annotate(source, payload)
+
+
+def source_metadata(payload):
+    return {key: payload[key] for key in
+            ("stale", "cache_age_s", "observation_freshness") if key in payload}
 
 
 # Parametrii din URL determină chei de cache și cereri către sursele oficiale.
@@ -263,7 +287,8 @@ def api_precip(q):
 
 def api_pegel_stations(q):
     r = C.pegelonline_stations()
-    return {"stations": r["data"], "stale": r["stale"]}
+    return freshness.annotate("pegelonline", {"stations": r["data"],
+                              "stale": r["stale"], "cache_age_s": r.get("cache_age_s")})
 
 
 def api_pegel_series(q):
@@ -282,13 +307,12 @@ def api_pegel_series(q):
 
 def api_afdj(q):
     r = C.afdj_cote()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("afdj", r)
 
 
 def api_inhga(q):
     r = C.inhga_bulletin()
-    return {**r["data"], "stale": r["stale"],
-            "cache_age_s": r.get("cache_age_s")}
+    return source_payload("inhga", r)
 
 
 def api_inhga_tributaries(q):
@@ -299,8 +323,7 @@ def api_inhga_tributaries(q):
 
 def api_danubehis_ro_tributaries(q):
     r = C.danubehis_romanian_tributaries()
-    return {**r["data"], "stale": r["stale"],
-            "cache_age_s": r.get("cache_age_s")}
+    return source_payload("danubehis_afluenti_romania", r)
 
 
 def api_glofas_ro_tributaries(q):
@@ -311,17 +334,17 @@ def api_glofas_ro_tributaries(q):
 
 def api_hidmet(q):
     r = C.hidmet_report()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("hidmet", r)
 
 
 def api_hydroinfo(q):
     r = C.hydroinfo_danube()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("hydroinfo", r)
 
 
 def api_danubehis(q):
     r = C.danubehis_danube()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("danubehis", r)
 
 
 def api_edo(q):
@@ -443,7 +466,7 @@ def api_statistici_csv(q):
 
 def api_sen(q):
     r = C.sen_live()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("sen", r)
 
 
 def api_sen_history(q):
@@ -468,25 +491,36 @@ def api_romania(q):
             return fallback
 
     def build():
-        stats = _stats_cached()["data"]
-        archive = C.glofas_archive("cernavoda", romania.MODEL_START_YEAR)["data"]
-        afdj = optional(lambda: C.afdj_cote()["data"], {"statii": []})
-        inhga = optional(lambda: C.inhga_bulletin()["data"], {})
-        tributaries = optional(lambda: C.inhga_danube_tributaries()["data"], {
+        inputs = {}
+
+        def take(name, fetch):
+            try:
+                payload = source_payload(name, fetch())
+                inputs[name] = source_metadata(payload)
+                return payload
+            except Exception:
+                inputs[name] = {"stale": True, "available": False}
+                raise
+
+        stats = take("statistici", _stats_cached)
+        archive = take("glofas_archive", lambda: C.glofas_archive("cernavoda", romania.MODEL_START_YEAR))
+        afdj = optional(lambda: take("afdj", C.afdj_cote), {"statii": []})
+        inhga = optional(lambda: take("inhga", C.inhga_bulletin), {})
+        tributaries = optional(lambda: take("inhga_afluenti_dunare", C.inhga_danube_tributaries), {
             "available": False,
             "reason": "prognoza lunară INHGA nu a putut fi verificată",
         })
         tributary_observations = optional(
-            lambda: C.danubehis_romanian_tributaries()["data"], {
+            lambda: take("danubehis_afluenti_romania", C.danubehis_romanian_tributaries), {
                 "available": False,
                 "reason": "secțiunile românești DanubeHIS nu au putut fi verificate",
             })
         tributary_model_climatology = optional(
-            lambda: C.glofas_romanian_tributary_climatology()["data"], {
+            lambda: take("glofas_climatologie_afluenti_romania", C.glofas_romanian_tributary_climatology), {
                 "available": False,
                 "reason": "climatologia GloFAS a afluenților nu a putut fi verificată",
             })
-        sen = optional(lambda: C.sen_live()["data"], {})
+        sen = optional(lambda: take("sen", C.sen_live), {})
         sen_history = optional(C.sen_history_context, {
             "available": False, "enough_for_comparison": False,
             "days": 0, "minimum_days": 14,
@@ -494,7 +528,7 @@ def api_romania(q):
         energy_market = optional(C.sen_market_context, {
             "available_components": 0, "component_count": 4,
         })
-        water_resources = optional(lambda: C.anar_water_resources()["data"], {
+        water_resources = optional(lambda: take("anar_resurse_apa", C.anar_water_resources), {
             "available": False, "current": False,
             "reason": "comunicatul național ANAR nu a putut fi verificat",
         })
@@ -504,17 +538,19 @@ def api_romania(q):
                      "reason": "lista oficială SNN nu a răspuns"},
             "stale": True,
         })
-        return romania.build_report(stats, archive, afdj, inhga, sen, snn,
+        report = romania.build_report(stats, archive, afdj, inhga, sen, snn,
                                     tributaries=tributaries,
                                     tributary_observations=tributary_observations,
                                     tributary_model_climatology=tributary_model_climatology,
                                     water_resources=water_resources,
                                     sen_history=sen_history,
                                     energy_market=energy_market)
+        report["source_freshness"] = inputs
+        return report
 
     # Versiunea cheii urmărește schema payloadului; schimbarea ei împiedică un
     # răspuns vechi din cache să mascheze câmpuri noi după repornire.
-    result = C.cached("romania_proportionality:v16", 5 * 60, build)
+    result = C.cached("romania_proportionality:v17", 5 * 60, build)
     return {**result["data"], "stale": result["stale"],
             "cache_age_s": result.get("cache_age_s")}
 
@@ -753,7 +789,7 @@ def api_missing_data(q):
 
 def api_danubeportal(q):
     r = C.danubeportal_gauges()
-    return {**r["data"], "stale": r["stale"]}
+    return source_payload("danubeportal", r)
 
 
 def api_dahiti(q):
@@ -832,30 +868,33 @@ def _build_report_snapshot():
            "url": PUBLIC_URL,
            "project_url": PROJECT_URL,
            "sectiuni": {}}
-    for nume, fn in (("anomalii", lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)["data"]),
-                     ("statistici", lambda: _stats_cached()["data"]),
-                     ("bilant_apa", lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)["data"]),
-                     ("inhga", lambda: C.inhga_bulletin()["data"]),
-                     ("inhga_afluenti_dunare", lambda: C.inhga_danube_tributaries()["data"]),
-                     ("danubehis_afluenti_romania", lambda: C.danubehis_romanian_tributaries()["data"]),
-                     ("glofas_climatologie_afluenti_romania", lambda: C.glofas_romanian_tributary_climatology()["data"]),
-                     ("afdj", lambda: C.afdj_cote()["data"]),
-                     ("hidmet", lambda: C.hidmet_report()["data"]),
-                     ("hydroinfo", lambda: C.hydroinfo_danube()["data"]),
-                     ("danubehis", lambda: C.danubehis_danube()["data"]),
-                     ("edo", lambda: C.edo_status()["data"]),
-                     ("opera", lambda: C.opera_surface_status()["data"]),
-                     ("copernicus_land", lambda: C.copernicus_land_context()["data"]),
-                     ("catalog_sateliti", lambda: C.earthdata_satellite_catalog()["data"]),
+    for nume, fn in (("anomalii", lambda: C.cached(anomalii.REPORT_CACHE_KEY, 6 * 3600, anomalii.report)),
+                     ("statistici", lambda: _stats_cached()),
+                     ("bilant_apa", lambda: C.cached(anomalii.BUDGET_CACHE_KEY, 6 * 3600, anomalii.water_budget)),
+                     ("inhga", lambda: C.inhga_bulletin()),
+                     ("inhga_afluenti_dunare", lambda: C.inhga_danube_tributaries()),
+                     ("danubehis_afluenti_romania", lambda: C.danubehis_romanian_tributaries()),
+                     ("glofas_climatologie_afluenti_romania", lambda: C.glofas_romanian_tributary_climatology()),
+                     ("afdj", lambda: C.afdj_cote()),
+                     ("hidmet", lambda: C.hidmet_report()),
+                     ("hydroinfo", lambda: C.hydroinfo_danube()),
+                     ("danubehis", lambda: C.danubehis_danube()),
+                     ("edo", lambda: C.edo_status()),
+                     ("opera", lambda: C.opera_surface_status()),
+                     ("copernicus_land", lambda: C.copernicus_land_context()),
+                     ("catalog_sateliti", lambda: C.earthdata_satellite_catalog()),
                      ("registru_provenienta", C.evidence_source_registry),
-                     ("sen", lambda: C.sen_live()["data"]),
+                     ("sen", lambda: C.sen_live()),
                      ("sen_istoric_local", C.sen_history_context),
                      ("sen_piata", C.sen_market_context),
-                     ("anar_resurse_apa", lambda: C.anar_water_resources()["data"]),
+                     ("anar_resurse_apa", lambda: C.anar_water_resources()),
                      ("date_lipsa", lambda: api_missing_data({})),
                      ("romania", lambda: api_romania({}))):
         try:
-            out["sectiuni"][nume] = fn()
+            result = fn()
+            out["sectiuni"][nume] = (source_payload(nume, result)
+                                      if isinstance(result, dict) and "data" in result
+                                      and "stale" in result else result)
         except Exception as exc:
             out["sectiuni"][nume] = {"eroare": C.public_error(exc)}
     return out
@@ -1195,35 +1234,48 @@ def warmup():
     print("istoric INHGA + raport anomalii pregătite")
 
 
-def maintenance_watcher():
-    """Ține sursa INHGA la zi și curăță cache-ul; nu rulează analiza AI."""
-    import time as _t
-    n = 0
-    while True:
-        _t.sleep(1800)
-        n += 1
+MAINTENANCE_STATUS = {}
+_MAINTENANCE_LOCK = threading.Lock()
+
+
+def maintenance_cycle():
+    """Run due tasks independently; failed daily tasks retry on the next cycle."""
+    def bulletin():
+        bul = C.cache_get(C.INHGA_CACHE_KEY, max_age=10 ** 9)
+        if not bul or (bul.get("data") or {}).get("data_buletin") != date.today().isoformat():
+            C.inhga_bulletin()
+
+    jobs = [("inhga", bulletin, 0),
+            ("inhga_tributaries", C.inhga_danube_tributaries, 86400),
+            ("danubehis_tributaries", C.danubehis_romanian_tributaries, 86400),
+            ("anar", C.anar_water_resources, 86400),
+            ("tributary_climatology", C.glofas_romanian_tributary_climatology, 86400),
+            ("cache_gc", C.cache_gc, 86400),
+            ("report", _refresh_report_snapshot, 0)]
+    for name, fn, interval in jobs:
+        now = time.time()
+        with _MAINTENANCE_LOCK:
+            previous = dict(MAINTENANCE_STATUS.get(name, {}))
+        if interval and now - previous.get("last_success", 0) < interval:
+            continue
+        state = {**previous, "last_attempt": now}
         try:
-            # Buletinul INHGA apare o dată pe zi, dar TTL-ul lui e de 30 min —
-            # exact cadența acestei bucle, deci îl reîncărcam de 48 de ori pe zi
-            # indiferent de trafic. Suntem oaspeți pe API-urile oficiale: îl
-            # reîmprospătăm doar cât timp buletinul zilei încă nu a apărut.
-            bul = C.cache_get(C.INHGA_CACHE_KEY, max_age=10 ** 9)
-            azi = date.today().isoformat()
-            if not bul or (bul.get("data") or {}).get("data_buletin") != azi:
-                C.inhga_bulletin()   # ține seria oficială la zi fără repornire
-            # Surse cu cadență lunară/săptămânală: o dată pe zi e suficient.
-            if n % 48 == 0:
-                C.inhga_danube_tributaries()
-                C.danubehis_romanian_tributaries()
-                C.anar_water_resources()
-                C.glofas_romanian_tributary_climatology()
-                C.cache_gc()
-            # Recompunerea poate dura minute când expiră mai multe surse, dar
-            # acest watcher este separat de firele HTTP. Cererile continuă să
-            # primească ultimul snapshot complet pe durata refresh-ului.
-            _refresh_report_snapshot()
+            result = fn()
+            if isinstance(result, dict) and result.get("stale") is True:
+                raise RuntimeError("fallback")
+            state.update(status="ok", last_success=time.time())
         except Exception:
-            pass
+            state["status"] = "failed"
+            # No raw exceptions: upstream messages can contain private URLs.
+            print(f"maintenance {name}: failed", file=sys.stderr, flush=True)
+        with _MAINTENANCE_LOCK:
+            MAINTENANCE_STATUS[name] = state
+
+
+def maintenance_watcher():
+    while True:
+        time.sleep(1800)
+        maintenance_cycle()
 
 
 if __name__ == "__main__":

@@ -210,9 +210,15 @@ const lookup = (map, key, fallback = undefined) =>
   (typeof key === "string" && Object.hasOwn(map, key)) ? map[key] : fallback;
 
 async function jget(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
-  return sanitize(await r.json());
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45 * 1000);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+    return sanitize(await r.json());
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* ------------------------------------------------------- status pills -- */
@@ -225,9 +231,9 @@ const PILL_ORDER = [
   "EDO", "Date lipsă", "România",
 ];
 const PILL_TITLE = {
-  ok: "sursa a răspuns, date proaspete",
+  ok: "sursa a răspuns; verificați data fiecărei observații",
   stale: "servit din cache — sursa nu a răspuns la ultima încercare",
-  limited: "sursa a răspuns, dar probele nu trec încă pragul de acoperire/calitate",
+  limited: "sursa a răspuns, dar probele nu trec încă pragul de prospețime/acoperire/calitate",
   err: "sursa nu a răspuns",
   off: "integrare neactivată pe această instanță",
 };
@@ -240,6 +246,37 @@ function pill(name, state) {
   el.innerHTML = [...known, ...extra]
     .map((n) => `<span class="pill ${PILLS[n]}" title="${n}: ${PILL_TITLE[PILLS[n]] || PILLS[n]}">${n}</span>`)
     .join("");
+}
+
+const FRESHNESS_WARNINGS = {};
+function freshnessIssues(data) {
+  if (!data || typeof data !== "object") return [];
+  const result = [];
+  if (data.stale === true) result.push("snapshot de rezervă");
+  const f = data.observation_freshness;
+  if (f && f.status !== "fresh") {
+    const details = (f.problems || []).map((p) =>
+      `${p.station}: ${p.observed_at || "dată necunoscută"}${p.status === "unknown" ? " (dată neverificabilă)" : " (observație veche)"}`);
+    result.push(...(details.length ? details : ["data observației nu poate fi verificată"]));
+  }
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "observation_freshness" || (f?.counts && ["statii", "mire", "sections", "stations"].includes(key))) continue;
+    if (value && typeof value === "object") result.push(...freshnessIssues(value));
+  }
+  return [...new Set(result)];
+}
+
+function sourceState(name, data) {
+  const issues = data ? freshnessIssues(data) : ["sursa nu a răspuns"];
+  FRESHNESS_WARNINGS[name] = issues;
+  const el = $("freshness-warnings");
+  if (el) {
+    el.textContent = Object.entries(FRESHNESS_WARNINGS)
+      .filter(([, values]) => values.length)
+      .map(([source, values]) => `${source} — ${values.join("; ")}`).join(" · ");
+    el.hidden = !el.textContent;
+  }
+  return !data ? "err" : data.stale ? "stale" : issues.length ? "limited" : "ok";
 }
 
 /* --------------------------------------------------------- temă charts -- */
@@ -386,7 +423,8 @@ function renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis) {
       extra: s.nivel_cm != null ? `nivel ${fmtN.format(s.nivel_cm)} cm` : "" });
   });
   (danubehis?.statii || []).forEach((s) => {
-    if (s.km == null || s.debit_m3s == null || directHu.has(s.statie)) return;
+    if (s.km == null || s.debit_m3s == null || directHu.has(s.statie)
+        || s.observation_freshness?.status !== "fresh") return;
     measured.push({ km: s.km, q: s.debit_m3s, name: `${s.statie} (HU)`,
       src: "OVF via ICPDR DanubeHIS", extra: "fallback normalizat" });
   });
@@ -1295,7 +1333,7 @@ async function renderContraProbe(afdj, portal) {
         ${Object.entries(tari).map(([t, n]) => `${t}:${n}`).join(" ")}</p>
       ${compar.length ? `<p class="sub m-6-0-0">Cross-check RO: ${compar.length} stații comune cu AFDJ,
         abatere maximă <b>${maxAbat} cm</b>${maxAbat <= 15 ? " — diferența e în marja orei de citire; e aceeași miră citită de două sisteme, nu o confirmare independentă" : " — de investigat diferența (momente de citire diferite?)"}</p>` : ""}`;
-    pill("DanubeSTREAM", d.stale ? "stale" : "ok");
+    pill("DanubeSTREAM", sourceState("DanubeSTREAM", d));
   } catch (e) {
     $("cp-danubeportal").innerHTML = `<div class="err-box">danubeportal.com nu a răspuns.</div>`;
     pill("DanubeSTREAM", "err");
@@ -1313,7 +1351,7 @@ async function renderContraProbe(afdj, portal) {
       li("sold import/export", `${fmtV(s.sold_mw)} MW ${s.sold_mw >= 0 ? "(import)" : "(export)"}`),
       li("actualizat", `${s.actualizat || "–"} <span class="prov prov-masurat">măsurat</span>`),
     ].join("");
-    pill("SEN", s.stale ? "stale" : "ok");
+    pill("SEN", sourceState("SEN", s));
   } catch (e) {
     $("cp-sen").innerHTML = li("stare", "Transelectrica nu a răspuns.");
     pill("SEN", "err");
@@ -2122,7 +2160,7 @@ async function renderRomania() {
 
   $("ro-missing").innerHTML = (d.missing_for_national_verdict || [])
     .map((item, index) => li(`${index + 1}`, item)).join("") || li("stare", "lista nu este disponibilă");
-  pill("România", d.stale ? "stale" : "ok");
+  pill("România", sourceState("România", d));
 }
 
 /* --------------------------------------- registrul datelor încă lipsă -- */
@@ -2230,14 +2268,15 @@ async function main() {
   }).catch(() => {});
 
   refreshData();
-  safeRun(renderEdo);
-  safeRun(renderRomania);
   // fluxul continuu: zona de date se recompune singură la 5 minute
   // Panourile se umplu asincron; anunțăm cititorii de ecran când s-a terminat
   // prima rundă, în loc să lăsăm `aria-busy` pornit la nesfârșit.
   const main = document.getElementById("continut");
-  if (main) main.setAttribute("aria-busy", "false");
+  if (main) refreshData().finally(() => main.setAttribute("aria-busy", "false"));
   setInterval(refreshData, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshData();
+  });
 }
 
 // un renderer care crapă nu are voie să blocheze restul paginii
@@ -2264,17 +2303,31 @@ const safeRun = (fn) => {
   try {
     const p = fn();
     if (p && typeof p.then === "function") {
-      p.then(() => applyDataStyles(), boom);
+      return p.then(() => applyDataStyles(), boom);
     } else {
       applyDataStyles();
     }
   } catch (e) { boom(e); }
 };
 
-async function refreshData() {
-  [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
+let refreshInFlight = null;
+function refreshData() {
+  if (document.hidden) return Promise.resolve();
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = refreshPanels().catch((e) => {
+    console.error("[refresh]", e);
+  }).finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
+async function refreshPanels() {
+  const panels = [renderPFChart, renderEntsoe, renderAnomalii, renderStatistici,
    renderBilantApa, renderMvMChart, renderIstoric, renderMissingData,
-   renderEdo, renderRomania, renderApeMici].forEach(safeRun);
+   renderEdo, renderRomania, renderApeMici].map(safeRun);
+  await Promise.allSettled([...panels, safeRun(refreshCore)]);
+}
+
+async function refreshCore() {
 
   const [ovR, afdjR, hidmetR, portalR, hydroinfoR, danubehisR] = await Promise.allSettled([
     jget("/api/overview"), jget("/api/afdj"), jget("/api/hidmet"),
@@ -2297,14 +2350,14 @@ async function refreshData() {
       ? `<span class="prov prov-lipsa">${eroriSurse.length} ${eroriSurse.length === 1 ? "sursă lipsește" : "surse lipsesc"}</span> din profil: ${eroriSurse.map(([k]) => k).join(", ")} — graficul e desenat fără ele.`
       : "";
   }
-  pill("INHGA", ov.inhga ? (ov.inhga.stale ? "stale" : "ok") : "err");
-  pill("AFDJ", afdj ? (afdj.stale ? "stale" : "ok") : "err");
-  pill("PEGELONLINE", ov.pegelonline ? (ov.pegelonline.stale ? "stale" : "ok") : "err");
-  pill("RHMZ", hidmet ? (hidmet.stale || hidmet.transport_verified === false ? "stale" : "ok") : "err");
-  pill("Hydroinfo", hydroinfo ? (hydroinfo.stale ? "stale" : "ok") : "err");
-  pill("DanubeHIS", danubehis ? (danubehis.stale ? "stale" : "ok") : "err");
+  pill("INHGA", sourceState("INHGA", ov.inhga));
+  pill("AFDJ", sourceState("AFDJ", afdj));
+  pill("PEGELONLINE", sourceState("PEGELONLINE", ov.pegelonline));
+  pill("RHMZ", hidmet?.transport_verified === false ? "limited" : sourceState("RHMZ", hidmet));
+  pill("Hydroinfo", sourceState("Hydroinfo", hydroinfo));
+  pill("DanubeHIS", sourceState("DanubeHIS", danubehis));
 
-  [() => renderHero(ov.inhga, (ov.glofas || []).find((p) => p.id === "bazias")),
+  const rendered = [() => renderHero(ov.inhga, (ov.glofas || []).find((p) => p.id === "bazias")),
    () => renderProfile(ov, afdj, hidmet, portal, hydroinfo, danubehis),
    () => renderAfdjTable(afdj),
    () => renderHidmetTable(hidmet),
@@ -2312,7 +2365,8 @@ async function refreshData() {
    () => renderPFFacts(ov, afdj, hidmet),
    () => renderDelta(afdj),
    () => renderContraProbe(afdj, portal),
-   () => renderSinteza(ov.inhga)].forEach(safeRun);
+   () => renderSinteza(ov.inhga)].map(safeRun);
+  await Promise.allSettled(rendered);
 }
 
 main();

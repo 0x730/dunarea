@@ -6,6 +6,9 @@ codului lansat.
 
 ## Unreleased
 
+- auditul de prospețime și verificările release-ului din 12 septembrie sunt
+  urmărite în [dovada locală/live](ops/source-freshness-evidence-2026-09-12.md).
+
 - receipt-ul de release este integrat în `ops/write_build_revision.py` prin
   copia canonică Ops `ops/write-release-receipt.mjs`, fără port Python sau
   modificarea scriptului Forge: `.release-receipt.json` este gitignored,
@@ -55,6 +58,18 @@ codului lansat.
   trimite o singură tranziție de recovery prin transportul Cloudflare existent;
 - testele acoperă limitele de ștergere, dry-run-ul, release-ul activ, pragurile,
   escaladarea, re-alertarea, histerezisul și starea locală owner-only.
+
+## [v1.1.1](https://github.com/0x730/dunarea/tree/v1.1.1) — 2026-09-12
+
+- verifică separat vechimea observațiilor și livrarea cache-ului; un feed mixt
+  poate fi `partial_stale`, iar stațiile afectate sunt enumerate în interfață
+  și în monitorul zilnic existent;
+- păstrează metadatele surselor în rapoartele compuse și invalidează numai
+  cache-urile rapoartelor cu schemă schimbată;
+- izolează erorile taskurilor de mentenanță, expune starea lor în health și
+  reîncearcă taskurile zilnice eșuate la următorul ciclu;
+- refresh-ul browserului așteaptă toate panourile, limitează cererile la 45 s,
+  suspendă polling-ul în taburi ascunse și reîmprospătează la revenire.
 
 ## [v1.1.0](https://github.com/0x730/dunarea/tree/v1.1.0) — 2026-09-01
 
