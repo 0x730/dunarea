@@ -1,3 +1,4 @@
+import ast
 import inspect
 import html
 import json
@@ -1490,6 +1491,75 @@ class ConnectorTests(unittest.TestCase):
                     C.inhga_danube_tributaries()
             # o singură cerere: listingul. Pagina nu a fost descărcată.
             self.assertEqual(get.call_count, 1)
+
+    def test_every_hidro_ro_fetch_outlasts_the_default_budget(self):
+        """hidro.ro a strâns mâna TLS în 9–40 s la incidentul din 13.09.2026.
+        Cu bugetul implicit, buletinul publicat devenea livrare de rezervă,
+        iar backfill-ul reținea `None` pentru ziua cerută."""
+        implicit = inspect.signature(C.http_get).parameters["timeout"].default
+        self.assertGreater(C.INHGA_HTTP_TIMEOUT_S, implicit)
+
+        bulletin_list = ('<a href="https://www.hidro.ro/bulletin/'
+                         'diagnoza-dunare-12-09-2026/">buletin</a>')
+        bulletin = ("<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost "
+                    "în scădere, având valoarea de 1.300 m³/s.</p>")
+        monthly_list = ('<article><h2 class="entry-title">'
+                        '<a href="https://www.hidro.ro/monthly">'
+                        'Prognoza hidrologică lunară</a></h2></article>')
+        monthly = ('<span class="entry-title">Prognoza lunară</span>'
+                   '<span class="updated">2026-07-31T10:00:00+03:00</span>'
+                   '<p>În luna august 2026 regimul hidrologic se va situa la '
+                   'valori cuprinse între 30-50% din mediile lunare.</p>')
+
+        def no_cache(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False}
+
+        seen = []
+
+        def serving(*pages):
+            served = iter(pages)
+
+            def get(url, *args, **kwargs):
+                seen.append((url, kwargs.get("timeout")))
+                return next(served)
+
+            return get
+
+        with mock.patch.object(C, "cached", side_effect=no_cache), \
+                mock.patch.object(C, "cache_put"), \
+                mock.patch.object(C, "http_get",
+                                  side_effect=serving(bulletin_list, bulletin)):
+            C.inhga_bulletin()
+        with mock.patch.object(C, "cached", side_effect=no_cache), \
+                mock.patch.object(C, "http_get",
+                                  side_effect=serving(monthly_list, monthly)):
+            C.inhga_danube_tributaries()
+        with mock.patch.object(C, "cache_get", return_value=None), \
+                mock.patch.object(C, "cache_put"), \
+                mock.patch.object(C, "http_get", side_effect=serving(bulletin)):
+            C.inhga_bulletin_for(date(2026, 9, 12))
+
+        self.assertEqual(len(seen), 5)
+        for url, timeout in seen:
+            self.assertIn("hidro.ro", url)
+            self.assertEqual(timeout, C.INHGA_HTTP_TIMEOUT_S)
+
+        # Un sit hidro.ro adăugat mai târziu nu are voie să cadă tăcut înapoi
+        # pe bugetul implicit: îl prindem în sursă, nu doar pe cele trei căi
+        # exersate mai sus.
+        budgeted = 0
+        for fn in ast.walk(ast.parse(inspect.getsource(C))):
+            if not (isinstance(fn, ast.FunctionDef) and fn.name.startswith("inhga_")):
+                continue
+            for call in ast.walk(fn):
+                if not (isinstance(call, ast.Call)
+                        and getattr(call.func, "id", None) == "http_get"):
+                    continue
+                budget = next((kw.value for kw in call.keywords if kw.arg == "timeout"), None)
+                self.assertIsInstance(budget, ast.Name, f"{fn.name}: buget implicit")
+                self.assertEqual(budget.id, "INHGA_HTTP_TIMEOUT_S")
+                budgeted += 1
+        self.assertEqual(budgeted, 5)
 
     def test_hydroweb_redirect_preserves_key_only_on_the_exact_host(self):
         handler = C._SameHostRedirect("hydroweb.next.theia-land.fr")

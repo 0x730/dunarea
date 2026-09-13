@@ -6,6 +6,18 @@ codului lansat.
 
 ## Unreleased
 
+- incidentul de prospețime din 13 septembrie: buletinul INHGA ajungea livrare de
+  rezervă pentru că `hidro.ro` strânge mâna TLS în 9–40 s, peste bugetul implicit
+  de 25 s — toate cererile către acel host folosesc acum `INHGA_HTTP_TIMEOUT_S`.
+  Separat, sarcina de întreținere `inhga` nu întorcea rezultatul refreshului, așa
+  că o livrare din snapshot raporta `ok` în `/api/health.maintenance`; contractul
+  este acum uniform cu celelalte taskuri și explicit în [API.md](API.md#5-prospețime).
+  Monitorul zilnic raportează de acum `failed`, nu `stale`, pentru această
+  condiție — taskul de întreținere eșuat intră la `failures`; volumul alertelor
+  și codul de ieșire rămân aceleași. Observația Gönyű veche de 13.08 este un gol
+  real la sursă, detectat corect; toleranțele rămân neschimbate.
+  [Diagnostic, măsurători și dovezi](ops/source-freshness-incident-2026-09-13.md).
+
 - fluxul agenților păstrează ICE → Spec → Plan și documentația README/DEPLOY/ops:
   AGENTS canonic, import explicit în CLAUDE, contract corect al verificărilor,
   review independent și autoritate pentru commit/push coerent prin verificările

@@ -1243,7 +1243,10 @@ def maintenance_cycle():
     def bulletin():
         bul = C.cache_get(C.INHGA_CACHE_KEY, max_age=10 ** 9)
         if not bul or (bul.get("data") or {}).get("data_buletin") != date.today().isoformat():
-            C.inhga_bulletin()
+            # Rezultatul trebuie întors: ciclul citește `stale` din el ca să
+            # deosebească un refresh reușit de unul servit din snapshot. Fără
+            # return, o livrare de rezervă INHGA raporta `ok` în /api/health.
+            return C.inhga_bulletin()
 
     jobs = [("inhga", bulletin, 0),
             ("inhga_tributaries", C.inhga_danube_tributaries, 86400),

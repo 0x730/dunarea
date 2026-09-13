@@ -1020,6 +1020,14 @@ def pegelonline_series(uuid, param="W", days=10):
 INHGA_LIST = "https://www.hidro.ro/bulletin_type/diagnoza-si-prognoza-pentru-dunare/"
 INHGA_CACHE_KEY = "inhga_bulletin:v2"
 INHGA_CACHE_TTL_S = 30 * 60
+# hidro.ro strânge mâna TLS în zeci de secunde, nu în zecimi: 9–40 s
+# măsurat la incidentul din 13.09.2026, cu TCP-ul conectat instant.
+# Bugetul implicit de 25 s cădea peste mijlocul acelui interval, iar
+# `cached()` servea corect snapshotul vechi — buletinul publicat apărea
+# ca livrare de rezervă. Bugetul e per cerere și acoperă strângerea de mână;
+# cele două cereri secvențiale stau sub `proxy_read_timeout 180s` de la
+# margine, dar timeoutul rămâne per operație, nu un plafon dur pe apel.
+INHGA_HTTP_TIMEOUT_S = 45
 
 
 def _strip_tags(html):
@@ -1036,7 +1044,7 @@ def _num(s):
 
 def inhga_bulletin():
     def fetch():
-        listing = http_get(INHGA_LIST)
+        listing = http_get(INHGA_LIST, timeout=INHGA_HTTP_TIMEOUT_S)
         links = re.findall(
             r'href="(https://www\.hidro\.ro/bulletin/diagnoza[^"]*-(\d{2})-(\d{2})-(\d{4})/)"',
             listing)
@@ -1044,7 +1052,7 @@ def inhga_bulletin():
             raise RuntimeError("nu găsesc buletine INHGA în listă")
         links.sort(key=lambda m: (m[3], m[2], m[1]), reverse=True)
         url, dd, mm, yyyy = links[0]
-        html = http_get(url)
+        html = http_get(url, timeout=INHGA_HTTP_TIMEOUT_S)
         text = _strip_tags(html)
 
         # normalizăm diacriticele pentru regex și lipim "m³/s" rupt de taguri
@@ -1259,13 +1267,13 @@ def _parse_inhga_monthly_tributaries(page, url=None, listing_title=None):
 
 def inhga_danube_tributaries():
     def fetch():
-        listing = http_get(INHGA_MONTHLY_LIST, timeout=30)
+        listing = http_get(INHGA_MONTHLY_LIST, timeout=INHGA_HTTP_TIMEOUT_S)
         url, listing_title = _inhga_monthly_latest_url(listing)
         # href-ul vine din HTML-ul unui sit WordPress public: fără această
         # barieră, orice ancoră plantată acolo devine un GET făcut de server,
         # inclusiv file:// sau o adresă din rețeaua internă.
         url = _validated_https_url(url, {"www.hidro.ro", "hidro.ro"})
-        page = http_get(url, timeout=30)
+        page = http_get(url, timeout=INHGA_HTTP_TIMEOUT_S)
         return _parse_inhga_monthly_tributaries(page, url, listing_title)
 
     # Fără stale fallback: un format nou sau un buletin neparsabil devine
@@ -1304,7 +1312,7 @@ def inhga_bulletin_for(d):
     if hit and hit["data"] is None and hit["age"] < (2 * 3600 if recent else 7 * 86400):
         return None
     try:
-        html = http_get(INHGA_DAILY.format(d=ds))
+        html = http_get(INHGA_DAILY.format(d=ds), timeout=INHGA_HTTP_TIMEOUT_S)
         debit = _parse_inhga_html(html)
     except Exception:
         debit = None

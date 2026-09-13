@@ -3,7 +3,7 @@ import io
 import json
 import subprocess
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -135,6 +135,43 @@ class ObservationFreshnessTests(unittest.TestCase):
             self.assertEqual(failed.call_count, 2)
             self.assertTrue(all(fn.call_count == 1 for fn in passed))
             self.assertEqual(server.MAINTENANCE_STATUS['inhga_tributaries']['status'], 'ok')
+
+    def test_bulletin_fallback_is_a_failed_refresh_like_every_other_task(self):
+        """Livrarea de rezervă e un refresh eșuat. Pentru INHGA verdictul se
+        pierdea: sarcina nu întorcea rezultatul pe care ciclul îl inspectează,
+        așa că un buletin servit din snapshot raporta `ok` în /api/health."""
+        def cycle(bulletin, cached_day='2000-01-01'):
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(server.MAINTENANCE_STATUS, {}, clear=True))
+                stack.enter_context(mock.patch.object(
+                    server.C, 'cache_get',
+                    return_value={'data': {'data_buletin': cached_day}, 'age': 0}))
+                refresh = stack.enter_context(mock.patch.object(
+                    server.C, 'inhga_bulletin', return_value=bulletin))
+                for name in ('inhga_danube_tributaries', 'danubehis_romanian_tributaries',
+                             'anar_water_resources', 'glofas_romanian_tributary_climatology',
+                             'cache_gc'):
+                    stack.enter_context(mock.patch.object(server.C, name, return_value={}))
+                stack.enter_context(mock.patch.object(
+                    server, '_refresh_report_snapshot', return_value={'stale': False}))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    server.maintenance_cycle()
+                return dict(server.MAINTENANCE_STATUS['inhga']), refresh.call_count
+
+        fallback, calls = cycle({'data': {'data_buletin': '2026-09-12'}, 'stale': True})
+        self.assertEqual(fallback['status'], 'failed')
+        self.assertNotIn('last_success', fallback)
+        self.assertEqual(calls, 1)
+        # Un fetch reușit care aduce buletinul de ieri — întârzierea normală de
+        # publicare — rămâne `ok`: `stale` înseamnă fetch eșuat, nu buletin vechi.
+        fetched, calls = cycle({'data': {'data_buletin': '2026-09-12'}, 'stale': False})
+        self.assertEqual(fetched['status'], 'ok')
+        self.assertEqual(calls, 1)
+        # Buletinul zilei e deja în cache: niciun refresh nu e datorat, iar
+        # sarcina rămâne `ok` fără să atingă sursa.
+        idle, calls = cycle(None, cached_day=date.today().isoformat())
+        self.assertEqual(idle['status'], 'ok')
+        self.assertEqual(calls, 0)
 
     def test_browser_refresh_contract(self):
         root = Path(__file__).resolve().parents[1]

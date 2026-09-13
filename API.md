@@ -135,6 +135,8 @@ revalidare normală în fundal, nu doar fetch eșuat.
 per task (epoch UTC). Dicționarul este gol până la primul ciclu după restart;
 nu este probă de succes. Un task eșuat nu oprește celelalte taskuri, iar unul
 zilnic eșuat este reîncercat la ciclul următor, fără a aștepta încă o zi.
+Un refresh servit din snapshot (`stale: true`) este raportat `failed`: taskul
+nu a adus date noi, chiar dacă ruta publică livrează în continuare.
 
 Reguli pentru consumatori:
 

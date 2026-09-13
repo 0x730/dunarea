@@ -230,6 +230,9 @@ servește un snapshot de rezervă în locul unui fetch reușit. Separat,
 inclusiv un feed doar parțial vechi. Monitorul citește aceste evaluări, inclusiv
 ruta secțiunilor DanubeHIS RO, și taskurile `maintenance` eșuate din health.
 Politica exactă și sursele acoperite sunt în [API.md](../API.md#5-prospețime).
+Cum se citește un incident real — livrare de rezervă din latență upstream
+față de observație veche la sursă — în
+[nota din 13 septembrie](source-freshness-incident-2026-09-13.md).
 Nu deduce prospețimea dintr-o dată arbitrară dintr-un tabel istoric. Scriptul citește
 aceste auto-evaluări de pe instanța locală (`127.0.0.1:7300`, nu prin
 Cloudflare), plus erorile din `/api/overview` și vârsta raportului de anomalii
