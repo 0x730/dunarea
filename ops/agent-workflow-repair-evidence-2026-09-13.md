@@ -194,13 +194,31 @@ these SHA-256 identities; subsequent reconciliation changes only this note:
 | 1. Discovery | AGENTS/CLAUDE, README and ops discovery links; import/path/byte checks and independent source review passed. Fresh native loading explicitly unverified. |
 | 2. Intent/evidence | AGENTS and ops workflow plus this pre-implementation ICE/Plan record retain original acceptance, candidate identity, exact statuses, failed attempts and scope boundaries. |
 | 3. Verification | README/DEPLOY/ops match inspected source/fixtures; final suite 161 passed, no skips; 85 links/anchors and 21 examples passed; manual hooks and YAML inapplicability stated honestly. |
-| 4. Handoff | Independent review completed, nearest contracts and Unreleased reconciled; coherent Git delivery is the next authorized step, recorded below after exact remote readback. |
+| 4. Handoff | Independent review completed, nearest contracts and Unreleased reconciled; source commit/push succeeded and exact remote readback matched, as recorded below. |
 
 ## Completion and remaining stages
 
-Plan steps 1–4 are complete; step 5 is at the verified/reviewed source checkpoint.
-Git commit/push and exact remote result are pending until executed, and will be
-recorded in the evidence-only closure checkpoint. Deployment, public
+All five plan steps are complete for the source repair. The same independent
+reviewer checked the pre-commit evidence-only reconciliation with no findings,
+confirming all six instruction/procedure hashes unchanged; reviewed note SHA-256
+`102315fd58db546637f8c5a7273fcd942ffbb7bab221f9e20c84f67b10a4bc91`.
+Direct document checks and both working/staged diff checks exited 0.
+
+`git commit -m "docs: repair Danube agent workflow and source handoff"` exited 0:
+`c2a8728f5939e0c21c2bd9808561aeb340dd0939`, seven Markdown files only.
+`git push origin HEAD:refs/heads/main` exited 0 after its background session was
+waited to completion. `git ls-remote origin refs/heads/main` then exited 0 and
+returned that exact SHA, matching HEAD and local `origin/main`; worktree clean.
+No bypass flags, hook installation, force push, tag or deployment was used.
+
+This subsequent evidence-only checkpoint records that observed delivery; it
+changes only this note. Its own final remote SHA is verified after push in the
+session handoff rather than inserting a self-referential commit hash here.
+The tested/reviewed six instruction/procedure file hashes above remain unchanged.
+No repeat suite is needed for this record-only delta; document/diff checks and
+independent review apply to the closure text.
+
+Deployment, public
 SHA/readiness, fresh source observations, inbox receipt and restore are unperformed
 and outside this assignment. The manifest's September 9 accepted-unproven
 alert-receipt/restore exceptions stay unproven. Historical August 28 and September
