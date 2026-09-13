@@ -22,7 +22,7 @@ Fluxul agenților, verificarea locală și predarea sursei sunt în
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
-- **Release curent:** [v1.1.1](https://github.com/0x730/dunarea/tree/v1.1.1)
+- **Release curent:** [v1.1.2](https://github.com/0x730/dunarea/tree/v1.1.2)
 - **Sănătate runtime:** [https://dunarea.info/api/health](https://dunarea.info/api/health)
 - **Istoric versiuni:** [CHANGELOG.md](CHANGELOG.md)
 - **Contract API:** [API.md](API.md) — unități, fus orar, prospețime, proveniență, erori

@@ -6,21 +6,6 @@ codului lansat.
 
 ## Unreleased
 
-- incidentul de prospețime din 13 septembrie: buletinul INHGA ajungea livrare de
-  rezervă pentru că `hidro.ro` strânge mâna TLS în 9–40 s, peste bugetul implicit
-  de 25 s — toate cererile către acel host folosesc acum `INHGA_HTTP_TIMEOUT_S`.
-  Separat, sarcina de întreținere `inhga` nu întorcea rezultatul refreshului, așa
-  că o livrare din snapshot raporta `ok` în `/api/health.maintenance`; contractul
-  este acum uniform cu celelalte taskuri și explicit în [API.md](API.md#5-prospețime).
-  Monitorul zilnic raportează de acum `failed`, nu `stale`, pentru această
-  condiție — taskul de întreținere eșuat intră la `failures`; volumul alertelor
-  și codul de ieșire rămân aceleași. Observația Gönyű veche de 13.08 este un gol
-  real la sursă, detectat corect; toleranțele rămân neschimbate.
-  Livrat în deployment-ul Forge `77596913`: 163 de teste pe host, `buildSha`
-  public egal cu SHA-ul din Git și Forge, `ops/verify_deploy.sh` cu exit 0 și
-  `/api/inhga` servit din fetch reușit, nu din snapshot.
-  [Diagnostic, măsurători și dovezi](ops/source-freshness-incident-2026-09-13.md).
-
 - fluxul agenților păstrează ICE → Spec → Plan și documentația README/DEPLOY/ops:
   AGENTS canonic, import explicit în CLAUDE, contract corect al verificărilor,
   review independent și autoritate pentru commit/push coerent prin verificările
@@ -78,6 +63,21 @@ codului lansat.
   trimite o singură tranziție de recovery prin transportul Cloudflare existent;
 - testele acoperă limitele de ștergere, dry-run-ul, release-ul activ, pragurile,
   escaladarea, re-alertarea, histerezisul și starea locală owner-only.
+
+## [v1.1.2](https://github.com/0x730/dunarea/tree/v1.1.2) — 2026-09-13
+
+- toate cererile către `hidro.ro` folosesc `INHGA_HTTP_TIMEOUT_S`, peste
+  strângerea de mână TLS măsurată la 9–40 s: buletinul INHGA publicat nu mai
+  ajunge livrare de rezervă din cauza bugetului implicit de 25 s, nici în calea
+  de arhivă unde un timeout scria `None` în cache-ul permanent al zilei;
+- sarcina de întreținere `inhga` întoarce rezultatul refreshului, deci o livrare
+  din snapshot raportează `failed`, uniform cu celelalte taskuri; pentru această
+  condiție monitorul zilnic raportează `failed` în locul lui `stale`, cu același
+  volum de alerte și același cod de ieșire;
+- `/api/health.maintenance` declară explicit regula în [API.md](API.md#5-prospețime);
+- observația Gönyű veche de 13.08 rămâne un gol real la sursă, detectat corect;
+  toleranțele nu se schimbă.
+  [Diagnostic, măsurători și dovezi](ops/source-freshness-incident-2026-09-13.md).
 
 ## [v1.1.1](https://github.com/0x730/dunarea/tree/v1.1.1) — 2026-09-12
 
