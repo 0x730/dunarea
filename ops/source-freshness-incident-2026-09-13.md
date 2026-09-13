@@ -145,6 +145,61 @@ a fallback refresh must be `failed` while a successful one stays `ok`.
 no skips (the OpenSSL-dependent skip did not apply). `git diff --check` clean.
 Changed Markdown links checked.
 
+## Deployment and post-deploy acceptance
+
+Push: `c24df77..0435928` on the existing remote; `git ls-remote origin
+refs/heads/main` returned `0435928517cdad1c6e2e93148898f35b0d50282a`, identical
+to local `HEAD`.
+
+Provider preflight, read before any mutation: site `3331936` (`dunarea.info`,
+user `dunarea`, `0x730/dunarea` / `main`) with **`quick_deploy: false`** — the
+push released nothing on its own — and `deployment_retention: 1`; the dedicated
+deployment-script resource byte-identical to the contract in DEPLOY.md §1 with
+`auto_source: false` and `daemon-1006295:*`; background process `1006295`
+`running` with the declared command, directory and user.
+
+Pre-deploy public state: `buildSha 0347cfb8a56d22b26b12f1f36cbe99a349aefc42`,
+version 1.1.1. `maintenance.inhga` read `ok` with `last_success` recorded
+**25.06 s after `last_attempt`** — production corroboration of both findings at
+once: a fetch that consumed the whole 25 s budget, recorded as a success.
+
+Deployment `77596913`, invoked explicitly: `queued` → `finished`,
+`2026-09-13T09:43:20Z` to `09:43:35Z`, `commit.hash` equal to the pushed SHA on
+branch `main`. Its log, read separately, contains the writer line
+(`release receipt 0435928517cd 0 artifact(s)`), `Ran 163 tests in 4.479s` / `OK`
+on the host, and the bounded pruner keeping `77596913` and `77556835` while
+removing `77398778`.
+
+Public readback: `/api/health` reports `buildSha 0435928517cdad1c6e2e93148898f35b0d50282a`
+and version 1.1.1, matching the `VERSION` file, the Forge deployment and the
+GitHub ref. `warmup_done: true` at 35 s uptime is the cached six-hour marker
+surviving the restart, not a new warmup; `maintenance` is empty until the first
+cycle after restart, as the contract states. VERSION is unchanged and no tag was
+cut: this ships under `Unreleased`, and tagging remains a separate decision.
+
+`ops/verify_deploy.sh` from the active release on the host: **`VERIFY_EXIT=0`,
+all essential checks pass, 4 warnings.** It reports the runtime bound to the
+exact active checkout and `.build-revision` linked to it. The warnings are the
+documented ones: `ufw` unreadable without sudo, and three schedules invisible in
+the user crontab because they are Forge-managed — read live and confirmed
+`installed`: `2117004` (`15 3 * * *`), `2117005` (`17 8 * * *`), `2120262`
+(`25 9 * * *`), `2120431` (`13 * * * *`). A first run as `forge` exited 1 purely
+because `git` refused the release directory for dubious ownership, emptying the
+checkout SHA; that was an access artifact of the wrong user, and the verifier was
+re-run as `dunarea`.
+
+Live data review, the second half of §8: `/api/overview` reports `errors: {}`
+with INHGA `stale: false` and observation `fresh`, PEGELONLINE fresh and all 28
+GloFAS cells fresh. `/api/inhga` returned a live fetch 18 s old, `stale: false`,
+`data_buletin 2026-09-12`, debit 1300 m³/s — the same values parsed during
+triage, now delivered rather than fallen back. `/api/danubehis` remains
+`partial_stale`: 14 fresh, 1 stale, Gönyű at 2026-08-13 aged 31 days; Vác
+returned to fresh. The three INHGA lines are gone; the genuine upstream gap
+stays visible, which is correct.
+
+The repaired maintenance verdict cannot be observed until the first cycle after
+the restart, and the next scheduled monitor run is `2026-09-14T09:25Z`.
+
 ## Not performed
 
 No deployment, no post-deploy acceptance, no Forge or Cloudflare interaction, no

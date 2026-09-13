@@ -16,6 +16,9 @@ codului lansat.
   condiție — taskul de întreținere eșuat intră la `failures`; volumul alertelor
   și codul de ieșire rămân aceleași. Observația Gönyű veche de 13.08 este un gol
   real la sursă, detectat corect; toleranțele rămân neschimbate.
+  Livrat în deployment-ul Forge `77596913`: 163 de teste pe host, `buildSha`
+  public egal cu SHA-ul din Git și Forge, `ops/verify_deploy.sh` cu exit 0 și
+  `/api/inhga` servit din fetch reușit, nu din snapshot.
   [Diagnostic, măsurători și dovezi](ops/source-freshness-incident-2026-09-13.md).
 
 - fluxul agenților păstrează ICE → Spec → Plan și documentația README/DEPLOY/ops:
