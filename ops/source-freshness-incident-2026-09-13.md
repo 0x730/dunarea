@@ -200,6 +200,32 @@ stays visible, which is correct.
 The repaired maintenance verdict cannot be observed until the first cycle after
 the restart, and the next scheduled monitor run is `2026-09-14T09:25Z`.
 
+## Release v1.1.2
+
+The fix was first delivered unversioned as `0435928` (deployment `77596913`),
+then cut as a versioned release on operator instruction. `VERSION`, the README
+current-release link, the static page link and the `CHANGELOG` section move
+together; the existing single-semver-source test enforces that they agree and
+caught the static page link before the release commit — the release gate did its
+job rather than the reviewer or the operator.
+
+Release commit `3ce9a2919a6562bd7d288f59988a5aa72d45e32c`, annotated tag
+`v1.1.2`. Remote readback: `refs/heads/main` and `refs/tags/v1.1.2^{}` both at
+that SHA, and the public tag page resolves.
+
+Deployment `77597115`: `finished`, `2026-09-13T09:49:46Z` to `09:50:01Z`, commit
+hash equal to the tagged SHA. Log: receipt `3ce9a2919a65`, `Ran 163 tests in
+4.578s` / `OK`, pruner keeping `77597115` and `77596913` and removing
+`77556835`. Public `/api/health` reports version **1.1.2** and `buildSha
+3ce9a2919a6562bd7d288f59988a5aa72d45e32c`, so the VERSION file, the tag, the
+GitHub ref, the Forge deployment and the runtime all name the same release.
+
+`ops/verify_deploy.sh` from the active release as `dunarea`: **`VERIFY_EXIT=0`**,
+all essential checks pass, the same four documented warnings, with the runtime
+bound to the exact active checkout. Live review after activation: `/api/overview`
+reports `errors: {}`, `/api/inhga` is served `stale: false` from a successful
+fetch with observation `fresh`.
+
 ## Not performed
 
 No deployment, no post-deploy acceptance, no Forge or Cloudflare interaction, no
