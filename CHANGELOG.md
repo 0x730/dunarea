@@ -6,6 +6,11 @@ codului lansat.
 
 ## Unreleased
 
+- fluxul agenților păstrează ICE → Spec → Plan și documentația README/DEPLOY/ops:
+  AGENTS canonic, import explicit în CLAUDE, contract corect al verificărilor,
+  review independent și autoritate pentru commit/push coerent prin verificările
+  normale, fără deploy implicit. [Acceptanță, plan și dovezi](ops/agent-workflow-repair-evidence-2026-09-13.md).
+
 - auditul de prospețime și verificările release-ului din 12 septembrie sunt
   urmărite în [dovada locală/live](ops/source-freshness-evidence-2026-09-12.md).
 

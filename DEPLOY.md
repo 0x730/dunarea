@@ -90,6 +90,15 @@ Restricția Cloudflare este aplicată numai vhost-ului Danube.
 
 ## 1. Modelul de deploy Forge
 
+Predarea sursei urmează [contractul local](ops/README.md#agent-workflow-and-source-handoff):
+ICE → Spec → Plan, verificare și review înaintea unui commit/push coerent, fără
+aprobare Git repetată. Autoritatea Git nu autorizează deploy-ul explicit.
+Înainte de push, recitiți automatizările și Quick Deploy; dacă push-ul ar lansa
+producția fără autoritate, folosiți o ramură confirmată fără deploy pe remote-ul
+existent și păstrați merge/release separat, fără schimbarea setărilor providerului.
+[Nota din 13 septembrie](ops/agent-workflow-repair-evidence-2026-09-13.md) este
+o predare de documentație, fără release sau probe noi de runtime/recovery.
+
 Site-ul este conectat la GitHub prin integrarea Forge. Contractul scriptului
 dedicat, recitit la 6 septembrie (`attributes.content`, `auto_source=false`),
 este mai jos; substituiți ID-ul procesului numai după verificarea identității:
@@ -192,8 +201,15 @@ git status --short --branch
 git fetch origin main
 git rev-parse HEAD
 git rev-parse origin/main
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests -v
+git diff --check
 ```
+
+Verificați și documentele schimbate conform contractului local. Capturați exit-ul
+fiecărei comenzi înaintea celei următoare; un ultim `git` reușit nu validează
+un test eșuat. Hook-urile efective se inspectează în checkout; aceste verificări
+sunt obligatorii și când sunt aplicate manual. Push-ul se verifică separat cu
+`git ls-remote origin refs/heads/main` (sau ref-ul exact al ramurii alese).
 
 După deploy, verificați în Forge că statusul este `finished`, logul conține
 toate testele și commit-ul este cel așteptat. Verificați și că `version` din

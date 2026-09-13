@@ -15,6 +15,10 @@ agenți sunt în [AGENTS.md](AGENTS.md); ele trimit la
 checkout-ul Ops vecin. Acestea sunt legături de workstation, nu pagini din
 repo-ul public. Adoptarea locală și limitele verificării sunt consemnate în
 [dovada din 6 septembrie](ops/devops-adoption-evidence-2026-09-06.md).
+Fluxul agenților, verificarea locală și predarea sursei sunt în
+[ops/README.md](ops/README.md#agent-workflow-and-source-handoff);
+[CLAUDE.md](CLAUDE.md) importă instrucțiunile canonice. Reconcilierea este în
+[nota din 13 septembrie](ops/agent-workflow-repair-evidence-2026-09-13.md).
 
 - **Stare:** deployed
 - **Aplicație:** [https://dunarea.info](https://dunarea.info/)
@@ -159,11 +163,23 @@ promptul, digestul exact, modul, modelul și citările în terminal și arhiveaz
 rezultatul local. `/api/analiza-ai` publică doar faptul că modul este manual;
 nici `?run=1` nu poate declanșa un apel extern.
 
-Verificare locală (suită fără rețea, sub o secundă):
+Verificare locală obligatorie, din rădăcina checkout-ului:
 
 ```bash
 python3 -m unittest discover -s tests -v
+git diff --check
 ```
+
+Suita folosește Python, Node, Git și Bash, cu SQLite/fișiere/repo-uri Git
+temporare și cereri externe mock-uite; Python poate scrie cache-uri bytecode.
+Testele browserului sunt deja apelate de `tests/test_freshness.py`; nu cer un
+gate JS separat. Testele receipt-ului execută entrypoint-ul Python→Node real
+în repo-uri temporare. Fără OpenSSL, testul de criptare declară explicit skip:
+raportați-l separat, nu drept test trecut. Durata se măsoară la fiecare rulare.
+Verificați și linkurile Markdown, exemplele schimbate și YAML-ul aplicabil;
+[contractul local](ops/README.md#agent-workflow-and-source-handoff) explică
+stările comenzilor și predarea. Pornirea serverului, analiza AI și comenzile
+de operare nu sunt verificări de documentație.
 
 La prima pornire serverul „încălzește" cache-ul (găsește celulele de râu GloFAS
 pentru fiecare punct — durează 1–2 minute); rulările următoare sunt instant.
@@ -251,11 +267,12 @@ Note importante, afișate și în aplicație:
   curbele cotă–volum ale lacurilor și contorizarea reală a captărilor **nu sunt
   fluxuri publice la niciun operator** — aplicația marchează aceste poziții cu
   „nepublicat" și indică unde pot fi cerute (Legea 544/2001).
-- Site-ul RHMZ Serbia are lanțul de certificate TLS incomplet; conectorul citește
-  pagina publică cu verificarea relaxată doar pentru acest host, marchează limita
-  în API/UI și nu numără acea livrare singură drept verificare de integritate.
-  Pentru Novi Sad preferă copia HTTPS verificabilă OVF/Hydroinfo, fără a o dubla
-  ca familie independentă față de celelalte valori OVF.
+- Conectorul RHMZ Serbia verifică TLS; dacă lanțul oficial nu se verifică,
+  fetch-ul eșuează și poate servi explicit copia stale. Excepția istorică era
+  limitată la hostul RHMZ, iar livrarea neverificată nu conta singură drept probă
+  de integritate. Această limită rămâne valabilă pentru datele istorice marcate
+  `transport_verified: false`; pentru Novi Sad se preferă atunci copia HTTPS
+  verificabilă OVF/Hydroinfo, fără a o număra ca familie independentă de OVF.
 
 ## Detectorul de anomalii
 
@@ -359,10 +376,12 @@ codul și verifica afirmațiile de mai jos.
   date trebuie să fie `https://` ca să devină legături; URL-urile primite de la
   cataloage sunt validate pe host exact; iar textul terț care ajunge în promptul
   LLM e mărginit ca lungime și declarat explicit drept date, nu instrucțiuni.
-- **TLS relaxat pentru exact un host.** RHMZ Serbia are lanțul de certificate
-  incomplet. Excepția e fixată pe acel host prin URL constant, redirect
-  restrâns la același host și interzicerea coborârii la `http://`, iar livrarea
-  respectivă nu contează singură ca verificare de integritate.
+- **TLS verificat inclusiv pentru RHMZ.** Sursa și testele actuale nu permit
+  dezactivarea verificării. Vechea excepție RHMZ era strict limitată la acel
+  host, fără redirect extern sau coborâre la HTTP; rămâne istorică și nu se
+  reactivează. Livrarea istorică neverificată nu contează singură ca probă de
+  integritate. [Reconcilierea documentației](ops/agent-workflow-repair-evidence-2026-09-13.md)
+  nu schimbă transportul sau produsul.
 - **Secretele nu intră în repo.** `data/keys/` e ignorat și nu a existat
   niciodată în istoric; cheile nu ajung în `cache.db`, în răspunsuri sau în
   mesajele de eroare. `ops/verify_deploy.sh` reverifică asta pe server.

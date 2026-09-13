@@ -10,6 +10,84 @@ descoperit prin [README.md](../README.md) și [AGENTS.md](../AGENTS.md).
 checkout-ul Ops vecin. Nu există un client/deployer nou de instalat aici:
 transportul Forge este `~/.forge/fc <path> [curl-args...]`.
 
+## Agent workflow and source handoff
+
+[AGENTS.md](../AGENTS.md) is canonical; [CLAUDE.md](../CLAUDE.md) explicitly
+imports it. Procedures remain in README → DEPLOY → ops. For non-trivial work,
+use one concise dated `ops/` note linked from the relevant docs and Unreleased;
+the [13 September repair](agent-workflow-repair-evidence-2026-09-13.md) demonstrates
+the contract. Routine wording changes need only proportionate diff/link evidence.
+
+1. Record **ICE**: Intent (outcome and reason), Context (source state, constraints,
+   dependencies), Expectations (observable acceptance and important failure cases).
+   Source establishes implementation; accepted ICE/spec establishes intent.
+   Reconcile the nearest spec/contract and note before implementation; discrepancies
+   are defects or explicit accepted decisions, never acceptance rewritten to bless
+   a regression. Preserve the scientific and operational invariants in AGENTS.
+2. Write a durable **Plan** in that note: baseline revision/dirty work, accepted
+   scope and authority, steps and paths, owners/exclusive resources, review and
+   stop conditions. Native Plan mode remains the planning surface when available
+   and selected; the session todo is its view, not a second durable plan. Record
+   unavailable mode honestly and honor planning-only requests until execution is
+   authorized. Existing execution/Git authority needs no repeated approval.
+3. Before a behavior fix, demonstrate an independently failing test/evaluation of
+   the intended contract. For documentation use direct document/link evaluation;
+   do not add tests that merely pin prose. Extend an existing helper only for a
+   demonstrated gap, with a regression first and its contract in the same commit.
+4. Implement and verify the candidate; root owns the single test/generated-output
+   lane. Record exact candidate identity, command, exit and relevant result, including
+   failures, skips and justified retries. Capture status before trailing commands;
+   with pipelines capture each needed status (`PIPESTATUS` immediately in Bash)
+   and use `pipefail`. Wait for background work to finish; record timeouts/signals
+   as incomplete or failed, never infer success from a log grep or plausible summary.
+5. When required by the task/risk, use an independent read-only reviewer. Supply
+   original acceptance, exact candidate/diff and evidence; name why delegation
+   helps, repository, allowed actions/artifacts, integration/review owners,
+   exclusive resources and stop conditions. Reviewer reports findings; maker
+   fixes and reruns affected checks. Unavailable required review remains pending.
+   A child changing directory gains no authority over another project.
+6. Map accepted outcomes to diff and actual evidence, resolve findings, reconcile
+   nearest docs/spec, note and CHANGELOG Unreleased, then choose a coherent
+   commit/push checkpoint through normal hooks. Inspect all outgoing work and
+   actual push automation, including Forge Quick Deploy per [DEPLOY.md](../DEPLOY.md).
+   Verify the exact remote ref/revision with `git ls-remote`, against local HEAD
+   and the fetched tracking ref. If remote work changed, preserve and reconcile
+   it; do not force-push. Keep review, implementation, Git delivery, explicit
+   deployment, public SHA/readiness, source freshness, provider acceptance,
+   recipient receipt and restore proof separate. Old proof retains its date/target;
+   unperformed and accepted-unproven gates remain explicit.
+
+The required local checks, from the repository root, are:
+
+```bash
+python3 -m unittest discover -s tests -v
+git diff --check
+```
+
+Also check changed Markdown targets/anchors, examples and applicable YAML.
+For Bash examples use `bash -n` without executing operations; Forge template
+directives need explicit parse-only substitution. Inspect effective
+`git config --show-origin --get core.hooksPath` and the actual hooks directory.
+At the dated repair checkpoint no active hooks were found: enforcement is manual,
+not automatic or hosted CI. Do not install a hook framework just for uniformity.
+There is no production build step. Passing document structure is not proof of the
+requested behavior or a completed review/release.
+
+The suite uses Python, Node, Git and Bash with temporary SQLite/filesystem/Git
+fixtures and mocked external requests. Python may write bytecode caches.
+`tests/test_freshness.py` already invokes `node --test tests/refresh.test.mjs`;
+do not run a duplicate JS gate. Receipt tests exercise the real Python→Node
+entrypoint in temporary repositories. Preserve/report the `openssl absent` skip
+in `tests/test_ops.py`; a skip is not a pass. Do not promise a fixed suite duration.
+
+`server.py` starts a listener and fetches/caches official data; GETs can populate
+SQLite history/cache. `analiza_ai.py` is manual-only and can spend credits and
+archive output. Revision/receipt writers write files. The operations below can
+write, prune, upload, send messages or access authenticated services; do not run
+them as document checks. Critical practices stay versioned, while memory access
+and writes follow the active client/session authority. This contract adds no
+private/global settings, memory-write, deployment, paid-AI or live-operation grant.
+
 ## Efectele comenzilor existente
 
 Acestea sunt comenzi de operare pe host, nu verificări de documentație.
