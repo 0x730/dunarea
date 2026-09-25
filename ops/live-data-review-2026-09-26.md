@@ -227,3 +227,75 @@ create `POST /orgs/{org}/recipes` `{name, user, script}`; run
 `POST …/recipes/{id}/runs` `{servers, email}` answering 202; runs expose
 `status`, `output`, `started_at` and `finished_at`; delete answers 204.
 Trimming the journal removes the oldest host log history for every co-tenant.
+
+## Delivery and deployment
+
+**Git.** Commit `6e3bb9afc73cdcf361739c66ddea82f0c7e42012` was pushed
+`edb7ceb..6e3bb9a` on `main`. `git ls-remote origin refs/heads/main`, local
+`HEAD` and the fetched `origin/main` all name that SHA. No `.github`
+automation exists. VERSION stays 1.1.2 and no tag was cut: the change ships
+under Unreleased.
+
+**Provider preflight,** read before the deployment:
+
+- site `3331936` is `dunarea.info`, user `dunarea`, `0x730/dunarea`/`main`,
+  **`quick_deploy: false`**, `deployment_retention: 1`;
+- the dedicated script resource matches DEPLOY §1, with `auto_source=false`
+  and `daemon-1006295:*`;
+- background process `1006295` is `running` with the declared command,
+  directory and user.
+
+**Deployment `78624979`,** invoked explicitly on operator instruction:
+`queued` → `finished`, from `2026-09-25T21:41:16Z` to `21:41:30Z`, with
+`commit.hash` equal to the pushed SHA. Its log, read separately, shows:
+
+- `release receipt 6e3bb9afc73c 0 artifact(s)`;
+- `Ran 184 tests in 4.606s` / `OK` on the host;
+- the pruner keeping `78624979` and `77597115`, removing `77596913`.
+
+**Public readback.** `/api/health` reports `buildSha 6e3bb9afc73c…` and version
+1.1.2, `warmup_done: true`. The anomaly report was 30 s old: rebuilt under
+`anomalii_report:v13`. `maintenance` is empty until the first cycle, as the
+contract states.
+
+**`ops/verify_deploy.sh`,** run from the active release as `dunarea`:
+**`VERIFY_EXIT=0`**. All essential checks pass, including the runtime bound
+to the exact checkout and `.build-revision` linked to it. The 4 warnings are
+the documented ones: `ufw` unreadable without sudo, and three schedules that
+are invisible in the user crontab. Those schedules were read in Forge and
+confirmed `installed`: `2117004` (`15 3 * * *`), `2117005` (`17 8 * * *`),
+`2120262` (`25 9 * * *`) and `2120431` (`13 * * * *`), all user `dunarea`.
+
+**Live data.**
+
+- The first public `/api/inhga` read after activation still served the
+  bulletin parsed by the old code (cache age 21 min of 30). The new policy
+  already reported it `unknown`, `missing: debit_bazias_m3s`.
+- At `21:50:58Z` the cache expired and the refetched bulletin parsed to
+  **1600 m³/s**, forecast 1350, observation `fresh`.
+- `/api/anomalii` carries `variatie_debit_pct` (official +19.1 %, model
+  +37.8 %) with `in_timpul_variatiei_debitului: true`; verdict and z −2.98 are
+  unchanged.
+- `ops/source_freshness.py --base-url https://dunarea.info` (scratch status
+  file, no alert), run after the refetch, listed Gönyű, and `/api/romania`'s
+  embedded INHGA input from a snapshot composed 16 s before the refetch (5-min
+  TTL).
+- At `21:56:17Z` `/api/romania` recomposed with the fresh input. The monitor
+  run at `21:56:26Z` listed a single problem across 16 endpoints: the upstream
+  Gönyű gap (`2026-08-13`).
+- The first maintenance cycle after activation (`22:11:25Z`) reported all 8
+  tasks `ok`, including the new `inhga_archive` (1.05 s).
+
+## Not performed or still open
+
+- **Journald cap.** Handed to the operator (see above). Until it is installed,
+  the hourly `runtime_hygiene.py` (minute 13) measures the full journal and
+  is expected to send a critical alert every six hours.
+- **25 September restart cause.** Not examined; the operator holds the
+  read-only commands.
+- **First `--alert` run with alert memory.** Scheduled for `09:25Z`. It is
+  expected to send one incident email for Gönyű and then mute it; neither the
+  send nor inbox receipt has been observed.
+- No alert, backup, prune or recovery command was run, and no restore proof.
+  Provider state was read before the deployment; the only mutation was the
+  authorized deployment.
