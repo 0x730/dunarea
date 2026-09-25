@@ -76,10 +76,11 @@ numărul fizic de directoare, livrarea mesajelor sau restaurarea.
 - job Forge `2120262` instalat la `09:25 UTC`: `ops/source_freshness.py --alert`
   citește de pe `127.0.0.1:7300` auto-evaluările de prospețime ale aplicației
   (flagurile `stale`, erorile din `/api/overview`, vârsta raportului de
-  anomalii din `/api/health`) și alertează pe același canal Cloudflare când o
-  sursă servește snapshot de rezervă — lecția incidentului Hydroinfo, în care
-  o sursă a rămas o săptămână pe snapshotul din 25.08.2026 fără ca cineva să
-  afle;
+  anomalii din `/api/health`, observațiile vechi, nedatate sau fără valoare) și
+  alertează pe același canal Cloudflare la o problemă nouă, cu reamintire
+  săptămânală și un singur mesaj de revenire — lecția incidentului Hydroinfo, în
+  care o sursă a rămas o săptămână pe snapshotul din 25.08.2026 fără ca cineva
+  să afle ([contract](ops/README.md#source_freshnesspy--sursele-de-date-rămân-proaspete));
 - Quick Deploy este `false`. Workflow-ul manual are două acțiuni explicite în
   aceeași sesiune a proprietarului: push-ul commit-ului curat, apoi invocarea
   deploy-ului prin Forge API. Push-ul singur nu pornește producția.
@@ -536,7 +537,8 @@ Jobul Forge comun existent `2120431` rulează orar, ca `dunarea`, fără credent
 ```
 
 Monitorul citește numai `/`: utilizarea blocurilor, inodelor și dimensiunea
-jurnalului systemd. Emite warning la `>=80%`, critical la `>=90%`, re-alertează
+jurnalului systemd, măsurată cu `du` pe directoarele jurnalului (vezi
+[ops/README.md](ops/README.md#runtime_hygienepy--o-alertă-pentru-hostul-fizic-comun)). Emite warning la `>=80%`, critical la `>=90%`, re-alertează
 cel mult o dată la șase ore și închide incidentul printr-un singur mesaj numai
 când disk și inode sunt sub `75%`, iar jurnalul sub `256 MiB`. Fișierul de stare
 este atomic și `0600`; transportul Cloudflare și contractul strict

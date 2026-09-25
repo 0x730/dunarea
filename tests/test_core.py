@@ -1409,6 +1409,123 @@ class ConnectorTests(unittest.TestCase):
                 "media lunii, în jurul valorii de 1.234 m3/s.</p>")
         self.assertEqual(C._parse_inhga_html(page), 1234.0)
 
+    # Buletinul din 25.09.2026, cu diacriticele cu sedilă ale paginii: debitul
+    # este scris direct, fără „la valoarea de”, iar prognoza păstrează forma veche.
+    INHGA_DIRECT_FORM = (
+        "<p><strong>Situaţia debitelor şi nivelurilor în intervalul 24.09.2026, "
+        "ora 07.00 – 25.09.2026, ora 07.00</strong><br />\n"
+        "Debitul la intrarea în ţară (secţiunea Baziaş) a fost 1600 m<sup>3</sup>/s, "
+        "sub media multianuală a lunii septembrie (3800 m<sup>3</sup>/s).<br />\n"
+        "În aval de Porţile de Fier, debitele au fost ȋn creştere.</p>"
+        "<p>Debitul la intrarea în ţară (secţiunea Baziaş) va fi în scădere până la "
+        "valoarea de 1350 m<sup>3</sup>/s, situându-se sub mediile multianuale ale "
+        "lunilor septembrie (3800 m<sup>3</sup>/s) şi octombrie (3900 m<sup>3</sup>/s).</p>")
+
+    def _current_inhga(self, page, day="25-09-2026"):
+        listing = (f'<a href="https://www.hidro.ro/bulletin/diagnoza-si-prognoza-'
+                   f'hidrologica-pentru-dunare-la-intrarea-in-tara-si-pe-sectorul-'
+                   f'romanesc-{day}/">buletin</a>')
+        responses = iter([listing, page])
+
+        def uncached(key, ttl, fetch_fn, stale_ok=True):
+            return {"data": fetch_fn(), "stale": False, "cache_age_s": 0}
+
+        with mock.patch.object(C, "http_get", side_effect=lambda *a, **k: next(responses)), \
+                mock.patch.object(C, "cached", side_effect=uncached), \
+                mock.patch.object(C, "cache_put") as put:
+            return C.inhga_bulletin()["data"], put
+
+    def test_inhga_parsers_read_a_directly_stated_discharge(self):
+        self.assertEqual(C._parse_inhga_html(self.INHGA_DIRECT_FORM), 1600.0)
+
+        out, put = self._current_inhga(self.INHGA_DIRECT_FORM)
+
+        self.assertEqual(out["debit_bazias_m3s"], 1600.0)
+        self.assertEqual(out["media_multianuala_m3s"], 3800.0)
+        self.assertEqual(out["prognoza_debit_m3s"], 1350.0)
+        # Buletinul nu publică o tendință pentru ziua trecută: rămâne absentă.
+        self.assertIsNone(out["tendinta"])
+        put.assert_called_once_with("inhga_day:2026-09-25", 1600.0, 10 ** 9)
+
+    def test_inhga_parsers_never_take_the_forecast_as_the_measurement(self):
+        page = ("<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost raportat "
+                "cu întârziere.</p><p>Debitul la intrarea în țară (secțiunea Baziaș) "
+                "va fi staționar la valoarea de 1350 m3/s.</p>")
+
+        self.assertIsNone(C._parse_inhga_html(page))
+        out, put = self._current_inhga(page)
+        self.assertIsNone(out["debit_bazias_m3s"])
+        self.assertEqual(out["prognoza_debit_m3s"], 1350.0)
+        put.assert_not_called()
+
+    def test_inhga_diagnosis_stops_at_its_own_sentence(self):
+        # Sondele revizorului: fără oprire la „va fi” și la granița frazei,
+        # diagnoza prelua prognoza (1350) sau un debit din aval (5000).
+        forecast = ("<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost în creștere. "
+                    "Debitul la Baziaș va fi staționar la valoarea de 1350 m3/s.</p>")
+        downstream = ("<p>Debitul la intrarea în țară (secțiunea Baziaș) a fost în creștere. "
+                      "În aval, la Gruia, debitul a atins valoarea de 5000 m3/s.</p>")
+        for page in (forecast, downstream):
+            self.assertIsNone(C._parse_inhga_html(page))
+        # Ora și miile cu punct din aceeași frază rămân permise.
+        same_sentence = ("<p>Baziaș) a fost în scădere la ora 06.00, sub media lunii, "
+                         "la valoarea de 1.234 m3/s.</p>")
+        self.assertEqual(C._parse_inhga_html(same_sentence), 1234.0)
+
+    def test_inhga_parser_ignores_punctuation_that_is_not_a_number(self):
+        page = "<p>Debitul (secțiunea Baziaș) a fost , mai mic decât ieri.</p>"
+        self.assertIsNone(C._parse_inhga_html(page))
+        out, put = self._current_inhga(page)
+        self.assertIsNone(out["debit_bazias_m3s"])
+        put.assert_not_called()
+
+    def test_inhga_trend_reads_the_breve_i_variant(self):
+        # INHGA folosește și „ȋ” (U+020B) în aceleași buletine.
+        page = ("<p>Debitul la intrarea în ţară (secţiunea Baziaş) a fost ȋn creştere la "
+                "valoarea de 1500 m<sup>3</sup>/s.</p>")
+        out, _ = self._current_inhga(page)
+        self.assertEqual(out["tendinta"], "creștere")
+        self.assertEqual(out["debit_bazias_m3s"], 1500.0)
+        # Arhiva din septembrie: „ӑ” chirilic (U+04D3) și adjectivul înaintea
+        # tendinței („în ușoarӑ creștere”) dădeau tendința „ușoarӑ”.
+        page = ("<p>Debitul la intrarea în ţară (secţiunea Baziaş) a fost ȋn ușoarӑ "
+                "creştere la valoarea de 1500 m<sup>3</sup>/s.</p>")
+        out, _ = self._current_inhga(page)
+        self.assertEqual(out["tendinta"], "ușoară creștere")
+
+    def test_inhga_bulletin_reports_a_stationary_trend(self):
+        page = ("<p>Debitul la intrarea în ţară (secţiunea Baziaş) a fost staţionar la "
+                "valoarea de 1600 m<sup>3</sup>/s, sub media multianuală a lunii "
+                "septembrie (3800 m<sup>3</sup>/s).</p>")
+
+        out, _ = self._current_inhga(page, day="24-09-2026")
+
+        self.assertEqual(out["debit_bazias_m3s"], 1600.0)
+        self.assertEqual(out["tendinta"], "staționar")
+
+    def test_inhga_backfill_retries_failed_days_under_the_existing_windows(self):
+        """Un eșec cache-uit e un rând non-nul: backfill-ul îl sărea pentru
+        totdeauna, iar fereastra de reîncercare nu era atinsă niciodată."""
+        today = date.today()
+        rows = {
+            today - timedelta(days=1): {"age": 3 * 3600, "data": None},   # recent, >2 h
+            today - timedelta(days=2): {"age": 600, "data": None},        # recent, <2 h
+            today - timedelta(days=10): {"age": 8 * 86400, "data": None}, # vechi, >7 z
+            today - timedelta(days=11): {"age": 86400, "data": None},     # vechi, <7 z
+            today - timedelta(days=12): {"age": 1, "data": 1500.0},       # valoare
+        }
+        by_key = {f"inhga_day:{d.isoformat()}": row for d, row in rows.items()}
+
+        with mock.patch.object(C, "cache_get",
+                               side_effect=lambda key, max_age=None: by_key.get(key)), \
+                mock.patch.object(C, "inhga_bulletin_for") as fetch:
+            C.inhga_backfill(days=12, pause=0)
+
+        fetched = {call.args[0] for call in fetch.call_args_list}
+        skipped = {today - timedelta(days=n) for n in (2, 11, 12)}
+        expected = {today - timedelta(days=n) for n in range(13)} - skipped
+        self.assertEqual(fetched, expected)
+
     def test_inhga_monthly_listing_selects_latest_forecast_article(self):
         listing = """
           <article><h2 class="entry-title"><a href="https://example/august">
@@ -2032,6 +2149,69 @@ class ConnectorTests(unittest.TestCase):
 
 
 class AnomalySourceTests(unittest.TestCase):
+    def _measured_vs_model(self, official, model):
+        start = date(2026, 8, 1)
+        days = [(start + timedelta(days=i)).isoformat() for i in range(len(official))]
+        series = [{"date": d, "debit_m3s": v} for d, v in zip(days, official)]
+        archive = {"data": {"time": days, "discharge": model}, "stale": False}
+        with mock.patch.object(C, "inhga_series", return_value=series), \
+                mock.patch.object(C, "glofas_archive", return_value=archive):
+            return anomalii.measured_vs_model()
+
+    def test_ratio_break_during_a_flow_change_carries_both_series_change(self):
+        # 13–19.09.2026: GloFAS +60 %, INHGA +19 %. Verdictul rămâne același;
+        # rezultatul trebuie să arate că ruptura a coincis cu o undă de debit.
+        official = [760.0 if i % 2 == 0 else 780.0 for i in range(23)] + [920.0] * 7
+        model = [1000.0] * 23 + [1600.0] * 7
+
+        out = self._measured_vs_model(official, model)
+
+        self.assertEqual(out["evaluare"], "relatie_recent_schimbata")
+        self.assertLess(out["z"], -1.5)
+        change = out["variatie_debit_pct"]
+        self.assertEqual(change["model"], 60.0)
+        self.assertEqual(change["oficial"], 19.7)
+        self.assertTrue(out["in_timpul_variatiei_debitului"])
+        self.assertEqual(out["prag_variatie_debit_pct"], 15.0)
+
+    def test_steady_flow_is_not_labelled_a_flow_change(self):
+        official = [760.0 if i % 2 == 0 else 780.0 for i in range(30)]
+        model = [1000.0] * 30
+
+        out = self._measured_vs_model(official, model)
+
+        self.assertEqual(out["evaluare"], "relatie_in_limitele_biasului_istoric")
+        self.assertEqual(out["variatie_debit_pct"]["model"], 0.0)
+        self.assertLess(abs(out["variatie_debit_pct"]["oficial"]), 15.0)
+        self.assertFalse(out["in_timpul_variatiei_debitului"])
+
+    def test_official_only_jump_is_not_softened_as_a_flow_change(self):
+        """O schimbare de metodă sau de stație la INHGA (seria oficială urcă
+        +20 %, modelul stă) este exact ruptura pe care testul o caută."""
+        official = [760.0 if i % 2 == 0 else 780.0 for i in range(23)] + [925.0] * 7
+        model = [1000.0] * 30
+
+        out = self._measured_vs_model(official, model)
+
+        self.assertEqual(out["evaluare"], "relatie_recent_schimbata")
+        self.assertGreaterEqual(out["variatie_debit_pct"]["oficial"], 15.0)
+        self.assertEqual(out["variatie_debit_pct"]["model"], 0.0)
+        self.assertFalse(out["in_timpul_variatiei_debitului"])
+
+        # Modelul și măsurătoarea în sensuri opuse nu sunt o undă comună.
+        opposite = [760.0 if i % 2 == 0 else 780.0 for i in range(23)] + [700.0] * 7
+        out = self._measured_vs_model(opposite, [1000.0] * 23 + [1400.0] * 7)
+        self.assertFalse(out["in_timpul_variatiei_debitului"])
+
+    def test_flow_change_threshold_is_inclusive(self):
+        official = [760.0 if i % 2 == 0 else 780.0 for i in range(23)] + [800.0] * 7
+        model = [1000.0] * 23 + [1150.0] * 7
+
+        out = self._measured_vs_model(official, model)
+
+        self.assertEqual(out["variatie_debit_pct"]["model"], 15.0)
+        self.assertTrue(out["in_timpul_variatiei_debitului"])
+
     def test_hungary_check_falls_back_to_danubehis(self):
         dhis = {"data": {"statii": [{"statie": "Budapest",
                                       "debit_m3s": 750.0,

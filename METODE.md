@@ -183,6 +183,17 @@ ferestrei testate (minimum 10 astfel de medii).
 suprapun pe 6 din 7, deci numărul efectiv de mostre independente e ~n/7. Baza de
 referință e de doar ~90 de zile, deci nu acoperă un ciclu sezonier — o deplasare
 sezonieră normală a biasului model-măsurătoare poate declanșa semnalul.
+O undă de debit îl poate declanșa singură: modelul răspunde adesea altfel decât
+măsurătoarea la o creștere sau o scădere (media 18–24 față de 11–17 septembrie
+2026: GloFAS +37,8 %, INHGA +19,1 %, z −2,98). De aceea rezultatul include
+`variatie_debit_pct` — schimbarea mediei fiecărei serii între săptămâna testată
+și cea anterioară — și `in_timpul_variatiei_debitului` când modelul independent
+s-a schimbat cu cel puțin `prag_variatie_debit_pct` (15 %) și măsurătoarea s-a
+mișcat în același sens. Pagina prezintă atunci ruptura drept posibil
+tranzitorie, de verificat după stabilizarea debitului. Un salt numai al seriei
+oficiale, cu modelul pe loc, nu este îndulcit: este exact schimbarea de metodă
+sau de stație pe care testul o caută. Verdictul, `z` și pragul 1,5 rămân
+neschimbate.
 
 ---
 

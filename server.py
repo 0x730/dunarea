@@ -1248,7 +1248,14 @@ def maintenance_cycle():
             # return, o livrare de rezervă INHGA raporta `ok` în /api/health.
             return C.inhga_bulletin()
 
+    def archive():
+        # Seria de 90 de zile se umplea doar la warmup, pe care o repornire în
+        # mai puțin de 6 h îl sare. Zilele deja prezente costă o citire SQLite;
+        # un eșec recent se reîncearcă după 2 h, unul mai vechi după 7 zile.
+        C.inhga_backfill(days=14)
+
     jobs = [("inhga", bulletin, 0),
+            ("inhga_archive", archive, 0),
             ("inhga_tributaries", C.inhga_danube_tributaries, 86400),
             ("danubehis_tributaries", C.danubehis_romanian_tributaries, 86400),
             ("anar", C.anar_water_resources, 86400),

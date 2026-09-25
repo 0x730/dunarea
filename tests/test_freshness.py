@@ -40,9 +40,28 @@ class ObservationFreshnessTests(unittest.TestCase):
         self.assertEqual(result['observation_freshness']['status'], 'unknown')
         self.assertTrue(source_freshness._observation_problems(result))
 
+    def test_bulletin_without_its_measured_value_is_unknown_not_fresh(self):
+        """25.09.2026: buletinul a fost preluat și datat, dar debitul Baziaș nu
+        a putut fi extras; politica îl declara totuși `fresh` după dată."""
+        dated = {'stale': False, 'data_buletin': '2026-09-12', 'debit_bazias_m3s': None}
+        result = freshness.annotate('inhga', dated, now=NOW)
+        assessment = result['observation_freshness']
+        self.assertEqual(assessment['status'], 'unknown')
+        self.assertEqual(assessment['problems'][0]['missing'], 'debit_bazias_m3s')
+        problems = source_freshness._observation_problems(result)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('debit_bazias_m3s', problems[0])
+
+        valued = freshness.annotate('inhga', dict(dated, debit_bazias_m3s=1600.0), now=NOW)
+        self.assertEqual(valued['observation_freshness']['status'], 'fresh')
+        # Un buletin vechi rămâne `stale`: vârsta e informația mai precisă.
+        old = freshness.annotate('inhga', dict(dated, data_buletin='2026-09-10'), now=NOW)
+        self.assertEqual(old['observation_freshness']['status'], 'stale')
+
     def test_publication_tolerances_and_timestamp_offsets(self):
         for day, expected in [('2026-09-11', 'fresh'), ('2026-09-10', 'stale')]:
-            result = freshness.annotate('inhga', {'data_buletin': day}, now=NOW)
+            result = freshness.annotate(
+                'inhga', {'data_buletin': day, 'debit_bazias_m3s': 1600.0}, now=NOW)
             self.assertEqual(result['observation_freshness']['status'], expected)
         for ts, expected in [('26/9/12 11:30:00', 'fresh'), ('26/9/12 11:29:59', 'stale')]:
             result = freshness.annotate('sen', {'actualizat': ts}, now=NOW)
@@ -121,6 +140,7 @@ class ObservationFreshnessTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(server.C, 'cache_get', return_value=None))
             stack.enter_context(mock.patch.object(server.C, 'inhga_bulletin', side_effect=RuntimeError('secret')))
             failed = stack.enter_context(mock.patch.object(server.C, 'inhga_danube_tributaries', side_effect=[RuntimeError(), {'stale': False}]))
+            stack.enter_context(mock.patch.object(server.C, 'inhga_backfill', return_value=None))
             passed = []
             for name in ('danubehis_romanian_tributaries', 'anar_water_resources', 'glofas_romanian_tributary_climatology', 'cache_gc'):
                 passed.append(stack.enter_context(mock.patch.object(server.C, name, return_value={})))
@@ -148,9 +168,9 @@ class ObservationFreshnessTests(unittest.TestCase):
                     return_value={'data': {'data_buletin': cached_day}, 'age': 0}))
                 refresh = stack.enter_context(mock.patch.object(
                     server.C, 'inhga_bulletin', return_value=bulletin))
-                for name in ('inhga_danube_tributaries', 'danubehis_romanian_tributaries',
-                             'anar_water_resources', 'glofas_romanian_tributary_climatology',
-                             'cache_gc'):
+                for name in ('inhga_backfill', 'inhga_danube_tributaries',
+                             'danubehis_romanian_tributaries', 'anar_water_resources',
+                             'glofas_romanian_tributary_climatology', 'cache_gc'):
                     stack.enter_context(mock.patch.object(server.C, name, return_value={}))
                 stack.enter_context(mock.patch.object(
                     server, '_refresh_report_snapshot', return_value={'stale': False}))
@@ -172,6 +192,29 @@ class ObservationFreshnessTests(unittest.TestCase):
         idle, calls = cycle(None, cached_day=date.today().isoformat())
         self.assertEqual(idle['status'], 'ok')
         self.assertEqual(calls, 0)
+
+    def test_every_cycle_refills_recent_inhga_archive_days(self):
+        """Arhiva zilnică se umplea doar la warmup, pe care o repornire în mai
+        puțin de 6 h îl sare: o zi ratată rămânea gol în seria de 90 de zile."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.dict(server.MAINTENANCE_STATUS, {}, clear=True))
+            stack.enter_context(mock.patch.object(
+                server.C, 'cache_get',
+                return_value={'data': {'data_buletin': date.today().isoformat()}, 'age': 0}))
+            backfill = stack.enter_context(mock.patch.object(server.C, 'inhga_backfill'))
+            for name in ('inhga_danube_tributaries', 'danubehis_romanian_tributaries',
+                         'anar_water_resources', 'glofas_romanian_tributary_climatology',
+                         'cache_gc'):
+                stack.enter_context(mock.patch.object(server.C, name, return_value={}))
+            stack.enter_context(mock.patch.object(
+                server, '_refresh_report_snapshot', return_value={'stale': False}))
+            server.maintenance_cycle()
+            server.maintenance_cycle()
+            status = dict(server.MAINTENANCE_STATUS['inhga_archive'])
+
+        self.assertEqual(backfill.call_count, 2)
+        self.assertEqual(backfill.call_args.kwargs, {'days': 14})
+        self.assertEqual(status['status'], 'ok')
 
     def test_browser_refresh_contract(self):
         root = Path(__file__).resolve().parents[1]

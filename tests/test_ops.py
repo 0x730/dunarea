@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import re
 import shutil
@@ -506,19 +505,87 @@ class RuntimeHygieneContractTests(unittest.TestCase):
         )
         self.assertEqual((recovered.state, recovered.send), ("recovered", "recovery"))
 
-    def test_journal_parser_accepts_systemd_units_and_rejects_ambiguous_output(self):
+    def test_journal_is_the_byte_count_of_the_journal_directories(self):
+        """Ops 0089: `journalctl --disk-usage` rulat ca utilizator neprivilegiat
+        numără doar jurnalele pe care le poate deschide; pe hostul comun a
+        raportat sănătos un jurnal de 2,1 GiB."""
         self.assertEqual(
-            runtime_hygiene._journal_bytes(
-                "Archived and active journals take up 178.7M in the file system."
-            ),
-            math.ceil(178.7 * 1024 * 1024),
+            runtime_hygiene.JOURNAL_DIRECTORIES, ("/var/log/journal", "/run/log/journal")
         )
-        self.assertEqual(
-            runtime_hygiene._journal_bytes("Journals take up 1.5 GiB."),
-            1536 * 1024 * 1024,
-        )
-        with self.assertRaises(runtime_hygiene.HygieneError):
-            runtime_hygiene._journal_bytes("unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            persistent = root / "var"
+            (persistent / "machine").mkdir(parents=True)
+            (persistent / "machine" / "system.journal").write_bytes(os.urandom(65536))
+            missing = root / "run"
+
+            size = runtime_hygiene.journal_directory_bytes((str(persistent), str(missing)))
+            self.assertGreater(size, 0)
+
+            with self.assertRaises(runtime_hygiene.HygieneError):
+                runtime_hygiene.journal_directory_bytes((str(missing), str(root / "none")))
+
+            if os.geteuid() != 0:
+                locked = persistent / "locked"
+                locked.mkdir()
+                (locked / "user.journal").write_bytes(b"x" * 4096)
+                os.chmod(locked, 0)
+                try:
+                    with self.assertRaises(runtime_hygiene.HygieneError):
+                        runtime_hygiene.journal_directory_bytes((str(persistent),))
+                finally:
+                    os.chmod(locked, 0o700)
+
+        with mock.patch.object(
+            runtime_hygiene, "journal_directory_bytes", return_value=3 * 1024**3
+        ) as measured, mock.patch.object(
+            runtime_hygiene.subprocess, "run", side_effect=AssertionError("journalctl")
+        ):
+            observation = runtime_hygiene.collect_observation()
+        measured.assert_called_once_with(runtime_hygiene.JOURNAL_DIRECTORIES)
+        self.assertEqual(observation.journal_bytes, 3 * 1024**3)
+
+    def test_du_runs_in_the_c_locale_and_reads_the_total_by_position(self):
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen["env"] = kwargs.get("env") or {}
+            return subprocess.CompletedProcess(command, 0, "4096\t/a\n12288\tinsgesamt\n", "")
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(runtime_hygiene.subprocess, "run", side_effect=fake_run):
+            size = runtime_hygiene.journal_directory_bytes((directory,))
+        self.assertEqual(size, 12288)
+        self.assertEqual(seen["env"].get("LC_ALL"), "C")
+
+    def test_an_unmeasurable_journal_still_evaluates_disk_and_inodes(self):
+        """Ops marchează numai jurnalul `unavailable`; un `du` eșuat nu are voie
+        să orbească alertele de disk și inode ale hostului comun."""
+        with mock.patch.object(
+            runtime_hygiene, "journal_directory_bytes",
+            side_effect=runtime_hygiene.HygieneError("host_journal_unavailable"),
+        ):
+            observation = runtime_hygiene.collect_observation()
+        self.assertIsNone(observation.journal_bytes)
+        self.assertIsInstance(observation.disk_percent, int)
+
+        blind = runtime_hygiene.Observation(91, 13, None)
+        decision = runtime_hygiene.decide_alert(
+            blind, {}, datetime(2026, 9, 26, 10, 13, tzinfo=timezone.utc))
+        self.assertEqual(decision.severity, "critical")
+        self.assertIn("disk=91%", decision.reasons)
+        self.assertIn("journal=unavailable", decision.reasons)
+
+        quiet = runtime_hygiene.Observation(34, 13, None)
+        decision = runtime_hygiene.decide_alert(
+            quiet, {"active": True, "severity": "warning"},
+            datetime(2026, 9, 26, 10, 13, tzinfo=timezone.utc))
+        # Un jurnal nemăsurabil nu închide incidentul: nu poate proba revenirea.
+        self.assertNotEqual(decision.send, "recovery")
+        self.assertIn("journal=unavailable", decision.reasons)
+        message = runtime_hygiene._message(
+            quiet, decision, "2026-09-26T10:13:00Z", test=False)
+        self.assertIn("Journal: unavailable", message["text"])
 
     def test_main_records_owner_only_incident_and_one_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -888,6 +955,214 @@ class SourceFreshnessContractTests(unittest.TestCase):
             self.assertIn("sourceFreshness", recorded)
             self.assertEqual(recorded["sourceFreshness"]["state"], "fresh")
             self.assertTrue(recorded["sourceFreshness"]["testAlertAccepted"])
+
+    GONYU = "/api/danubehis: .: observation Gönyű: stale (2026-08-13; limit 2 days)"
+    INHGA = "/api/inhga: stale"
+
+    def test_alert_decision_mutes_repeats_reminds_weekly_and_recovers_once(self):
+        """Din 13.09.2026 același gol Gönyű a produs câte o alertă pe zi; un
+        incident nou ar fi sosit sub același subiect zilnic."""
+        now = datetime(2026, 9, 26, 9, 25, tzinfo=timezone.utc)
+        decide = source_freshness.decide_alert
+        key = source_freshness._problem_key
+        gonyu, inhga = key(self.GONYU), key(self.INHGA)
+        yesterday = "2026-09-25T09:25:00Z"
+
+        first = decide("stale", [self.GONYU], {}, now)
+        self.assertEqual(first["send"], "incident")
+        self.assertEqual(first["newProblems"], [gonyu])
+        self.assertEqual(first["alertedProblems"], [gonyu])
+        self.assertNotIn("incidentSince", first)
+
+        memory = {"alertedProblems": [gonyu], "lastAlertAt": yesterday,
+                  "incidentSince": "2026-09-13T09:25:28Z"}
+        repeat = decide("stale", [self.GONYU], memory, now)
+        self.assertIsNone(repeat["send"])
+        self.assertEqual(repeat["lastAlertAt"], yesterday)
+        self.assertEqual(repeat["incidentSince"], "2026-09-13T09:25:28Z")
+
+        added = decide("failed", [self.GONYU, self.INHGA], memory, now)
+        self.assertEqual(added["send"], "incident")
+        self.assertEqual(added["newProblems"], [inhga])
+        self.assertEqual(added["alertedProblems"], sorted([gonyu, inhga]))
+        self.assertEqual(added["incidentSince"], "2026-09-13T09:25:28Z")
+
+        week_old = dict(memory, lastAlertAt="2026-09-19T09:25:00Z")
+        self.assertEqual(decide("stale", [self.GONYU], week_old, now)["send"], "reminder")
+        six_days = dict(memory, lastAlertAt="2026-09-20T11:00:00Z")
+        self.assertIsNone(decide("stale", [self.GONYU], six_days, now)["send"])
+
+        both = {"alertedProblems": sorted([gonyu, inhga]), "lastAlertAt": yesterday}
+        shrunk = decide("stale", [self.GONYU], both, now)
+        self.assertIsNone(shrunk["send"])
+        self.assertEqual(shrunk["alertedProblems"], [gonyu])
+        # Reapariția după micșorare este din nou o problemă nouă.
+        self.assertEqual(decide("stale", [self.GONYU, self.INHGA], shrunk, now)["send"], "incident")
+
+        recovered = decide("fresh", [], memory, now)
+        self.assertEqual(recovered["send"], "recovery")
+        self.assertEqual(recovered["alertedProblems"], [])
+        self.assertNotIn("incidentSince", recovered)
+        self.assertIsNone(decide("fresh", [], recovered, now)["send"])
+
+        # Vârsta raportului crește orar; aceeași condiție nu e o problemă nouă.
+        aged = {"alertedProblems": [key(
+            "/api/health: raport anomalii vechi de 13h (limita 12h)")], "lastAlertAt": yesterday}
+        self.assertIsNone(decide(
+            "stale", ["/api/health: raport anomalii vechi de 37h (limita 12h)"], aged, now)["send"])
+        # Memorie invalidă sau din viitor: se alertează, nu se tace.
+        for broken in ({"alertedProblems": [gonyu], "lastAlertAt": "nope"},
+                       {"alertedProblems": [gonyu], "lastAlertAt": "2026-09-27T00:00:00Z"},
+                       {"alertedProblems": "x", "lastAlertAt": yesterday}):
+            self.assertIsNotNone(decide("stale", [self.GONYU], broken, now)["send"])
+        # O dată de început invalidă nu ajunge într-un subiect.
+        bad_since = dict(memory, incidentSince="nope")
+        self.assertNotIn("incidentSince", decide("stale", [self.GONYU], bad_since, now))
+
+    def test_alert_key_ignores_the_rolling_observation_date(self):
+        """O stație mereu cu 3 zile în urmă își schimbă zilnic data; aceeași
+        condiție nu trebuie să devină în fiecare zi o problemă „nouă”."""
+        now = datetime(2026, 9, 26, 9, 25, tzinfo=timezone.utc)
+        day1 = "/api/danubehis: .: observation Vác: stale (2026-09-22; limit 2 days)"
+        day2 = "/api/danubehis: .: observation Vác: stale (2026-09-23; limit 2 days)"
+        memory = {"alertedProblems": [source_freshness._problem_key(day1)],
+                  "lastAlertAt": "2026-09-25T09:25:00Z"}
+        self.assertIsNone(source_freshness.decide_alert("stale", [day2], memory, now)["send"])
+        # O stare diferită a aceleiași surse rămâne o problemă nouă.
+        unknown = "/api/inhga: .: observation inhga: unknown (2026-09-25; limit 1 days; missing debit_bazias_m3s)"
+        stale = "/api/inhga: .: observation inhga: stale (2026-09-23; limit 1 days)"
+        self.assertNotEqual(source_freshness._problem_key(unknown),
+                            source_freshness._problem_key(stale))
+
+    def test_weekly_reminder_tolerates_run_time_jitter(self):
+        # Ștampila vine după colectare; o rulare cu câteva secunde mai rapidă
+        # peste o săptămână nu trebuie să amâne reamintirea cu încă o zi.
+        memory = {"alertedProblems": [source_freshness._problem_key(self.GONYU)],
+                  "lastAlertAt": "2026-09-19T09:25:40Z"}
+        now = datetime(2026, 9, 26, 9, 25, 10, tzinfo=timezone.utc)
+        self.assertEqual(
+            source_freshness.decide_alert("stale", [self.GONYU], memory, now)["send"], "reminder")
+
+    def test_recovery_and_reminder_messages_say_what_they_are(self):
+        recovery = source_freshness._freshness_message(
+            "fresh", [], "2026-09-27T09:25:00Z", test=False, kind="recovery")
+        self.assertEqual(recovery["subject"], "[Danube] data sources recovered")
+        self.assertIn("RECOVERY", recovery["html"])
+        self.assertNotIn("FRESHNESS INCIDENT", recovery["html"])
+        self.assertNotIn("Treat non-fresh sources as a data incident", recovery["text"])
+        self.assertIn("incident is closed", recovery["text"])
+
+        reminder = source_freshness._freshness_message(
+            "stale", [self.GONYU], "2026-09-26T09:25:00Z", test=False,
+            kind="reminder", since="2026-09-13T09:25:28Z")
+        self.assertEqual(
+            reminder["subject"],
+            "[Danube] data sources stale, weekly reminder (since 2026-09-13T09:25:28Z)")
+        self.assertIn("WEEKLY REMINDER", reminder["html"])
+        self.assertIn("2026-09-13T09:25:28Z", reminder["html"])
+        self.assertIn("not been fresh since 2026-09-13T09:25:28Z", reminder["text"])
+        # Fără dată validă de început, subiectul nu inventează una.
+        undated = source_freshness._freshness_message(
+            "stale", [self.GONYU], "2026-09-26T09:25:00Z", test=False, kind="reminder")
+        self.assertEqual(undated["subject"], "[Danube] data sources stale, weekly reminder")
+
+        added = source_freshness._freshness_message(
+            "failed", [self.GONYU, self.INHGA], "2026-09-26T09:25:00Z", test=False,
+            new_problems=[self.INHGA])
+        self.assertIn(f"- NEW · {self.INHGA}", added["text"])
+        self.assertIn(f"- {self.GONYU}", added["text"])
+        self.assertIn("FRESHNESS INCIDENT", added["html"])
+
+    def test_a_failed_send_keeps_the_alert_memory_so_recovery_is_not_lost(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(root)
+            status_file = root / "status.json"
+            args = ["--config", str(config_file), "--status-file", str(status_file),
+                    "--base-url", "http://127.0.0.1:7300", "--alert"]
+            fresh = {"state": "fresh", "checkedAt": "2026-09-26T09:25:00Z",
+                     "baseUrl": "http://127.0.0.1:7300", "endpointsChecked": 16,
+                     "staleSources": [], "failures": []}
+            stale = dict(fresh, state="stale", staleSources=[self.GONYU])
+
+            def run(evidence, day, fail=False):
+                when = datetime(2026, 9, day, 9, 25, tzinfo=timezone.utc)
+                effect = offsite_backup.BackupError("backup_alert_failed") if fail else None
+                with mock.patch.object(source_freshness, "collect_evidence",
+                                       return_value=dict(evidence)), \
+                        mock.patch.object(offsite_backup, "_utcnow", return_value=when), \
+                        mock.patch.object(offsite_backup, "_send_email",
+                                          side_effect=effect) as send:
+                    code = source_freshness.main(args)
+                recorded = json.loads(status_file.read_text(encoding="utf-8"))
+                return code, send, recorded["sourceFreshness"]
+
+            run(stale, 25)
+            code, send, section = run(fresh, 26, fail=True)
+            self.assertEqual(code, 1)
+            self.assertEqual(section["state"], "failed")
+            self.assertEqual(section["alertedProblems"],
+                             [source_freshness._problem_key(self.GONYU)])
+            self.assertEqual(section["incidentSince"], "2026-09-25T09:25:00Z")
+
+            code, send, section = run(fresh, 27)
+            self.assertEqual(code, 0)
+            send.assert_called_once()
+            self.assertEqual(send.call_args.args[1]["subject"], "[Danube] data sources recovered")
+            self.assertNotIn("incidentSince", section)
+
+    def test_main_keeps_alert_memory_in_the_status_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = self._alert_env(root)
+            status_file = root / "status.json"
+            args = ["--config", str(config_file), "--status-file", str(status_file),
+                    "--base-url", "http://127.0.0.1:7300"]
+            fresh = {"state": "fresh", "checkedAt": "2026-09-26T09:25:00Z",
+                     "baseUrl": "http://127.0.0.1:7300", "endpointsChecked": 16,
+                     "staleSources": [], "failures": []}
+            stale = dict(fresh, state="stale", staleSources=[self.GONYU])
+
+            def run(evidence, day, extra=("--alert",)):
+                when = datetime(2026, 9, day, 9, 25, tzinfo=timezone.utc)
+                with mock.patch.object(source_freshness, "collect_evidence",
+                                       return_value=dict(evidence)), \
+                        mock.patch.object(offsite_backup, "_utcnow", return_value=when), \
+                        mock.patch.object(offsite_backup, "_send_email") as send:
+                    code = source_freshness.main(args + list(extra))
+                recorded = json.loads(status_file.read_text(encoding="utf-8"))
+                return code, send, recorded["sourceFreshness"]
+
+            code, send, section = run(stale, 25)
+            self.assertEqual(code, 1)
+            send.assert_called_once()
+            self.assertIn(self.GONYU, send.call_args.args[1]["text"])
+            self.assertEqual(section["alertedProblems"],
+                             [source_freshness._problem_key(self.GONYU)])
+            self.assertEqual(section["alertDecision"], "incident")
+            self.assertEqual(section["incidentSince"], "2026-09-25T09:25:00Z")
+
+            code, send, section = run(stale, 26)
+            self.assertEqual(code, 1)  # Forge vede în continuare jobul eșuat
+            send.assert_not_called()
+            self.assertEqual(section["alertDecision"], "muted")
+            self.assertEqual(section["lastAlertAt"], "2026-09-25T09:25:00Z")
+            self.assertEqual(section["staleSources"], [self.GONYU])
+
+            # O rulare manuală fără --alert nu atinge memoria alertelor.
+            code, send, section = run(fresh, 26, extra=())
+            send.assert_not_called()
+            self.assertEqual(section["alertedProblems"],
+                             [source_freshness._problem_key(self.GONYU)])
+
+            code, send, section = run(fresh, 27)
+            self.assertEqual(code, 0)
+            send.assert_called_once()
+            self.assertEqual(send.call_args.args[1]["subject"], "[Danube] data sources recovered")
+            self.assertEqual(section["alertDecision"], "recovery")
+
+            code, send, section = run(fresh, 28)
+            send.assert_not_called()
 
     def test_alert_config_reuses_backup_env_without_requiring_s3_keys(self):
         with tempfile.TemporaryDirectory() as directory:

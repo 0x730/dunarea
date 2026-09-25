@@ -68,3 +68,66 @@ test('visibility return triggers refresh and warnings use text, not HTML', async
   assert.match(element.textContent, /<img src=x>/);
   assert.equal(element.innerHTML, undefined);
 });
+
+test('a dated observation without its value is labelled as missing, not as an unverifiable date', () => {
+  const context = vm.createContext({});
+  vm.runInContext(section('function freshnessIssues(data)', 'function sourceState('), context);
+  const inhga = {stale: false, observation_freshness: {status: 'unknown', problems: [
+    {station: 'inhga', observed_at: '2026-09-25', status: 'unknown', missing: 'debit_bazias_m3s'}]}};
+  assert.deepEqual([...context.freshnessIssues(inhga)], ['inhga: 2026-09-25 (valoarea măsurată lipsește)']);
+  const undated = {observation_freshness: {status: 'unknown', problems: [
+    {station: 'x', observed_at: 'invalid', status: 'unknown'}]}};
+  assert.deepEqual([...context.freshnessIssues(undated)], ['x: invalid (dată neverificabilă)']);
+});
+
+function hero() {
+  const elements = {};
+  const context = vm.createContext({
+    $: id => (elements[id] ||= {innerHTML: ''}),
+    fmtN: new Intl.NumberFormat('ro-RO', {maximumFractionDigits: 0}),
+  });
+  vm.runInContext(section('function renderHero(', '/* ------------------------------------------------- profil'), context);
+  return {context, elements};
+}
+
+test('the hero separates a fetched bulletin without a value from an unread one', () => {
+  const url = 'https://www.hidro.ro/bulletin/diagnoza-si-prognoza-25-09-2026/';
+  let {context, elements} = hero();
+  context.renderHero({data_buletin: '2026-09-25', url, debit_bazias_m3s: null,
+    text_oficial: ['Debitul (secțiunea Baziaș) a fost 1600 m³/s.']});
+  assert.match(elements['hero-num'].innerHTML, /din 2026-09-25 a fost preluat/);
+  assert.match(elements['hero-num'].innerHTML, /nu a putut fi extras automat/);
+  assert.ok(elements['hero-num'].innerHTML.includes(`href="${url}"`));
+  assert.match(elements['hero-text'].innerHTML, /a fost 1600 m³\/s/);
+
+  ({context, elements} = hero());
+  context.renderHero(null);
+  assert.match(elements['hero-num'].innerHTML, /nu a putut fi citit acum/);
+  assert.equal(elements['hero-text'], undefined);
+
+  // O adresă din afara INHGA nu devine link.
+  ({context, elements} = hero());
+  context.renderHero({data_buletin: '2026-09-25', url: 'https://example.org/', debit_bazias_m3s: null});
+  assert.match(elements['hero-num'].innerHTML, /nu a putut fi citit acum/);
+});
+
+test('a stationary trend is not rendered as "în staționar"', () => {
+  const {context, elements} = hero();
+  context.renderHero({data_buletin: '2026-09-24', url: 'https://www.hidro.ro/x/',
+    debit_bazias_m3s: 1600, media_multianuala_m3s: 3800, tendinta: 'staționar'});
+  assert.match(elements['hero-num'].innerHTML, / · staționar/);
+  assert.doesNotMatch(elements['hero-num'].innerHTML, /în staționar/);
+});
+
+test('the ratio-break message follows the data', () => {
+  const context = vm.createContext({});
+  vm.runInContext(section('function ratioBreakMessage(', 'async function renderAnomalii()'), context);
+  const wave = {in_timpul_variatiei_debitului: true, variatie_debit_pct: {oficial: 19.1, model: 37.8}};
+  const during = context.ratioBreakMessage(wave, 'sever');
+  assert.match(during, /în timpul unei variații de debit/);
+  assert.match(during, /\+37,8%/);
+  assert.match(during, /\+19,1%/);
+  const jump = {in_timpul_variatiei_debitului: false, variatie_debit_pct: {oficial: 20.4, model: 0}};
+  assert.match(context.ratioBreakMessage(jump, 'sever'), /s-a schimbat recent/);
+  assert.match(context.ratioBreakMessage(wave, 'normal'), /consecvent/);
+});

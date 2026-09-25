@@ -1042,6 +1042,34 @@ def _num(s):
     return float(s.replace(".", "").replace(",", ".")) if s else None
 
 
+def _inhga_text(html):
+    """Textul buletinului cu diacritice normalizate și „m³/s” lipit la loc."""
+    # „ȋ” (U+020B) și „ӑ” chirilic (U+04D3) apar în aceleași buletine în locul
+    # lui „î” și „ă”.
+    t = (_strip_tags(html).replace("ş", "ș").replace("ţ", "ț")
+         .replace("Ş", "Ș").replace("Ţ", "Ț").replace("ȋ", "î")
+         .replace("ӑ", "ă").replace("Ӑ", "Ă"))
+    return re.sub(r"m\s*\n\s*3\s*\n\s*/s", " m³/s", t)
+
+
+def _inhga_bazias_value(t, verb):
+    """Debitul Baziaș din fraza „Baziaș) a fost …” sau „… va fi …”.
+
+    INHGA scrie fie „a fost staționar la valoarea de 1600 m³/s”, fie, din
+    25.09.2026, direct „a fost 1600 m³/s”. Forma directă se încearcă prima.
+    „[^.]*?” ar bloca fraza la o oră (06.00) sau la mii scrise cu punct
+    (1.500), deci forma lungă e limitată pe lungime și se oprește la granița
+    frazei (punct urmat de majusculă) și la o altă ancoră Baziaș; diagnoza se
+    oprește și la „va fi”, altfel ar prelua prognoza sau un debit din aval.
+    """
+    anchor = rf"Baziaș\)\s*{verb}"
+    stop = r"Baziaș\)|(?-i:\.\s+[A-ZĂÂÎȘȚ])" + (r"|va fi" if verb == "a fost" else "")
+    m = (re.search(rf"{anchor}\s+(?:de\s+)?(\d[\d.,]*)\s*m", t, re.I)
+         or re.search(rf"{anchor}(?:(?!{stop}).){{0,180}}?(?:valoarea|valorii)"
+                      rf"\s+de\s*(\d[\d.,]*)\s*m", t, re.S | re.I))
+    return m.group(1) if m else None
+
+
 def inhga_bulletin():
     def fetch():
         listing = http_get(INHGA_LIST, timeout=INHGA_HTTP_TIMEOUT_S)
@@ -1053,23 +1081,21 @@ def inhga_bulletin():
         links.sort(key=lambda m: (m[3], m[2], m[1]), reverse=True)
         url, dd, mm, yyyy = links[0]
         html = http_get(url, timeout=INHGA_HTTP_TIMEOUT_S)
-        text = _strip_tags(html)
-
-        # normalizăm diacriticele pentru regex și lipim "m³/s" rupt de taguri
-        t = (text.replace("ş", "ș").replace("ţ", "ț")
-                 .replace("Ş", "Ș").replace("Ţ", "Ț"))
-        t = re.sub(r"m\s*\n\s*3\s*\n\s*/s", " m³/s", t)
+        t = _inhga_text(html)
 
         def grab(pattern):
             m = re.search(pattern, t, re.S | re.I)
             return m.group(1) if m else None
 
-        # „[^.]*?" ar bloca fraza dacă apare un număr cu punct (1.500) sau o
-        # oră (06.00) între ancoră și valoare — limităm pe lungime, nu pe punct
-        debit = grab(r"Baziaș\)\s*a fost.{0,120}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m")
-        trend = grab(r"Baziaș\)\s*a fost în\s*([^\s,]+(?:\s+ușoară)?)")
+        debit = _inhga_bazias_value(t, "a fost")
+        # „în creștere/scădere [ușoară]” sau „staționar”; absentă dacă buletinul
+        # nu o publică (forma directă din 25.09.2026 nu are tendință).
+        trend = grab(r"Baziaș\)\s*a fost\s+(?:relativ\s+)?"
+                     r"(staționar|în\s*(?:ușoară\s+)?[^\s,]+(?:\s+ușoară)?)")
+        if trend:
+            trend = re.sub(r"^în\s*", "", trend)
         medie = grab(r"media multianuală a lunii \w+\s*\(?\s*([\d.,]+)\s*m")
-        prognoza = grab(r"Baziaș\)\s*va fi.{0,160}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m")
+        prognoza = _inhga_bazias_value(t, "va fi")
 
         # paragrafele oficiale integrale (diagnoză + prognoză), fără titluri
         lines = [ln.strip() for ln in t.split("\n") if len(ln.strip()) > 60]
@@ -1287,15 +1313,20 @@ INHGA_DAILY = ("https://www.hidro.ro/bulletin/diagnoza-si-prognoza-hidrologica-"
 
 
 def _parse_inhga_html(html):
-    text = _strip_tags(html)
-    t = (text.replace("ş", "ș").replace("ţ", "ț")
-             .replace("Ş", "Ș").replace("Ţ", "Ț"))
-    t = re.sub(r"m\s*\n\s*3\s*\n\s*/s", " m³/s", t)
-    # Ca la parserul buletinului curent, nu oprim la primul punct: între
-    # ancoră și debit pot apărea ore (06.00) sau mii scrise cu separator.
-    m = re.search(r"Baziaș\)\s*a fost.{0,180}?(?:valoarea|valorii)\s+de\s*([\d.,]+)\s*m",
-                  t, re.S | re.I)
-    return _num(m.group(1)) if m else None
+    # Același extractor ca buletinul curent: arhiva și ziua curentă nu au voie
+    # să citească diferit aceeași pagină.
+    return _num(_inhga_bazias_value(_inhga_text(html), "a fost"))
+
+
+def _inhga_day_due(d, hit):
+    """Dacă ziua `d` din arhivă trebuie (re)adusă, după rândul ei din cache.
+
+    Un „nu există încă” pentru zilele recente se reîncearcă des (buletinul
+    apare pe parcursul zilei); pentru zile vechi, rar."""
+    if hit and hit["data"] is not None:
+        return False
+    recent = (date.today() - d).days <= 3
+    return not (hit and hit["age"] < (2 * 3600 if recent else 7 * 86400))
 
 
 def inhga_bulletin_for(d):
@@ -1306,10 +1337,7 @@ def inhga_bulletin_for(d):
     hit = cache_get(key, max_age=10 ** 9)
     if hit and hit["data"] is not None:
         return hit["data"]
-    # un „nu există încă" pentru zilele recente se reîncearcă des (buletinul
-    # apare pe parcursul zilei); pentru zile vechi, rar
-    recent = (date.today() - d).days <= 3
-    if hit and hit["data"] is None and hit["age"] < (2 * 3600 if recent else 7 * 86400):
+    if not _inhga_day_due(d, hit):
         return None
     try:
         html = http_get(INHGA_DAILY.format(d=ds), timeout=INHGA_HTTP_TIMEOUT_S)
@@ -1340,11 +1368,14 @@ def inhga_series(days=90):
 
 
 def inhga_backfill(days=90, pause=0.25):
-    """Aduce buletinele lipsă din ultimele N zile (rulează în fundal)."""
+    """Aduce buletinele lipsă din ultimele N zile (rulează în fundal).
+
+    Un eșec cache-uit este un rând non-nul cu `data: None`; testul „există
+    rând” îl sărea pentru totdeauna. Decizia e cea din `inhga_bulletin_for`."""
     today = date.today()
     for i in range(days + 1):
         d = today - timedelta(days=i)
-        if cache_get(f"inhga_day:{d.isoformat()}", max_age=10 ** 9) is None:
+        if _inhga_day_due(d, cache_get(f"inhga_day:{d.isoformat()}", max_age=10 ** 9)):
             inhga_bulletin_for(d)
             time.sleep(pause)
 

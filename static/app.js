@@ -256,7 +256,8 @@ function freshnessIssues(data) {
   const f = data.observation_freshness;
   if (f && f.status !== "fresh") {
     const details = (f.problems || []).map((p) =>
-      `${p.station}: ${p.observed_at || "dată necunoscută"}${p.status === "unknown" ? " (dată neverificabilă)" : " (observație veche)"}`);
+      `${p.station}: ${p.observed_at || "dată necunoscută"}${p.missing ? " (valoarea măsurată lipsește)"
+        : p.status === "unknown" ? " (dată neverificabilă)" : " (observație veche)"}`);
     result.push(...(details.length ? details : ["data observației nu poate fi verificată"]));
   }
   for (const [key, value] of Object.entries(data)) {
@@ -338,8 +339,17 @@ window.addEventListener("resize", () => CHARTS.forEach((c) => c.resize()));
 /* --------------------------------------------------------------- hero -- */
 function renderHero(b, glofasBazias = null) {
   if (!b || !b.debit_bazias_m3s) {
-    $("hero-num").innerHTML = `<div class="err-box">Buletinul INHGA nu a putut fi citit acum.
+    // Un buletin preluat și datat, dar fără debit extras, nu e „necitit”:
+    // spunem exact ce lipsește și trimitem la pagina acelui buletin.
+    const parsedOnly = b && b.data_buletin && /^https:\/\/www\.hidro\.ro\//.test(b.url || "");
+    $("hero-num").innerHTML = parsedOnly
+      ? `<div class="err-box">Buletinul INHGA din ${b.data_buletin} a fost preluat,
+          dar debitul de la Baziaș nu a putut fi extras automat.
+          <a href="${b.url}" target="_blank" rel="noopener">Deschide buletinul</a>.</div>`
+      : `<div class="err-box">Buletinul INHGA nu a putut fi citit acum.
       <a href="https://www.hidro.ro/bulletin_type/diagnoza-si-prognoza-pentru-dunare/" target="_blank" rel="noopener">Deschide-l direct</a>.</div>`;
+    // Textul oficial conține valoarea în proză; rămâne afișat.
+    if (parsedOnly) renderHeroText(b);
     return;
   }
   const pct = b.media_multianuala_m3s
@@ -356,12 +366,16 @@ function renderHero(b, glofasBazias = null) {
     <div class="value">${fmtN.format(b.debit_bazias_m3s)}<small> m³/s</small></div>
     <div class="delta">${pct !== null
       ? `<b>${pct}%</b> din media multianuală a lunii (${fmtN.format(b.media_multianuala_m3s)} m³/s)` : ""}
-      ${b.tendinta ? ` · în ${b.tendinta}` : ""}</div>
+      ${b.tendinta ? ` · ${b.tendinta === "staționar" ? "" : "în "}${b.tendinta}` : ""}</div>
     <div class="asof">buletin INHGA · ${b.data_buletin}${b.prognoza_debit_m3s
       ? ` · reper prognozat: ${fmtN.format(b.prognoza_debit_m3s)} m³/s` : ""}
       ${b.cache_age_s != null ? ` · verificat acum ${Math.max(0, Math.floor(b.cache_age_s / 60))} min` : ""}
       ${b.stale ? ` · <span class="prov prov-lipsa">cache vechi · sursa nu a răspuns</span>` : ""}</div>
     ${modelNote}`;
+  renderHeroText(b);
+}
+
+function renderHeroText(b) {
   const urlOk = typeof b.url === "string" && b.url.startsWith("https://www.hidro.ro/")
     ? b.url : "https://www.hidro.ro/";
   $("hero-text").innerHTML =
@@ -893,6 +907,27 @@ function divergingColor(p) {
 const SEV_LABEL = { extrem: "extrem", sever: "sever", atentie: "atenție", normal: "în limite", info: "info" };
 const sevChip = (s) => `<span class="sev sev-${s}">${SEV_LABEL[s] || s}</span>`;
 
+// Mesajul rupturii INHGA↔model. Backendul marchează o undă de debit numai când
+// modelul independent s-a mișcat ≥ prag și măsurătoarea în același sens; un
+// salt doar al seriei oficiale rămâne o ruptură de verificat.
+function ratioBreakMessage(m, sev) {
+  const v = m.variatie_debit_pct;
+  if (sev === "normal") {
+    return `Cifra oficială românească se mișcă <b>consecvent</b> cu modelul Copernicus; relația dintre serii nu s-a rupt în fereastra testată.`;
+  }
+  if (m.in_timpul_variatiei_debitului && v) {
+    return `Relația dintre cifra oficială și modelul independent s-a schimbat <b>în timpul unei variații de debit</b>:
+      față de săptămâna anterioară, modelul s-a modificat cu ${signedPct(v.model)}, iar debitul oficial cu ${signedPct(v.oficial)}.
+      Modelele reacționează adesea altfel la o undă de creștere sau de scădere, deci ruptura poate fi tranzitorie;
+      dacă persistă după stabilizarea debitului, de verificat metoda, stația sau râul.`;
+  }
+  return `Relația dintre cifra oficială și modelul independent <b>s-a schimbat recent</b> — de verificat ce s-a modificat (metodă, stație sau râu).`;
+}
+
+function signedPct(x) {
+  return `${new Intl.NumberFormat("ro-RO", { maximumFractionDigits: 1, signDisplay: "exceptZero" }).format(x)}%`;
+}
+
 async function renderAnomalii() {
   let d;
   try { d = await jget("/api/anomalii"); }
@@ -1001,14 +1036,14 @@ async function renderAnomalii() {
       </div>`);
     } else {
       const sev = Math.abs(m.z) > 2.5 ? "sever" : Math.abs(m.z) > 1.5 ? "atentie" : "normal";
-      const msg = sev === "normal"
-        ? `Cifra oficială românească se mișcă <b>consecvent</b> cu modelul Copernicus; relația dintre serii nu s-a rupt în fereastra testată.`
-        : `Relația dintre cifra oficială și modelul independent <b>s-a schimbat recent</b> — de verificat ce s-a modificat (metodă, stație sau râu).`;
+      const v = m.variatie_debit_pct;
+      const msg = ratioBreakMessage(m, sev);
       cards.push(`<div class="card verdict">
       <h3>INHGA vs. model separat ${sevChip(sev)}</h3>
         <p class="v">${msg}</p>
         <div class="evi">raport oficial/model: ${m.raport_mediu} ± ${m.sd} (${m.n_etalon || m.n} zile-etalon)<br>
-          ultimele 7 zile: ${m.raport_ultimele7} · abatere: z = ${m.z}</div>
+          ultimele 7 zile: ${m.raport_ultimele7} · abatere: z = ${m.z}${v
+            ? `<br>variație față de săptămâna anterioară: oficial ${signedPct(v.oficial)} · model ${signedPct(v.model)}` : ""}</div>
         <p class="met">În fereastra-etalon, ${Number(m.raport_mediu) < 0.97
           ? `debitul modelat a fost în medie mai mare decât cel oficial (raport oficial/model ~${m.raport_mediu})`
           : Number(m.raport_mediu) > 1.03

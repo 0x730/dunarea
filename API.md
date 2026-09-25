@@ -109,6 +109,9 @@ payload.
 Politica din `freshness.py` este toleranța monitorului, nu un SLA al
 furnizorului. Datele lipsă, neparsabile sau în viitor sunt `unknown`, niciodată
 proaspete. Limita este inclusivă: numai o vârstă mai mare declanșează `stale`.
+Un buletin INHGA datat, dar fără debitul Baziaș extras, este tot `unknown`, cu
+`missing: "debit_bazias_m3s"` în problemă: data singură nu este observația.
+Un buletin vechi rămâne `stale`.
 
 | Sursă / măsurare | Vârstă maximă acceptată |
 | --- | --- |
@@ -137,6 +140,9 @@ nu este probă de succes. Un task eșuat nu oprește celelalte taskuri, iar unul
 zilnic eșuat este reîncercat la ciclul următor, fără a aștepta încă o zi.
 Un refresh servit din snapshot (`stale: true`) este raportat `failed`: taskul
 nu a adus date noi, chiar dacă ruta publică livrează în continuare.
+Taskul `inhga_archive` completează la fiecare ciclu ultimele 14 zile ale arhivei
+buletinelor INHGA: o zi eșuată recent se reîncearcă după 2 h, una mai veche după
+7 zile. `ok` înseamnă că verificarea a rulat, nu că fiecare zi există la sursă.
 
 Reguli pentru consumatori:
 

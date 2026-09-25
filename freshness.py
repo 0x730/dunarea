@@ -22,6 +22,11 @@ POLICIES = {
     "danubeportal": ("mire", "masurat_utc", 48 * 3600, "seconds"),
     "pegelonline": ("stations", "ts", 6 * 3600, "seconds"),
 }
+# A dated record without its measured value is not a fresh observation: on
+# 25.09.2026 the INHGA bulletin parsed to a date and no Baziaș discharge.
+REQUIRED_VALUES = {
+    "inhga": "debit_bazias_m3s",
+}
 
 
 def _value(row, field):
@@ -78,6 +83,9 @@ def annotate(source, payload, *, now=None):
         if not isinstance(row, dict):
             continue
         assessment = observation(_value(row, field), limit, unit, now, source=source)
+        required = REQUIRED_VALUES.get(source)
+        if required and assessment["status"] == "fresh" and _value(row, required) is None:
+            assessment.update(status="unknown", missing=required)
         if collection:
             row["observation_freshness"] = assessment
         items.append({"station": label or row.get("statie") or row.get("station") or row.get("id") or source,

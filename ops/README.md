@@ -102,7 +102,7 @@ gate generic `--write`.
 | `offsite_backup.py restore-drill` | Citește/decriptează într-un director temporar, verifică și curăță copia; scrie status persistent. Nu acceptă destinație de producție. |
 | `prune_releases.py --root CALE` | Dry-run implicit; `--apply` șterge release-urile din plan. Acceptă numai cele două rădăcini declarate. |
 | `runtime_hygiene.py` | Citește presiunea hostului și scrie `--state-file` chiar fără `--alert`. `--test-alert` trimite un mesaj real, fără schimbarea stării incidentului. |
-| `source_freshness.py` | Citește aplicația pe loopback și scrie `--status-file`, inclusiv fără `--alert`; `--test-alert` trimite email real. |
+| `source_freshness.py` | Citește aplicația pe loopback și scrie `--status-file`, inclusiv fără `--alert`. `--alert` trimite la probleme noi, repetă un set neschimbat după 7 zile și trimite o revenire; `--test-alert` trimite email real. |
 | `write_build_revision.py` | Scrie atomic `--output` din SHA-ul checkout-ului `--repository`, apoi apelează writer-ul canonic cu Node; scrie receipt-ul la rădăcina repo-ului. Eșecul oprește pregătirea release-ului. |
 | `write-release-receipt.mjs` | Copie canonică Ops, apelată de entrypoint-ul Python; scrie `.release-receipt.json` în rădăcina Git, îmbină artefactele aceleiași revizii și refuză lipsa reviziei. |
 | `verify_deploy.sh` | Verificare pe host: citiri locale/publice/off-box și workspace temporar 0700 cu cleanup; fără alertă sau schimbarea stării persistente. |
@@ -206,6 +206,13 @@ python3 ops/runtime_hygiene.py --test-alert
 Monitorul agregă disk, inode și jurnal systemd pentru Forge `949568`, partajat
 de Danube și Portfolio. Aplică exact ciclul Ops 80% warning / 90% critical /
 sub 75% recovery, cu re-alertare la șase ore și o singură tranziție de recovery.
+Jurnalul este măsurat ca Ops după cardul 0089: `du -s -c -B1` în locale `C` pe
+`/var/log/journal` și `/run/log/journal`. `journalctl --disk-usage` rulat ca
+`dunarea` numără doar jurnalele accesibile utilizatorului; Ops a măsurat
+2,1 GiB pe hostul comun la 25 septembrie, peste pragul critic de 512 MiB. Ca la
+Ops, numai jurnalul devine indisponibil dacă o parte nu poate fi citită: disk și
+inode se evaluează în continuare, iar `journal=unavailable` este un warning,
+nu o trecere, și nu închide un incident.
 Starea atomică `0600` păstrează histerezisul; alerta reutilizează numai grupul
 Cloudflare din configurația existentă și nu cere cheile S3. Configurația
 [`logrotate/0x730-processes`](logrotate/0x730-processes) acoperă separat cele
@@ -219,7 +226,7 @@ rămâne instalat.
 
 ```bash
 python3 ops/source_freshness.py                       # verificare + status, exit 0/1
-python3 ops/source_freshness.py --alert               # e-mail numai la incident
+python3 ops/source_freshness.py --alert               # e-mail la problemă nouă / săptămânal / revenire
 python3 ops/source_freshness.py --test-alert          # probă de livrare
 python3 ops/source_freshness.py --base-url https://dunarea.info  # de pe alt host
 ```
@@ -248,6 +255,25 @@ Motivul scriptului: în august 2026 Hydroinfo a servit o săptămână snapshotu
 din 25.08, corect marcat `stale` în API, și nimeni nu a aflat — alerta
 existentă privea numai backup-urile.
 
+Alerta ține minte ce a anunțat. Din 13 septembrie același gol DanubeHIS Gönyű
+producea câte un e-mail pe zi, iar un incident nou ar fi sosit sub același
+subiect zilnic. O problemă se identifică prin rută, stație și stare; data
+observației și vârsta raportului rămân în mesaj, dar nu fac dintr-o întârziere
+care avansează zilnic o problemă nouă. Cu `--alert`, scriptul trimite când apare
+o problemă nealertată (marcată `NEW` dacă altele persistă), trimite o
+reamintire săptămânală cât timp setul nu crește (cu o oră toleranță pentru
+durata rulării) și o singură revenire când totul e din nou proaspăt. Un set care
+se micșorează este reținut fără e-mail, ca o reapariție să fie din nou nouă.
+Reamintirea și revenirea au subiect și text proprii; reamintirea numește
+începutul incidentului (`incidentSince`). Secțiunea `sourceFreshness` păstrează
+`alertDecision`, `alertedProblems`, `incidentSince`, `lastAlertAt` și
+`lastRecoveryAt`; o memorie ilizibilă sau din viitor produce alertă, nu tăcere.
+Și rularea eșuată, inclusiv un e-mail refuzat, păstrează memoria, ca revenirea
+să nu se piardă; o revenire nelivrată iese non-zero și se reîncearcă a doua zi.
+Altfel codul de ieșire nu se schimbă: jobul rămâne eșuat în Forge cât timp o
+sursă nu e proaspătă. Rulările fără `--alert` și `--test-alert` nu modifică
+memoria. [Dovada din 26 septembrie](live-data-review-2026-09-26.md).
+
 ### Joburi Forge instalate
 
 - `2117004`, `15 3 * * *`, user `dunarea`: rulează
@@ -259,7 +285,9 @@ existentă privea numai backup-urile.
   prospețime și alertă Cloudflare la lipsă/eșec/stale;
 - `2120262`, `25 9 * * *`, user `dunarea`: rulează
   `ops/source_freshness.py --alert` pentru prospețimea surselor de date și
-  alertă Cloudflare când o sursă servește snapshot de rezervă;
+  alertă Cloudflare la o problemă nouă de prospețime (livrare de rezervă sau
+  observație veche, nedatată ori fără valoare), cu reamintire săptămânală și
+  revenire;
 - `2120431`, `13 * * * *`, user `dunarea`: rulează
   `ops/runtime_hygiene.py --alert`, singurul monitor de presiune pentru hostul
   comun. Programările de mai sus sunt în UTC; recitiți starea Forge înaintea

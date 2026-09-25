@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import datetime as dt
 import html
 import json
+import re
 import signal
 import socket
 import sys
@@ -41,6 +43,11 @@ DEFAULT_BASE_URL = "http://127.0.0.1:7300"
 MAX_BODY_BYTES = 8 * 1024 * 1024
 MAX_LISTED_PROBLEMS = 20
 MAX_PROBLEM_CHARS = 160
+# Un set neschimbat de probleme se repetă o dată pe săptămână, nu zilnic. O oră
+# de toleranță: ștampila vine după colectare, iar o rulare cu câteva secunde mai
+# rapidă peste o săptămână ar amâna altfel reamintirea cu încă o zi.
+REMIND_AFTER_SECONDS = 7 * 24 * 60 * 60 - 60 * 60
+ALERT_MEMORY_KEYS = ("alertedProblems", "incidentSince", "lastAlertAt", "lastRecoveryAt")
 
 # Rutele cu surse vii care își declară singure prospețimea. Endpointurile
 # doar-istorice sau cele condiționate de tokenuri opționale nu apar aici:
@@ -193,9 +200,11 @@ def _observation_problems(node, path=""):
         assessment = node.get("observation_freshness")
         if isinstance(assessment, dict):
             for item in assessment.get("problems", []):
+                missing = f"; missing {item['missing']}" if item.get("missing") else ""
                 found.append(
                     f"{path or '.'}: observation {item['station']}: {item['status']}"
-                    f" ({item.get('observed_at')}; limit {assessment['max_age']} {assessment['unit']})"
+                    f" ({item.get('observed_at')}; limit {assessment['max_age']} {assessment['unit']}"
+                    f"{missing})"
                 )
             if assessment.get("status") == "unknown" and not assessment.get("problems"):
                 found.append(f"{path or '.'}: observation date unknown")
@@ -211,40 +220,145 @@ def _observation_problems(node, path=""):
     return found
 
 
+def _problem_key(problem: str) -> str:
+    """Condiția — ruta, stația și starea — fără detaliile care se schimbă la
+    fiecare rulare: vârsta raportului și data unei observații întârziate.
+    Linia completă rămâne în mesaj."""
+    key = re.sub(r"raport anomalii vechi de \d+h", "raport anomalii vechi", problem)
+    return re.sub(r"(: observation .+?: [a-z_]+) \(.*\)$", r"\1", key)
+
+
+def _alert_time(value: object, now: dt.datetime) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed > now:
+        return None
+    return parsed
+
+
+def decide_alert(
+    state: str, problems: list[str], previous: dict, now: dt.datetime
+) -> dict[str, object]:
+    """Ce trimite `--alert` la această rulare, după ultima alertă reținută.
+
+    Din 13.09.2026 același gol Gönyű a produs câte un e-mail pe zi, iar un
+    incident nou ar fi sosit sub același subiect. Se trimite când apare o
+    problemă nealertată, se repetă un set neschimbat după 7 zile și se trimite
+    o singură revenire. Un set care se micșorează e reținut fără e-mail, ca o
+    reapariție să fie din nou nouă. Memoria invalidă înseamnă alertă, nu tăcere.
+    """
+    alerted = previous.get("alertedProblems")
+    if not isinstance(alerted, list) or not all(isinstance(p, str) for p in alerted):
+        alerted = []
+    memory = {key: previous[key] for key in ("lastAlertAt", "lastRecoveryAt")
+              if isinstance(previous.get(key), str)}
+    if state == "fresh":
+        return {"send": "recovery" if alerted else None, "newProblems": [],
+                "alertedProblems": [], **memory}
+
+    # Începutul incidentului supraviețuiește reamintirilor și problemelor noi;
+    # dispare la revenire. O valoare invalidă nu ajunge într-un subiect.
+    if alerted and _alert_time(previous.get("incidentSince"), now):
+        memory["incidentSince"] = previous["incidentSince"]
+    keys = sorted({_problem_key(problem) for problem in problems})
+    new = [key for key in keys if key not in alerted]
+    last = _alert_time(previous.get("lastAlertAt"), now)
+    if new:
+        send = "incident"
+    elif last is None or (now - last).total_seconds() >= REMIND_AFTER_SECONDS:
+        send = "reminder"
+    else:
+        send = None
+    return {"send": send, "newProblems": new, "alertedProblems": keys, **memory}
+
+
+def _previous_alert_memory(status_file: str) -> dict:
+    try:
+        with open(status_file, encoding="utf-8") as handle:
+            section = json.load(handle).get("sourceFreshness")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return section if isinstance(section, dict) else {}
+
+
 def _clipped(problems: list[str]) -> tuple[list[str], int]:
     listed = [item[:MAX_PROBLEM_CHARS] for item in problems[:MAX_LISTED_PROBLEMS]]
     return listed, max(0, len(problems) - len(listed))
 
 
 def _freshness_message(
-    state: str, problems: list[str], checked_at: str, *, test: bool
+    state: str,
+    problems: list[str],
+    checked_at: str,
+    *,
+    test: bool,
+    kind: str = "incident",
+    new_problems: list[str] = (),
+    since: str | None = None,
 ) -> dict[str, str]:
+    """Mesajul e-mail. `kind`: incident (implicit), reminder sau recovery;
+    `test` are prioritate și nu deschide sau închide nimic."""
+    if test:
+        kind = "test"
     label = f"test: {state}" if test else state
+    if kind == "reminder":
+        label = f"{state}, weekly reminder" + (f" (since {since})" if since else "")
+    elif kind == "recovery":
+        label = "recovered"
+    # Când o parte persistă, problemele noi se văd din prima linie.
+    new = set(new_problems)
+    if new and any(_problem_key(item) not in new for item in problems):
+        problems = [f"NEW · {item}" if _problem_key(item) in new else item
+                    for item in problems]
     state_key = state.casefold()
     if state_key == "fresh":
-        headline = "All monitored sources are fresh"
-        status_label = "Fresh"
+        headline = ("All monitored sources are fresh again" if kind == "recovery"
+                    else "All monitored sources are fresh")
+        status_label = "Recovered" if kind == "recovery" else "Fresh"
         accent = "#0f766e"
         accent_soft = "#ccfbf1"
     elif state_key == "stale":
-        headline = "Some sources have stale or undated observations or fallback snapshots"
+        headline = ("Some sources are still not fresh" if kind == "reminder" else
+                    "Some sources have stale or undated observations or fallback snapshots")
         status_label = "Stale"
         accent = "#b45309"
         accent_soft = "#fef3c7"
     else:
-        headline = "The source freshness check did not complete"
+        headline = ("The source freshness check is still failing" if kind == "reminder"
+                    else "The source freshness check did not complete")
         status_label = state.replace("-", " ").strip().title() or "Failed"
         accent = "#b91c1c"
         accent_soft = "#fee2e2"
 
     listed, hidden = _clipped(problems)
-    purpose = "Delivery test" if test else "Freshness incident"
-    action = (
-        "This operator-requested test did not raise an incident."
-        if test
-        else "Inspect the listed endpoints on dunarea.info and the upstream "
-        "providers; distinguish fallback delivery from old or undated observations."
-    )
+    since_text = f" since {since}" if since else ""
+    purpose, action, closing = {
+        "test": (
+            "Delivery test",
+            "This operator-requested test did not raise an incident.",
+            "This is the operator-requested delivery test.",
+        ),
+        "recovery": (
+            "Recovery",
+            "The freshness incident alerted earlier is closed. No action is needed.",
+            "The earlier freshness incident is closed.",
+        ),
+        "reminder": (
+            "Weekly reminder",
+            f"These sources have not been fresh{since_text}. This reminder repeats"
+            " weekly while no new problem appears; a new problem alerts at once.",
+            f"Weekly reminder: these sources have not been fresh{since_text}.",
+        ),
+    }.get(kind, (
+        "Freshness incident",
+        "Inspect the listed endpoints on dunarea.info and the upstream "
+        "providers; distinguish fallback delivery from old or undated observations.",
+        "Treat non-fresh sources as a data incident.",
+    ))
     text_lines = [
         f"Danube source freshness monitor: {label}.",
         f"Checked: {checked_at}.",
@@ -254,11 +368,7 @@ def _freshness_message(
         text_lines.append(f"... and {hidden} more.")
     if not problems:
         text_lines.append("Every monitored endpoint reports fresh data.")
-    text_lines.append(
-        "This is the operator-requested delivery test."
-        if test
-        else "Treat non-fresh sources as a data incident."
-    )
+    text_lines.append(closing)
 
     if listed:
         rows = "".join(
@@ -376,21 +486,49 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), _signal_handler)
     args = _parser().parse_args(argv)
+    previous = _previous_alert_memory(args.status_file)
+    # Numai o rulare cu --alert decide și actualizează memoria alertelor;
+    # testul, rulările manuale și un eșec o poartă mai departe neschimbată —
+    # altfel un e-mail de revenire eșuat ar șterge incidentul și revenirea
+    # nu ar mai fi trimisă niciodată.
+    kept = {key: previous[key] for key in ALERT_MEMORY_KEYS if key in previous}
     try:
         base_url = _validated_base_url(args.base_url)
         evidence = collect_evidence(
             base_url, args.timeout, args.max_report_age_hours
         )
         problems = list(evidence["failures"]) + list(evidence["staleSources"])
-        if args.test_alert or (args.alert and evidence["state"] != "fresh"):
+        memory = dict(kept)
+        if args.test_alert:
             message = _freshness_message(
-                str(evidence["state"]),
-                problems,
-                str(evidence["checkedAt"]),
-                test=args.test_alert,
+                str(evidence["state"]), problems, str(evidence["checkedAt"]), test=True
             )
             ob._send_email(ob.load_alert_config(args.config), message)
-            evidence["testAlertAccepted" if args.test_alert else "alertAccepted"] = True
+            evidence["testAlertAccepted"] = True
+        elif args.alert:
+            now = ob._utcnow()
+            decision = decide_alert(str(evidence["state"]), problems, previous, now)
+            memory = {key: decision[key] for key in ALERT_MEMORY_KEYS if key in decision}
+            if decision["send"]:
+                message = _freshness_message(
+                    str(evidence["state"]),
+                    problems,
+                    str(evidence["checkedAt"]),
+                    test=False,
+                    kind=decision["send"],
+                    new_problems=decision["newProblems"],
+                    since=memory.get("incidentSince"),
+                )
+                ob._send_email(ob.load_alert_config(args.config), message)
+                evidence["alertAccepted"] = True
+                if decision["send"] == "recovery":
+                    memory["lastRecoveryAt"] = ob._iso(now)
+                else:
+                    memory["lastAlertAt"] = ob._iso(now)
+                    memory.setdefault("incidentSince", ob._iso(now))
+            evidence["alertDecision"] = decision["send"] or (
+                "none" if evidence["state"] == "fresh" else "muted")
+        evidence.update(memory)
         ob._write_status(args.status_file, "sourceFreshness", evidence)
         ob._emit("source_freshness", **evidence)
         return 0 if evidence["state"] == "fresh" else 1
@@ -400,11 +538,10 @@ def main(argv: list[str] | None = None) -> int:
             ob._write_status(
                 args.status_file,
                 "sourceFreshness",
-                {"state": "failed", "at": ob._iso(ob._utcnow()), "reason": code},
+                {"state": "failed", "at": ob._iso(ob._utcnow()), "reason": code, **kept},
             )
         ob._emit("source_freshness_failed", reason=code)
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

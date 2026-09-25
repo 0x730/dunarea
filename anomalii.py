@@ -30,9 +30,13 @@ BAL_START = 2015       # referința pentru bilanțul Baziaș→Gruia
 # valorilor zilnice), zăpada e raportată în cm, streak-ul numără zile
 # calendaristice, bilanțul km³ refuză anii incompleți, iar percentilele cer un
 # minim de eșantioane. Rezultatele vechi nu mai sunt comparabile.
-REPORT_CACHE_KEY = "anomalii_report:v12"
+REPORT_CACHE_KEY = "anomalii_report:v13"
 STATS_CACHE_KEY = "statistici:v7"
 BUDGET_CACHE_KEY = "bilant_apa:v6"
+# Variație săptămânală a modelului de la care o ruptură INHGA↔model, cu
+# măsurătoarea mișcată în același sens, e prezentată drept posibil tranzitorie
+# (undă de debit). Limita e inclusivă. Nu schimbă verdictul și nici pragul z.
+FLOW_CHANGE_PCT = 15.0
 
 
 # ------------------------------------------------------------- utilitare ---
@@ -528,6 +532,20 @@ def measured_vs_model():
     mu, sd = mean(baseline_means), pstdev(baseline_means)
     last7 = mean(rs[-7:])
     z = (last7 - mu) / sd if sd > 0 else 0.0
+
+    # Context, nu verdict: cât s-a schimbat fiecare serie între săptămâna
+    # testată și cea dinainte. La o undă de debit modelul reacționează adesea
+    # altfel decât măsurătoarea (18–24 față de 11–17 septembrie 2026: GloFAS
+    # +37,8 %, INHGA +19,1 %), iar raportul se rupe fără vreo schimbare de
+    # metodă sau de stație. Unda se recunoaște după modelul independent, nu
+    # după seria oficială: un salt numai al cifrei INHGA (altă cheie limnimetrică,
+    # altă stație) e exact ruptura pe care testul o caută și nu e îndulcit.
+    def change(key):
+        before = mean(r[key] for r in ratios[-14:-7])
+        return round((mean(r[key] for r in ratios[-7:]) / before - 1) * 100, 1)
+
+    variatie = {"oficial": change("oficial"), "model": change("model"),
+                "fereastra": "ultimele 7 zile față de cele 7 anterioare"}
     return {
         "n": len(ratios), "n_etalon": len(baseline_means),
         "raport_mediu": round(mu, 3), "sd": round(sd, 3),
@@ -537,6 +555,11 @@ def measured_vs_model():
                      if abs(z) <= 1.5 else "relatie_recent_schimbata"),
         "regula_interpretare": ("diferența absolută măsurat–model nu este anomalie; "
                                 "semnalul este ruptura recentă a raportului"),
+        "variatie_debit_pct": variatie,
+        "prag_variatie_debit_pct": FLOW_CHANGE_PCT,
+        "in_timpul_variatiei_debitului": (
+            abs(variatie["model"]) >= FLOW_CHANGE_PCT
+            and variatie["model"] * variatie["oficial"] > 0),
         "serie": ratios[-30:],
     }
 

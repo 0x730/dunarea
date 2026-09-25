@@ -6,6 +6,31 @@ codului lansat.
 
 ## Unreleased
 
+- debitul INHGA de la Baziaș se citește și când buletinul îl scrie direct
+  („a fost 1600 m³/s”, din 25 septembrie), în locul formei „la valoarea de”;
+  pagina afișa „Buletinul INHGA nu a putut fi citit”. Diagnoza se oprește la
+  fraza ei, deci nu mai preia valoarea din fraza de prognoză sau din fraza
+  următoare; tendința `staționar` și „în ușoară creștere/scădere” sunt citite,
+  iar variantele „ȋ” și „ӑ” chirilic sunt normalizate. Un buletin datat fără
+  debit extras este observație `unknown`, nu `fresh`, și e afișat ca valoare
+  lipsă. Arhiva zilnică se completează la fiecare ciclu de mentenanță (ultimele
+  14 zile), iar zilele eșuate se reîncearcă, în loc să rămână goluri până la un
+  warmup complet;
+- monitorul de prospețime ține minte ce a alertat: e-mail la probleme noi,
+  reamintire săptămânală cu data începutului incidentului și o singură revenire,
+  în locul unui e-mail zilnic pentru același gol Gönyű; o întârziere care
+  avansează zilnic nu mai e o problemă nouă, iar un e-mail refuzat nu șterge
+  memoria;
+- ruptura INHGA↔model arată variația ambelor serii față de săptămâna
+  anterioară și o prezintă drept posibil tranzitorie numai când modelul
+  independent s-a mișcat cu cel puțin 15 %, iar măsurătoarea în același sens;
+  verdictul și pragurile rămân aceleași (`anomalii_report:v13`);
+- monitorul de presiune a hostului măsoară jurnalul systemd cu `du` pe
+  directoarele jurnalului, ca Ops 0089, nu cu `journalctl --disk-usage`, care
+  ca utilizator neprivilegiat număra doar o parte; un jurnal nemăsurabil este un
+  warning și nu mai oprește verificarea de disk și inode.
+  [Revizie, acceptanță și dovezi](ops/live-data-review-2026-09-26.md).
+
 - fluxul agenților păstrează ICE → Spec → Plan și documentația README/DEPLOY/ops:
   AGENTS canonic, import explicit în CLAUDE, contract corect al verificărilor,
   review independent și autoritate pentru commit/push coerent prin verificările

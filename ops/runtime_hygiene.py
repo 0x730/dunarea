@@ -30,6 +30,7 @@ CRITICAL_PERCENT = 90
 RECOVERY_PERCENT = 75
 JOURNAL_WARNING_BYTES = 256 * 1024 * 1024
 JOURNAL_CRITICAL_BYTES = 512 * 1024 * 1024
+JOURNAL_DIRECTORIES = ("/var/log/journal", "/run/log/journal")
 REALERT_SECONDS = 6 * 60 * 60
 
 
@@ -41,7 +42,7 @@ class HygieneError(RuntimeError):
 class Observation:
     disk_percent: int
     inode_percent: int
-    journal_bytes: int
+    journal_bytes: int | None  # None: journal not measurable
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,38 +61,50 @@ def _used_percent(total: int, free: int, available: int) -> int:
     return min(100, math.ceil(used * 100 / denominator))
 
 
-def _journal_bytes(output: str) -> int:
-    match = re.search(
-        r"([0-9]+(?:\.[0-9]+)?)\s*(?:(?P<unit>[KMGT])(?:i?B)?|B)(?=[.\s]|$)",
-        output,
-        re.I,
-    )
+def journal_directory_bytes(directories: tuple[str, ...]) -> int:
+    """Bytes on disk under the journal directories, as the Ops fleet reader
+    measures them (card 0089).
+
+    `journalctl --disk-usage` run as the unprivileged job user sums only the
+    journal files that user can open, so it omits the system journal: on this
+    host it reported a healthy value while the journal held 2.1 GiB. `du` needs
+    only directory traversal. Any unreadable part makes the whole measurement
+    unavailable rather than a smaller, plausible number.
+    """
+    present = [directory for directory in directories if os.path.isdir(directory)]
+    if not present:
+        raise HygieneError("host_journal_unavailable")
+    try:
+        usage = subprocess.run(
+            ["du", "-s", "-c", "-B1", *present],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=30,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HygieneError("host_journal_unavailable") from exc
+    # The grand total is the first field of the last line, whatever its label.
+    lines = usage.stdout.strip().splitlines()
+    match = re.match(r"([0-9]+)\s", lines[-1]) if lines else None
     if not match:
         raise HygieneError("host_journal_unavailable")
-    unit = (match.group("unit") or "").upper()
-    multiplier = {
-        "": 1,
-        "K": 1024,
-        "M": 1024**2,
-        "G": 1024**3,
-        "T": 1024**4,
-    }[unit]
-    return math.ceil(float(match.group(1)) * multiplier)
+    return int(match.group(1))
 
 
 def collect_observation() -> Observation:
     try:
         filesystem = os.statvfs("/")
-        journal = subprocess.run(
-            ["journalctl", "--disk-usage", "--quiet"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except OSError as exc:
         raise HygieneError("host_capacity_unavailable") from exc
+    # As in the Ops reader, only the journal becomes unavailable: an unreadable
+    # journal must not blind the disk and inode alerts of the shared host.
+    try:
+        journal = journal_directory_bytes(JOURNAL_DIRECTORIES)
+    except HygieneError:
+        journal = None
     return Observation(
         disk_percent=_used_percent(
             filesystem.f_blocks, filesystem.f_bfree, filesystem.f_bavail
@@ -99,7 +112,7 @@ def collect_observation() -> Observation:
         inode_percent=_used_percent(
             filesystem.f_files, filesystem.f_ffree, filesystem.f_favail
         ),
-        journal_bytes=_journal_bytes(journal.stdout),
+        journal_bytes=journal,
     )
 
 
@@ -114,7 +127,10 @@ def _severity(observation: Observation) -> tuple[str, tuple[str, ...]]:
         critical.append(f"inodes={observation.inode_percent}%")
     elif observation.inode_percent >= WARNING_PERCENT:
         warning.append(f"inodes={observation.inode_percent}%")
-    if observation.journal_bytes >= JOURNAL_CRITICAL_BYTES:
+    if observation.journal_bytes is None:
+        # Not a pass: the monitor cannot see part of its declared scope.
+        warning.append("journal=unavailable")
+    elif observation.journal_bytes >= JOURNAL_CRITICAL_BYTES:
         critical.append(f"journal={_bytes_label(observation.journal_bytes)}")
     elif observation.journal_bytes >= JOURNAL_WARNING_BYTES:
         warning.append(f"journal={_bytes_label(observation.journal_bytes)}")
@@ -129,6 +145,7 @@ def _fully_recovered(observation: Observation) -> bool:
     return (
         observation.disk_percent < RECOVERY_PERCENT
         and observation.inode_percent < RECOVERY_PERCENT
+        and observation.journal_bytes is not None
         and observation.journal_bytes < JOURNAL_WARNING_BYTES
     )
 
@@ -173,7 +190,9 @@ def decide_alert(
     )
 
 
-def _bytes_label(value: int) -> str:
+def _bytes_label(value: int | None) -> str:
+    if value is None:
+        return "unavailable"
     if value >= 1024**3:
         return f"{value / 1024**3:.1f} GiB"
     if value >= 1024**2:
