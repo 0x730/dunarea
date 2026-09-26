@@ -228,6 +228,28 @@ create `POST /orgs/{org}/recipes` `{name, user, script}`; run
 `status`, `output`, `started_at` and `finished_at`; delete answers 204.
 Trimming the journal removes the oldest host log history for every co-tenant.
 
+**Result.** The operator ran the helper on 26 September, after one aborted
+first attempt: snap `jq` 1.5 has no `--rawfile`, so it failed before any Forge
+call and nothing was created. The body is now built with the Python standard
+library.
+
+- Recipe `126850` stored the script byte-identical (sha256 `4d0dcf68…`, user
+  `root`).
+- Run `414204` on server `949568`: `finished`, `05:30:40Z`–`05:30:47Z`.
+- Output:
+  - `before_bytes=2230263808` (2.0 G per journald), with no existing drop-ins;
+  - `drop_in_sha256=3df50e1d6983e3803c1c45cc384b1e7f5494703ba669a1ada5650e2a7043b4ea`,
+    identical to Ops 0089's installer;
+  - `journald_active=active`, effective
+    `SystemMaxUse=192M RuntimeMaxUse=32M`;
+  - `after_bytes=191827968` (174.9 M per journald), below the 256 MiB warning;
+  - `oldest_entry_utc=2026-09-10T04:54:43Z`, so the 25 September restart
+    evidence was kept;
+  - `dunarea_du=readable`: the corrected monitor can measure the directories.
+- Recipe delete `204`, re-read `404`.
+
+No application process was restarted; journald was.
+
 ## Delivery and deployment
 
 **Git.** Commit `6e3bb9afc73cdcf361739c66ddea82f0c7e42012` was pushed
@@ -288,9 +310,11 @@ confirmed `installed`: `2117004` (`15 3 * * *`), `2117005` (`17 8 * * *`),
 
 ## Not performed or still open
 
-- **Journald cap.** Handed to the operator (see above). Until it is installed,
-  the hourly `runtime_hygiene.py` (minute 13) measures the full journal and
-  is expected to send a critical alert every six hours.
+- **Host monitor lifecycle.** Between the deployment (`21:41Z`) and the cap
+  (`05:30Z`) the hourly `runtime_hygiene.py` (minute 13) measured the
+  uncapped journal. It is expected to have sent a critical alert at `22:13Z`
+  and `04:13Z`, and one recovery at `06:13Z`. Neither the sends nor inbox
+  receipt were observed here.
 - **First `--alert` run with alert memory.** Scheduled for `09:25Z`. It is
   expected to send one incident email for Gönyű and then mute it; neither the
   send nor inbox receipt has been observed.
