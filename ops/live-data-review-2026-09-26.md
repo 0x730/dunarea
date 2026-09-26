@@ -291,11 +291,32 @@ confirmed `installed`: `2117004` (`15 3 * * *`), `2117005` (`17 8 * * *`),
 - **Journald cap.** Handed to the operator (see above). Until it is installed,
   the hourly `runtime_hygiene.py` (minute 13) measures the full journal and
   is expected to send a critical alert every six hours.
-- **25 September restart cause.** Not examined; the operator holds the
-  read-only commands.
 - **First `--alert` run with alert memory.** Scheduled for `09:25Z`. It is
   expected to send one incident email for Gönyű and then mute it; neither the
   send nor inbox receipt has been observed.
 - No alert, backup, prune or recovery command was run, and no restore proof.
   Provider state was read before the deployment; the only mutation was the
   authorized deployment.
+
+## 25 September restart (G)
+
+The operator ran the read-only checks. The host has been up since
+`2026-08-31 17:16:28`, so it was not a reboot. The supervisor log for
+`daemon-1006295` shows a clean restart: `15:49:54` `waiting … to stop`,
+`stopped (terminated by SIGTERM)`, `15:49:55` `spawned`, `RUNNING` at
+`15:50:00`. There is no unexpected exit and no SIGKILL, so it was neither a
+crash nor an OOM kill. The Forge server events, read-only, show event
+`221751239` at `15:49:49Z`, `Updating site name`, run as `root`. Its output
+stops and starts every supervisor daemon on the server (`1006295` Danube and
+`1080024`) and reloads Nginx. A site operation on the shared server therefore
+restarts Danube, for about one second, whichever site it targets.
+
+Two earlier supervisord restarts, at `06:06` and `06:07` host time (UTC; the
+deploy restart appears at `21:41:24` in the same log), stopped both daemons
+with no matching Forge event. They are consistent with a service restart after
+the daily package upgrade, but that is not verified. Danube returned to
+`RUNNING` within 6 s each time.
+
+For Ops: `1080024` is the Lazi relay, running as `root` from `/home/lazirelay`
+(created 2026-09-13). It is not declared in any fleet manifest. It belongs with
+the Ops 0090 co-tenant decision; Danube changes nothing.
